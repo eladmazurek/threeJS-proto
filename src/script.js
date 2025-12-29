@@ -48,18 +48,15 @@ const textureLoader = new THREE.TextureLoader();
 // Day texture - shows continents, oceans, and land during daytime
 const earthDayTexture = textureLoader.load("/earth/day.jpg");
 earthDayTexture.colorSpace = THREE.SRGBColorSpace; // Correct color space for display
-earthDayTexture.anisotropy = 8; // Improves texture quality at oblique angles
 
 // Night texture - shows city lights on the dark side of Earth
 const earthNightTexture = textureLoader.load("/earth/night.jpg");
 earthNightTexture.colorSpace = THREE.SRGBColorSpace;
-earthNightTexture.anisotropy = 8;
 
 // Specular and clouds texture - contains cloud data and ocean specularity
 // Red channel: specular intensity (oceans are reflective)
 // Green channel: cloud coverage
 const earthSpecularCloudsTexture = textureLoader.load("/earth/specularClouds.jpg");
-earthSpecularCloudsTexture.anisotropy = 8;
 
 /**
  * =============================================================================
@@ -82,9 +79,9 @@ const earthParameters = {
 };
 
 // Create sphere geometry for the Earth
-// Parameters: radius=2, widthSegments=64, heightSegments=64
+// Parameters: radius=2, widthSegments=128, heightSegments=128
 // Higher segment counts = smoother sphere but more vertices to process
-const earthGeometry = new THREE.SphereGeometry(2, 64, 64);
+const earthGeometry = new THREE.SphereGeometry(2, 128, 128);
 
 // Create custom shader material using our GLSL shaders
 // ShaderMaterial allows us to write custom vertex and fragment shaders
@@ -123,6 +120,171 @@ const earth = new THREE.Mesh(earthGeometry, earthMaterial);
 
 // Add the Earth to the scene graph
 scene.add(earth);
+
+/**
+ * =============================================================================
+ * LAT/LON GRID LINES
+ * =============================================================================
+ * Subtle grid lines showing latitude and longitude on the Earth surface.
+ * Lines are added as children of the Earth mesh so they rotate with it.
+ */
+
+const GRID_ALTITUDE = 0.002; // Slightly above surface to prevent z-fighting
+const GRID_SEGMENTS = 128; // Smoothness of curved lines
+
+// Grid parameters (adjustable via GUI)
+const gridParameters = {
+  visible: true,
+  opacity: 0.3,
+  latInterval: 30, // Degrees between latitude lines
+  lonInterval: 30, // Degrees between longitude lines
+};
+
+// Container for all grid elements (for easy visibility toggling)
+const gridGroup = new THREE.Group();
+gridGroup.name = "latLonGrid";
+earth.add(gridGroup);
+
+// Material for grid lines - subtle and semi-transparent
+const gridLineMaterial = new THREE.LineBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: gridParameters.opacity,
+  depthWrite: false,
+});
+
+/**
+ * Create a latitude line (circle parallel to equator)
+ * @param {number} lat - Latitude in degrees (-90 to 90)
+ */
+function createLatitudeLine(lat) {
+  const points = [];
+  const phi = (90 - lat) * (Math.PI / 180);
+  const radius = (EARTH_RADIUS + GRID_ALTITUDE) * Math.sin(phi);
+  const y = (EARTH_RADIUS + GRID_ALTITUDE) * Math.cos(phi);
+
+  for (let i = 0; i <= GRID_SEGMENTS; i++) {
+    const theta = (i / GRID_SEGMENTS) * Math.PI * 2;
+    points.push(
+      new THREE.Vector3(
+        radius * Math.cos(theta),
+        y,
+        radius * Math.sin(theta)
+      )
+    );
+  }
+
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const line = new THREE.Line(geometry, gridLineMaterial);
+  return line;
+}
+
+/**
+ * Create a longitude line (great circle from pole to pole)
+ * @param {number} lon - Longitude in degrees (-180 to 180)
+ */
+function createLongitudeLine(lon) {
+  const points = [];
+  const theta = (lon + 180) * (Math.PI / 180);
+
+  for (let i = 0; i <= GRID_SEGMENTS; i++) {
+    const phi = (i / GRID_SEGMENTS) * Math.PI;
+    const radius = EARTH_RADIUS + GRID_ALTITUDE;
+    points.push(
+      new THREE.Vector3(
+        -radius * Math.sin(phi) * Math.cos(theta),
+        radius * Math.cos(phi),
+        radius * Math.sin(phi) * Math.sin(theta)
+      )
+    );
+  }
+
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const line = new THREE.Line(geometry, gridLineMaterial);
+  return line;
+}
+
+/**
+ * Create a text sprite for lat/lon labels
+ * @param {string} text - Label text
+ * @param {THREE.Vector3} position - Position on the globe
+ */
+function createTextLabel(text, position) {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  canvas.width = 128;
+  canvas.height = 64;
+
+  // Draw text
+  context.fillStyle = "rgba(255, 255, 255, 0.6)";
+  context.font = "bold 24px Arial";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(text, 64, 32);
+
+  // Create sprite
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+  });
+
+  const sprite = new THREE.Sprite(material);
+  sprite.position.copy(position);
+  sprite.scale.set(0.15, 0.075, 1);
+
+  return sprite;
+}
+
+/**
+ * Build the complete grid with lines and labels
+ */
+function buildGrid() {
+  // Clear existing grid
+  while (gridGroup.children.length > 0) {
+    const child = gridGroup.children[0];
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (child.material.map) child.material.map.dispose();
+      child.material.dispose();
+    }
+    gridGroup.remove(child);
+  }
+
+  const latInterval = gridParameters.latInterval;
+  const lonInterval = gridParameters.lonInterval;
+
+  // Create latitude lines
+  for (let lat = -90 + latInterval; lat < 90; lat += latInterval) {
+    const line = createLatitudeLine(lat);
+    gridGroup.add(line);
+
+    // Add label at prime meridian (lon = 0)
+    const labelPos = latLonToPosition(lat, 0, GRID_ALTITUDE + 0.02);
+    const label = createTextLabel(`${lat}°`, labelPos);
+    gridGroup.add(label);
+  }
+
+  // Create longitude lines
+  for (let lon = -180; lon < 180; lon += lonInterval) {
+    const line = createLongitudeLine(lon);
+    gridGroup.add(line);
+
+    // Add label at equator
+    if (lon !== 0) { // Skip 0° to avoid overlap with lat labels
+      const labelPos = latLonToPosition(0, lon, GRID_ALTITUDE + 0.02);
+      const label = createTextLabel(`${lon}°`, labelPos);
+      gridGroup.add(label);
+    }
+  }
+
+  // Add equator label
+  const equatorLabel = createTextLabel("0°", latLonToPosition(0, 0, GRID_ALTITUDE + 0.02));
+  gridGroup.add(equatorLabel);
+}
+
+// Note: buildGrid() is called after latLonToPosition is defined (below)
 
 /**
  * =============================================================================
@@ -403,6 +565,9 @@ const demoData = generateDemoData();
 updateShips(demoData.ships);
 updateAircraft(demoData.aircraft);
 
+// Build the lat/lon grid (now that latLonToPosition is defined)
+buildGrid();
+
 // Export update functions for external use (e.g., real AIS/FlightAware data)
 window.updateShips = updateShips;
 window.updateAircraft = updateAircraft;
@@ -463,6 +628,21 @@ function updateSunDirection() {
     .set(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ)
     .normalize();
 }
+
+// Grid folder
+const gridFolder = gui.addFolder("Lat/Lon Grid");
+gridFolder.add(gridParameters, "visible").name("Show Grid").onChange(() => {
+  gridGroup.visible = gridParameters.visible;
+});
+gridFolder.add(gridParameters, "opacity", 0.05, 0.8, 0.01).name("Opacity").onChange(() => {
+  gridLineMaterial.opacity = gridParameters.opacity;
+});
+gridFolder.add(gridParameters, "latInterval", [10, 15, 30, 45]).name("Lat Interval").onChange(() => {
+  buildGrid();
+});
+gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interval").onChange(() => {
+  buildGrid();
+});
 
 /**
  * =============================================================================
@@ -544,6 +724,12 @@ renderer.setPixelRatio(sizes.pixelRatio);
 
 // Set background color to dark blue (simulating space)
 renderer.setClearColor("#000011");
+
+// Set max anisotropic filtering for sharper textures at oblique angles
+const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+earthDayTexture.anisotropy = maxAnisotropy;
+earthNightTexture.anisotropy = maxAnisotropy;
+earthSpecularCloudsTexture.anisotropy = maxAnisotropy;
 
 /**
  * =============================================================================
