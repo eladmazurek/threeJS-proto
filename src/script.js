@@ -126,6 +126,289 @@ scene.add(earth);
 
 /**
  * =============================================================================
+ * TRACKING SYMBOLS (AIS Ships & Aircraft)
+ * =============================================================================
+ * Uses InstancedMesh for efficient rendering of hundreds of tracking symbols.
+ * Each symbol type (ship/aircraft) has its own InstancedMesh.
+ */
+
+// Constants
+const EARTH_RADIUS = 2; // Must match the sphere geometry radius
+const MAX_SHIPS = 1000; // Maximum number of ship instances
+const MAX_AIRCRAFT = 1000; // Maximum number of aircraft instances
+const SHIP_ALTITUDE = 0.01; // Height above Earth surface for ships
+const AIRCRAFT_ALTITUDE = 0.08; // Height above Earth surface for aircraft
+
+/**
+ * Convert latitude/longitude to 3D position on Earth surface
+ * @param {number} lat - Latitude in degrees (-90 to 90)
+ * @param {number} lon - Longitude in degrees (-180 to 180)
+ * @param {number} altitude - Height above surface (0 = on surface)
+ * @returns {THREE.Vector3} Position in 3D space
+ */
+function latLonToPosition(lat, lon, altitude = 0) {
+  const phi = (90 - lat) * (Math.PI / 180); // Convert to radians, offset from pole
+  const theta = (lon + 180) * (Math.PI / 180); // Convert to radians, offset for texture alignment
+
+  const radius = EARTH_RADIUS + altitude;
+
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+/**
+ * Create a matrix for positioning and orienting an instance on the Earth
+ * @param {number} lat - Latitude in degrees
+ * @param {number} lon - Longitude in degrees
+ * @param {number} heading - Heading in degrees (0 = North, clockwise)
+ * @param {number} altitude - Height above surface
+ * @param {number} scale - Scale factor for the symbol
+ * @returns {THREE.Matrix4} Transformation matrix
+ */
+function createInstanceMatrix(lat, lon, heading, altitude, scale) {
+  const position = latLonToPosition(lat, lon, altitude);
+
+  // Calculate the up vector (normal to Earth surface at this point)
+  const up = position.clone().normalize();
+
+  // Calculate north direction at this point (tangent pointing toward north pole)
+  const north = new THREE.Vector3(0, 1, 0);
+  const east = new THREE.Vector3().crossVectors(north, up).normalize();
+  const northTangent = new THREE.Vector3().crossVectors(up, east).normalize();
+
+  // Rotate by heading (clockwise from north)
+  const headingRad = -heading * (Math.PI / 180);
+  const forward = new THREE.Vector3()
+    .addScaledVector(northTangent, Math.cos(headingRad))
+    .addScaledVector(east, Math.sin(headingRad))
+    .normalize();
+
+  // Create rotation matrix to orient symbol on Earth surface
+  const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+  const correctedForward = new THREE.Vector3().crossVectors(right, up).normalize();
+
+  const rotationMatrix = new THREE.Matrix4().makeBasis(right, up, correctedForward);
+
+  // Combine position, rotation, and scale
+  const matrix = new THREE.Matrix4();
+  matrix.compose(
+    position,
+    new THREE.Quaternion().setFromRotationMatrix(rotationMatrix),
+    new THREE.Vector3(scale, scale, scale)
+  );
+
+  return matrix;
+}
+
+// -----------------------------------------------------------------------------
+// Ship Symbol Geometry (arrow/chevron shape pointing forward)
+// -----------------------------------------------------------------------------
+const shipShape = new THREE.Shape();
+shipShape.moveTo(0, 0.02); // Bow (front)
+shipShape.lineTo(0.012, -0.015); // Starboard stern
+shipShape.lineTo(0, -0.005); // Center stern notch
+shipShape.lineTo(-0.012, -0.015); // Port stern
+shipShape.closePath();
+
+const shipGeometry = new THREE.ShapeGeometry(shipShape);
+// Rotate geometry so it lies flat on the surface (Y-up becomes the normal)
+shipGeometry.rotateX(-Math.PI / 2);
+
+const shipMaterial = new THREE.MeshBasicMaterial({
+  color: 0x00ff88,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.9,
+  depthWrite: false, // Prevents z-fighting with Earth
+});
+
+// Create InstancedMesh for ships
+const shipInstances = new THREE.InstancedMesh(shipGeometry, shipMaterial, MAX_SHIPS);
+shipInstances.count = 0; // Start with no visible instances
+shipInstances.frustumCulled = false; // Ensure all instances render
+earth.add(shipInstances); // Add to Earth so they rotate with it
+
+// -----------------------------------------------------------------------------
+// Aircraft Symbol Geometry (airplane shape)
+// -----------------------------------------------------------------------------
+const aircraftShape = new THREE.Shape();
+// Fuselage and nose
+aircraftShape.moveTo(0, 0.025); // Nose
+aircraftShape.lineTo(0.003, 0.01); // Right fuselage
+aircraftShape.lineTo(0.02, 0.005); // Right wing tip
+aircraftShape.lineTo(0.003, 0.0); // Right wing root
+aircraftShape.lineTo(0.003, -0.01); // Right tail root
+aircraftShape.lineTo(0.01, -0.02); // Right stabilizer
+aircraftShape.lineTo(0.003, -0.015); // Right tail
+aircraftShape.lineTo(0, -0.02); // Tail
+aircraftShape.lineTo(-0.003, -0.015); // Left tail
+aircraftShape.lineTo(-0.01, -0.02); // Left stabilizer
+aircraftShape.lineTo(-0.003, -0.01); // Left tail root
+aircraftShape.lineTo(-0.003, 0.0); // Left wing root
+aircraftShape.lineTo(-0.02, 0.005); // Left wing tip
+aircraftShape.lineTo(-0.003, 0.01); // Left fuselage
+aircraftShape.closePath();
+
+const aircraftGeometry = new THREE.ShapeGeometry(aircraftShape);
+// Rotate geometry so it lies flat on the surface
+aircraftGeometry.rotateX(-Math.PI / 2);
+
+const aircraftMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffaa00,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.9,
+  depthWrite: false,
+});
+
+// Create InstancedMesh for aircraft
+const aircraftInstances = new THREE.InstancedMesh(aircraftGeometry, aircraftMaterial, MAX_AIRCRAFT);
+aircraftInstances.count = 0; // Start with no visible instances
+aircraftInstances.frustumCulled = false;
+earth.add(aircraftInstances); // Add to Earth so they rotate with it
+
+// -----------------------------------------------------------------------------
+// Tracking Data Management
+// -----------------------------------------------------------------------------
+
+// Store current tracking data for dynamic rescaling
+let currentShipsData = [];
+let currentAircraftData = [];
+let currentIconScale = 1;
+
+/**
+ * Update ship instances with new data
+ * @param {Array} ships - Array of ship objects with {lat, lon, heading, [scale]}
+ * @param {number} globalScale - Global scale multiplier for all icons
+ */
+function updateShips(ships, globalScale = currentIconScale) {
+  currentShipsData = ships;
+  shipInstances.count = Math.min(ships.length, MAX_SHIPS);
+
+  for (let i = 0; i < shipInstances.count; i++) {
+    const ship = ships[i];
+    const matrix = createInstanceMatrix(
+      ship.lat,
+      ship.lon,
+      ship.heading || 0,
+      SHIP_ALTITUDE,
+      (ship.scale || 1) * globalScale
+    );
+    shipInstances.setMatrixAt(i, matrix);
+  }
+
+  shipInstances.instanceMatrix.needsUpdate = true;
+}
+
+/**
+ * Update aircraft instances with new data
+ * @param {Array} aircraft - Array of aircraft objects with {lat, lon, heading, [scale]}
+ * @param {number} globalScale - Global scale multiplier for all icons
+ */
+function updateAircraft(aircraft, globalScale = currentIconScale) {
+  currentAircraftData = aircraft;
+  aircraftInstances.count = Math.min(aircraft.length, MAX_AIRCRAFT);
+
+  for (let i = 0; i < aircraftInstances.count; i++) {
+    const plane = aircraft[i];
+    const matrix = createInstanceMatrix(
+      plane.lat,
+      plane.lon,
+      plane.heading || 0,
+      AIRCRAFT_ALTITUDE,
+      (plane.scale || 1) * globalScale
+    );
+    aircraftInstances.setMatrixAt(i, matrix);
+  }
+
+  aircraftInstances.instanceMatrix.needsUpdate = true;
+}
+
+/**
+ * Update icon scale based on camera distance
+ * Only rebuilds matrices if scale changed significantly
+ */
+function updateIconScale(cameraDistance) {
+  const baseDistance = 13;
+  const newScale = cameraDistance / baseDistance;
+
+  // Only update if scale changed by more than 5% to avoid constant rebuilding
+  if (Math.abs(newScale - currentIconScale) / currentIconScale > 0.05) {
+    currentIconScale = newScale;
+
+    // Rebuild matrices with new scale
+    if (currentShipsData.length > 0) {
+      updateShips(currentShipsData, currentIconScale);
+    }
+    if (currentAircraftData.length > 0) {
+      updateAircraft(currentAircraftData, currentIconScale);
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Demo Data - Generate sample ships and aircraft around the world
+// -----------------------------------------------------------------------------
+function generateDemoData() {
+  // Generate demo ships (major shipping routes)
+  const demoShips = [];
+  const shippingRoutes = [
+    { latRange: [30, 40], lonRange: [-80, -10], count: 50 }, // Atlantic
+    { latRange: [0, 30], lonRange: [50, 100], count: 40 }, // Indian Ocean
+    { latRange: [10, 50], lonRange: [100, 150], count: 60 }, // Pacific Asia
+    { latRange: [30, 50], lonRange: [-160, -120], count: 30 }, // Pacific US
+    { latRange: [50, 60], lonRange: [-10, 30], count: 25 }, // North Sea / Baltic
+  ];
+
+  for (const route of shippingRoutes) {
+    for (let i = 0; i < route.count; i++) {
+      demoShips.push({
+        lat: route.latRange[0] + Math.random() * (route.latRange[1] - route.latRange[0]),
+        lon: route.lonRange[0] + Math.random() * (route.lonRange[1] - route.lonRange[0]),
+        heading: Math.random() * 360,
+        scale: 0.8 + Math.random() * 0.4,
+      });
+    }
+  }
+
+  // Generate demo aircraft (major flight corridors)
+  const demoAircraft = [];
+  const flightCorridors = [
+    { latRange: [35, 55], lonRange: [-130, -70], count: 80 }, // US domestic
+    { latRange: [45, 65], lonRange: [-60, 30], count: 70 }, // Transatlantic
+    { latRange: [20, 50], lonRange: [70, 140], count: 90 }, // Asia
+    { latRange: [30, 50], lonRange: [-10, 40], count: 60 }, // Europe
+    { latRange: [-40, 0], lonRange: [110, 160], count: 30 }, // Australia
+  ];
+
+  for (const corridor of flightCorridors) {
+    for (let i = 0; i < corridor.count; i++) {
+      demoAircraft.push({
+        lat: corridor.latRange[0] + Math.random() * (corridor.latRange[1] - corridor.latRange[0]),
+        lon: corridor.lonRange[0] + Math.random() * (corridor.lonRange[1] - corridor.lonRange[0]),
+        heading: Math.random() * 360,
+        scale: 0.8 + Math.random() * 0.4,
+      });
+    }
+  }
+
+  return { ships: demoShips, aircraft: demoAircraft };
+}
+
+// Initialize with demo data
+const demoData = generateDemoData();
+updateShips(demoData.ships);
+updateAircraft(demoData.aircraft);
+
+// Export update functions for external use (e.g., real AIS/FlightAware data)
+window.updateShips = updateShips;
+window.updateAircraft = updateAircraft;
+
+/**
+ * =============================================================================
  * GUI CONTROLS
  * =============================================================================
  */
@@ -278,10 +561,13 @@ const tick = () => {
   // Get total time elapsed since the clock started
   const elapsedTime = clock.getElapsedTime();
 
-  // Rotate the Earth around its Y-axis (vertical axis)
-  // 0.1 radians per second = approximately 5.7 degrees per second
-  // Full rotation takes about 63 seconds
-  earth.rotation.y = elapsedTime * 0.01;
+  // Earth rotation disabled
+  // earth.rotation.y = elapsedTime * 0.01;
+
+  // Scale tracking icons based on camera distance
+  // Icons should be smaller when zoomed in, larger when zoomed out
+  const cameraDistance = camera.position.length();
+  updateIconScale(cameraDistance);
 
   // Update OrbitControls - required for damping to work
   controls.update();
