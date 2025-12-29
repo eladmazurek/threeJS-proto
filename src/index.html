@@ -4,10 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Earth</title>
+    <!-- Global styles for fullscreen canvas -->
     <link rel="stylesheet" href="./style.css">
 </head>
 <body>
+    <!--
+        WebGL Canvas Element
+        This canvas is where Three.js renders the 3D scene.
+        The 'webgl' class is used by script.js to get a reference to this element.
+        The canvas will be automatically sized to fill the viewport.
+    -->
     <canvas class="webgl"></canvas>
+
+    <!--
+        Main Application Script
+        type="module" enables ES6 module imports (import/export syntax)
+        This is required for importing Three.js and other dependencies
+    -->
     <script type="module" src="./script.js"></script>
 </body>
 </html>

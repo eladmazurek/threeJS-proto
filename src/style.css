@@ -1,17 +1,30 @@
-*
-{
+/**
+ * Earth Shaders - Global Styles
+ *
+ * These styles create a fullscreen, immersive WebGL experience
+ * by removing default browser styling and making the canvas
+ * cover the entire viewport.
+ */
+
+/* Reset default browser margins and padding on all elements */
+* {
     margin: 0;
     padding: 0;
 }
 
+/* Prevent scrollbars from appearing
+   This is important for a fullscreen 3D experience */
 html,
-body
-{
+body {
     overflow: hidden;
 }
 
-.webgl
-{
+/* WebGL Canvas Styling
+   - fixed: Removes from document flow, positions relative to viewport
+   - top/left 0: Anchors to top-left corner
+   - outline: none: Removes focus outline when canvas is clicked
+   Note: Width and height are set dynamically by Three.js renderer */
+.webgl {
     position: fixed;
     top: 0;
     left: 0;
