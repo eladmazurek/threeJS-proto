@@ -16,17 +16,20 @@ This project renders an interactive, rotating Earth sphere in WebGL. It serves a
 
 ## Setup
 
-Download [Node.js](https://nodejs.org/en/download/) (v18 or higher recommended).
+Download [Bun](https://bun.sh/) (v1.0 or higher).
 
 ```bash
 # Install dependencies (only the first time)
-npm install
+bun install
 
 # Run the local server at localhost:5173
-npm run dev
+bun dev
 
 # Build for production in the dist/ directory
-npm run build
+bun run build
+
+# Preview production build
+bun run preview
 ```
 
 ## Project Structure
@@ -58,11 +61,12 @@ npm run build
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Three.js | 0.174.0 | 3D WebGL rendering |
-| Vite | 6.2.2 | Build tool and dev server |
-| lil-gui | 0.20.0 | Debug GUI for parameters |
-| vite-plugin-glsl | 1.3.3 | GLSL shader imports |
-| vite-plugin-restart | 0.4.2 | Dev server auto-restart |
+| Bun | 1.0+ | JavaScript runtime and package manager |
+| Three.js | 0.182.0 | 3D WebGL rendering |
+| Vite | 7.3.0 | Build tool and dev server |
+| lil-gui | 0.21.0 | Debug GUI for parameters |
+| vite-plugin-glsl | 1.5.5 | GLSL shader imports |
+| vite-plugin-restart | 2.0.0 | Dev server auto-restart |
 
 ## Architecture
 
