@@ -298,8 +298,8 @@ function buildGrid() {
 const EARTH_RADIUS = 2; // Must match the sphere geometry radius
 const MAX_SHIPS = 1000; // Maximum number of ship instances
 const MAX_AIRCRAFT = 1000; // Maximum number of aircraft instances
-const SHIP_ALTITUDE = 0.01; // Height above Earth surface for ships
-const AIRCRAFT_ALTITUDE = 0.08; // Height above Earth surface for aircraft
+const SHIP_ALTITUDE = 0.005; // Height above Earth surface for ships
+const AIRCRAFT_ALTITUDE = 0.02; // Height above Earth surface for aircraft
 
 /**
  * Convert latitude/longitude to 3D position on Earth surface
@@ -333,26 +333,53 @@ function latLonToPosition(lat, lon, altitude = 0) {
 function createInstanceMatrix(lat, lon, heading, altitude, scale) {
   const position = latLonToPosition(lat, lon, altitude);
 
-  // Calculate the up vector (normal to Earth surface at this point)
-  const up = position.clone().normalize();
+  // Surface normal - points away from Earth center (icon's local Y axis)
+  const surfaceNormal = position.clone().normalize();
 
-  // Calculate north direction at this point (tangent pointing toward north pole)
-  const north = new THREE.Vector3(0, 1, 0);
-  const east = new THREE.Vector3().crossVectors(north, up).normalize();
-  const northTangent = new THREE.Vector3().crossVectors(up, east).normalize();
+  // Calculate tangent directions at this point on the sphere
+  // We need "north" and "east" directions that lie flat on the surface
+  const worldUp = new THREE.Vector3(0, 1, 0);
 
-  // Rotate by heading (clockwise from north)
-  const headingRad = -heading * (Math.PI / 180);
-  const forward = new THREE.Vector3()
-    .addScaledVector(northTangent, Math.cos(headingRad))
+  // East = worldUp × surfaceNormal (perpendicular to both, tangent to surface)
+  const east = new THREE.Vector3().crossVectors(worldUp, surfaceNormal).normalize();
+
+  // North = surfaceNormal × east (tangent to surface, pointing toward north pole)
+  const north = new THREE.Vector3().crossVectors(surfaceNormal, east).normalize();
+
+  // Handle poles where east becomes undefined
+  if (east.lengthSq() < 0.001) {
+    east.set(1, 0, 0);
+    north.set(0, 0, lat > 0 ? -1 : 1);
+  }
+
+  // Calculate heading direction on the surface
+  // Heading: 0° = North, 90° = East (clockwise when viewed from above)
+  const headingRad = heading * (Math.PI / 180);
+  const headingDir = new THREE.Vector3()
+    .addScaledVector(north, Math.cos(headingRad))
     .addScaledVector(east, Math.sin(headingRad))
     .normalize();
 
-  // Create rotation matrix to orient symbol on Earth surface
-  const right = new THREE.Vector3().crossVectors(up, forward).normalize();
-  const correctedForward = new THREE.Vector3().crossVectors(right, up).normalize();
+  // Build orthonormal basis for the icon orientation:
+  // After rotateX(-PI/2), the geometry has:
+  //   - Face normal at local +Y (should point away from Earth = surfaceNormal)
+  //   - Nose at local -Z (should point in heading direction)
+  //   - Right wing at local +X
+  //
+  // So we set:
+  //   - basisY = surfaceNormal (face points away from Earth)
+  //   - basisZ = -headingDir (so that local -Z points in headingDir)
+  //   - basisX = basisY × basisZ (right-hand rule)
 
-  const rotationMatrix = new THREE.Matrix4().makeBasis(right, up, correctedForward);
+  const basisY = surfaceNormal;
+  const basisZ = headingDir.clone().negate();
+  const basisX = new THREE.Vector3().crossVectors(basisY, basisZ).normalize();
+
+  // Re-orthogonalize basisZ to ensure perfect orthonormality
+  const correctedBasisZ = new THREE.Vector3().crossVectors(basisX, basisY).normalize();
+
+  // Build rotation matrix with columns [X, Y, Z]
+  const rotationMatrix = new THREE.Matrix4().makeBasis(basisX, basisY, correctedBasisZ);
 
   // Combine position, rotation, and scale
   const matrix = new THREE.Matrix4();
@@ -376,15 +403,17 @@ shipShape.lineTo(-0.012, -0.015); // Port stern
 shipShape.closePath();
 
 const shipGeometry = new THREE.ShapeGeometry(shipShape);
-// Rotate geometry so it lies flat on the surface (Y-up becomes the normal)
+// Rotate geometry so it lies flat on the surface (face points +Y, away from Earth)
+// Negative rotation: bow (at +Y in shape) goes to -Z
 shipGeometry.rotateX(-Math.PI / 2);
 
 const shipMaterial = new THREE.MeshBasicMaterial({
   color: 0x00ff88,
-  side: THREE.DoubleSide,
+  side: THREE.FrontSide,
   transparent: true,
   opacity: 0.9,
-  depthWrite: false, // Prevents z-fighting with Earth
+  depthTest: true,
+  depthWrite: true,
 });
 
 // Create InstancedMesh for ships
@@ -415,15 +444,17 @@ aircraftShape.lineTo(-0.003, 0.01); // Left fuselage
 aircraftShape.closePath();
 
 const aircraftGeometry = new THREE.ShapeGeometry(aircraftShape);
-// Rotate geometry so it lies flat on the surface
+// Rotate geometry so it lies flat on the surface (face points +Y, away from Earth)
+// Negative rotation: nose (at +Y in shape) goes to -Z
 aircraftGeometry.rotateX(-Math.PI / 2);
 
 const aircraftMaterial = new THREE.MeshBasicMaterial({
   color: 0xffaa00,
-  side: THREE.DoubleSide,
+  side: THREE.FrontSide,
   transparent: true,
   opacity: 0.9,
-  depthWrite: false,
+  depthTest: true,
+  depthWrite: true,
 });
 
 // Create InstancedMesh for aircraft
@@ -491,24 +522,175 @@ function updateAircraft(aircraft, globalScale = currentIconScale) {
 
 /**
  * Update icon scale based on camera distance
- * Only rebuilds matrices if scale changed significantly
+ * The motion simulation handles matrix rebuilds, this just updates the scale factor
  */
 function updateIconScale(cameraDistance) {
   const baseDistance = 13;
-  const newScale = cameraDistance / baseDistance;
+  currentIconScale = cameraDistance / baseDistance;
+}
 
-  // Only update if scale changed by more than 5% to avoid constant rebuilding
-  if (Math.abs(newScale - currentIconScale) / currentIconScale > 0.05) {
-    currentIconScale = newScale;
+// -----------------------------------------------------------------------------
+// Motion Simulation System
+// -----------------------------------------------------------------------------
 
-    // Rebuild matrices with new scale
-    if (currentShipsData.length > 0) {
-      updateShips(currentShipsData, currentIconScale);
-    }
-    if (currentAircraftData.length > 0) {
-      updateAircraft(currentAircraftData, currentIconScale);
-    }
+// Motion parameters - simplified with single speed slider per type
+const motionParams = {
+  // Speed multipliers (1 = normal, higher = faster)
+  shipSpeed: 1.0,
+  aircraftSpeed: 1.0,
+
+  // Base values (internal, not exposed to GUI)
+  shipBaseSpeed: 0.002,      // degrees per second at multiplier 1
+  shipBaseTurnRate: 15,      // degrees per second at multiplier 1
+  aircraftBaseSpeed: 0.02,   // degrees per second at multiplier 1
+  aircraftBaseTurnRate: 45,  // degrees per second at multiplier 1
+
+  // How often units change course (seconds)
+  courseChangeInterval: 10,
+  courseChangeVariance: 5,
+};
+
+// Simulation state for all units
+let shipSimState = [];
+let aircraftSimState = [];
+let lastSimTime = 0;
+
+/**
+ * Initialize simulation state for a unit
+ */
+function initUnitState(lat, lon, heading, isAircraft) {
+  // Base speed with some random variation (±20%)
+  const baseSpeedRef = isAircraft ? motionParams.aircraftBaseSpeed : motionParams.shipBaseSpeed;
+  const baseTurnRef = isAircraft ? motionParams.aircraftBaseTurnRate : motionParams.shipBaseTurnRate;
+
+  return {
+    lat,
+    lon,
+    heading,
+    targetHeading: heading,
+    baseSpeed: baseSpeedRef * (0.8 + Math.random() * 0.4),
+    baseTurnRate: baseTurnRef * (0.8 + Math.random() * 0.4),
+    scale: 0.8 + Math.random() * 0.4,
+    nextCourseChange: Math.random() * motionParams.courseChangeInterval,
+    isAircraft,
+  };
+}
+
+/**
+ * Normalize angle to 0-360 range
+ */
+function normalizeAngle(angle) {
+  while (angle < 0) angle += 360;
+  while (angle >= 360) angle -= 360;
+  return angle;
+}
+
+/**
+ * Calculate shortest turn direction between two angles
+ */
+function shortestTurnDirection(current, target) {
+  const diff = normalizeAngle(target - current);
+  return diff <= 180 ? diff : diff - 360;
+}
+
+/**
+ * Update a single unit's position and heading
+ */
+function updateUnitMotion(unit, deltaTime) {
+  // Get current speed multiplier from params
+  const speedMultiplier = unit.isAircraft ? motionParams.aircraftSpeed : motionParams.shipSpeed;
+  const currentSpeed = unit.baseSpeed * speedMultiplier;
+  const currentTurnRate = unit.baseTurnRate * speedMultiplier;
+
+  // Smooth heading interpolation (realistic turning)
+  const turnDiff = shortestTurnDirection(unit.heading, unit.targetHeading);
+  const maxTurn = currentTurnRate * deltaTime;
+
+  if (Math.abs(turnDiff) <= maxTurn) {
+    unit.heading = unit.targetHeading;
+  } else {
+    unit.heading = normalizeAngle(unit.heading + Math.sign(turnDiff) * maxTurn);
   }
+
+  // Convert heading to radians for motion calculation
+  // Heading: 0 = North, 90 = East (clockwise)
+  // cos(heading) = North component, sin(heading) = East component
+  const headingRad = unit.heading * (Math.PI / 180);
+
+  // Calculate movement in lat/lon
+  // Speed is in degrees per second
+  // Latitude: positive = north
+  // Longitude: positive = east, adjusted for converging meridians
+  const latSpeed = currentSpeed * Math.cos(headingRad);
+  const lonSpeed = currentSpeed * Math.sin(headingRad) / Math.max(0.1, Math.cos(unit.lat * Math.PI / 180));
+
+  // Update position
+  unit.lat += latSpeed * deltaTime;
+  unit.lon += lonSpeed * deltaTime;
+
+  // Clamp latitude to valid range
+  unit.lat = Math.max(-85, Math.min(85, unit.lat));
+
+  // Wrap longitude
+  if (unit.lon > 180) unit.lon -= 360;
+  if (unit.lon < -180) unit.lon += 360;
+
+  // Course changes
+  unit.nextCourseChange -= deltaTime;
+  if (unit.nextCourseChange <= 0) {
+    // Pick a new target heading (realistic: usually small adjustments)
+    const courseChange = (Math.random() - 0.5) * 60; // ±30 degrees typical
+    unit.targetHeading = normalizeAngle(unit.heading + courseChange);
+
+    // Occasionally make larger course changes
+    if (Math.random() < 0.1) {
+      unit.targetHeading = normalizeAngle(unit.heading + (Math.random() - 0.5) * 180);
+    }
+
+    // Reset timer with some variance
+    unit.nextCourseChange = motionParams.courseChangeInterval +
+      (Math.random() - 0.5) * motionParams.courseChangeVariance * 2;
+  }
+}
+
+/**
+ * Update all units' motion and refresh the display
+ */
+function updateMotionSimulation(currentTime) {
+  const deltaTime = lastSimTime === 0 ? 0 : currentTime - lastSimTime;
+  lastSimTime = currentTime;
+
+  // Skip if deltaTime is too large (e.g., tab was inactive)
+  if (deltaTime > 1) return;
+
+  // Update ships
+  for (const ship of shipSimState) {
+    updateUnitMotion(ship, deltaTime);
+  }
+
+  // Update aircraft
+  for (const aircraft of aircraftSimState) {
+    updateUnitMotion(aircraft, deltaTime);
+  }
+
+  // Convert sim state to display data and update instances
+  currentShipsData = shipSimState.map(s => ({
+    lat: s.lat,
+    lon: s.lon,
+    heading: s.heading,
+    scale: s.scale,
+  }));
+
+  currentAircraftData = aircraftSimState.map(a => ({
+    lat: a.lat,
+    lon: a.lon,
+    heading: a.heading,
+    scale: a.scale,
+  }));
+
+  // Update instance matrices
+  updateShips(currentShipsData, currentIconScale);
+  updateAircraft(currentAircraftData, currentIconScale);
 }
 
 // -----------------------------------------------------------------------------
@@ -516,7 +698,6 @@ function updateIconScale(cameraDistance) {
 // -----------------------------------------------------------------------------
 function generateDemoData() {
   // Generate demo ships (major shipping routes)
-  const demoShips = [];
   const shippingRoutes = [
     { latRange: [30, 40], lonRange: [-80, -10], count: 50 }, // Atlantic
     { latRange: [0, 30], lonRange: [50, 100], count: 40 }, // Indian Ocean
@@ -525,19 +706,19 @@ function generateDemoData() {
     { latRange: [50, 60], lonRange: [-10, 30], count: 25 }, // North Sea / Baltic
   ];
 
+  shipSimState = [];
   for (const route of shippingRoutes) {
     for (let i = 0; i < route.count; i++) {
-      demoShips.push({
-        lat: route.latRange[0] + Math.random() * (route.latRange[1] - route.latRange[0]),
-        lon: route.lonRange[0] + Math.random() * (route.lonRange[1] - route.lonRange[0]),
-        heading: Math.random() * 360,
-        scale: 0.8 + Math.random() * 0.4,
-      });
+      shipSimState.push(initUnitState(
+        route.latRange[0] + Math.random() * (route.latRange[1] - route.latRange[0]),
+        route.lonRange[0] + Math.random() * (route.lonRange[1] - route.lonRange[0]),
+        Math.random() * 360,
+        false // isAircraft
+      ));
     }
   }
 
   // Generate demo aircraft (major flight corridors)
-  const demoAircraft = [];
   const flightCorridors = [
     { latRange: [35, 55], lonRange: [-130, -70], count: 80 }, // US domestic
     { latRange: [45, 65], lonRange: [-60, 30], count: 70 }, // Transatlantic
@@ -546,24 +727,21 @@ function generateDemoData() {
     { latRange: [-40, 0], lonRange: [110, 160], count: 30 }, // Australia
   ];
 
+  aircraftSimState = [];
   for (const corridor of flightCorridors) {
     for (let i = 0; i < corridor.count; i++) {
-      demoAircraft.push({
-        lat: corridor.latRange[0] + Math.random() * (corridor.latRange[1] - corridor.latRange[0]),
-        lon: corridor.lonRange[0] + Math.random() * (corridor.lonRange[1] - corridor.lonRange[0]),
-        heading: Math.random() * 360,
-        scale: 0.8 + Math.random() * 0.4,
-      });
+      aircraftSimState.push(initUnitState(
+        corridor.latRange[0] + Math.random() * (corridor.latRange[1] - corridor.latRange[0]),
+        corridor.lonRange[0] + Math.random() * (corridor.lonRange[1] - corridor.lonRange[0]),
+        Math.random() * 360,
+        true // isAircraft
+      ));
     }
   }
-
-  return { ships: demoShips, aircraft: demoAircraft };
 }
 
-// Initialize with demo data
-const demoData = generateDemoData();
-updateShips(demoData.ships);
-updateAircraft(demoData.aircraft);
+// Initialize demo data
+generateDemoData();
 
 // Build the lat/lon grid (now that latLonToPosition is defined)
 buildGrid();
@@ -571,6 +749,8 @@ buildGrid();
 // Export update functions for external use (e.g., real AIS/FlightAware data)
 window.updateShips = updateShips;
 window.updateAircraft = updateAircraft;
+window.shipSimState = shipSimState;
+window.aircraftSimState = aircraftSimState;
 
 /**
  * =============================================================================
@@ -643,6 +823,11 @@ gridFolder.add(gridParameters, "latInterval", [10, 15, 30, 45]).name("Lat Interv
 gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interval").onChange(() => {
   buildGrid();
 });
+
+// Motion/Speed folder - simplified controls
+const motionFolder = gui.addFolder("Motion");
+motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
+motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
 
 /**
  * =============================================================================
@@ -749,6 +934,9 @@ const tick = () => {
 
   // Earth rotation disabled
   // earth.rotation.y = elapsedTime * 0.01;
+
+  // Update motion simulation for ships and aircraft
+  updateMotionSimulation(elapsedTime);
 
   // Scale tracking icons based on camera distance
   // Icons should be smaller when zoomed in, larger when zoomed out
