@@ -82,8 +82,16 @@ void main() {
     + basisY * localPos.y
     + basisZ * localPos.z;
 
-  // Pass normal to fragment shader
-  vNormal = normalize(normalMatrix * surfaceNormal);
+  // Transform the geometry normal using the same basis
+  vec3 localNormal = normal;
+  vec3 transformedNormal = normalize(
+    basisX * localNormal.x +
+    basisY * localNormal.y +
+    basisZ * localNormal.z
+  );
+
+  // Pass transformed normal to fragment shader
+  vNormal = normalize(normalMatrix * transformedNormal);
 
   // Calculate view direction
   vec3 worldPos = (modelMatrix * vec4(transformedPos, 1.0)).xyz;

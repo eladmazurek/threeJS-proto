@@ -1,7 +1,7 @@
 /**
- * Tactical Glass Vertex Shader
+ * Realistic Glass Vertex Shader
  *
- * GPU-based orientation with additional varyings for glass effects.
+ * GPU-based orientation with proper normal transformation for 3D extruded shapes.
  */
 
 // Instanced attributes (per-instance data)
@@ -15,7 +15,7 @@ uniform float uEarthRadius;  // Earth sphere radius
 uniform float uAltitude;     // Height above surface
 
 // Varyings for fragment shader
-varying vec3 vNormal;        // Surface normal for lighting
+varying vec3 vNormal;        // Transformed normal for lighting
 varying vec3 vViewDirection; // View direction for fresnel
 varying vec2 vLocalPos;      // Local position for gradients
 
@@ -63,7 +63,7 @@ void main() {
   float sinH = sin(headingRad);
   vec3 headingDir = normalize(north * cosH + east * sinH);
 
-  // Build orthonormal basis
+  // Build orthonormal basis for local-to-world transformation
   vec3 basisY = surfaceNormal;
   vec3 basisZ = -headingDir;
   vec3 basisX = normalize(cross(basisY, basisZ));
@@ -76,12 +76,19 @@ void main() {
     + basisY * localPos.y
     + basisZ * localPos.z;
 
-  // Pass normal to fragment shader (surface normal pointing up)
-  // For a flat icon lying on the surface, the normal is the surface normal
-  vNormal = normalize(normalMatrix * surfaceNormal);
+  // Transform the geometry normal using the same basis
+  // This allows extruded geometry sides to light correctly
+  vec3 localNormal = normal;
+  vec3 transformedNormal = normalize(
+    basisX * localNormal.x +
+    basisY * localNormal.y +
+    basisZ * localNormal.z
+  );
+
+  // Pass transformed normal to fragment shader
+  vNormal = normalize(normalMatrix * transformedNormal);
 
   // Calculate view direction (from fragment toward camera)
-  // transformedPos is in model space, transform to world space
   vec3 worldPos = (modelMatrix * vec4(transformedPos, 1.0)).xyz;
   vViewDirection = normalize(cameraPosition - worldPos);
 

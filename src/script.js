@@ -18,9 +18,8 @@ import earthFragmentShader from "./shaders/earth/fragment.glsl";
 // Import tracking icon shaders (GPU-based orientation)
 import trackingVertexShader from "./shaders/tracking/vertex.glsl";
 import trackingFragmentShader from "./shaders/tracking/fragment.glsl";
-import shadowVertexShader from "./shaders/tracking/shadow-vertex.glsl";
 
-// Import glass shaders for tactical UI look
+// Import glass shaders for realistic glass UI look
 import glassVertexShader from "./shaders/tracking/glass-vertex.glsl";
 import glassFragmentShader from "./shaders/tracking/glass-fragment.glsl";
 import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
@@ -531,6 +530,11 @@ function createTrackingGeometry(baseGeometry, maxInstances) {
   instancedGeometry.index = baseGeometry.index;
   instancedGeometry.attributes.position = baseGeometry.attributes.position;
 
+  // Copy normal attribute if present (needed for extruded geometry lighting)
+  if (baseGeometry.attributes.normal) {
+    instancedGeometry.attributes.normal = baseGeometry.attributes.normal;
+  }
+
   // Create instanced attribute buffers
   const latArray = new Float32Array(maxInstances);
   const lonArray = new Float32Array(maxInstances);
@@ -584,30 +588,34 @@ shipShape.closePath();
 
 const shipBaseGeometry = new THREE.ShapeGeometry(shipShape);
 // Rotate geometry so it lies flat on the surface (face points +Y, away from Earth)
-// Negative rotation: bow (at +Y in shape) goes to -Z
 shipBaseGeometry.rotateX(-Math.PI / 2);
+// Compute normals for lighting
+shipBaseGeometry.computeVertexNormals();
 
 // Create instanced geometry with tracking attributes
 const shipGeometry = createTrackingGeometry(shipBaseGeometry, MAX_SHIPS);
 
-// Create tactical glass material for ships
+// Create glass material for ships
 const shipMaterial = new THREE.ShaderMaterial({
   vertexShader: glassVertexShader,
   fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uAltitude: { value: SHIP_ALTITUDE },
-    uColor: { value: new THREE.Color(0x00cc66) }, // Slightly deeper green
-    uOpacity: { value: 0.7 },
+    uColor: { value: new THREE.Color(0x00cc66) }, // Green
+    uOpacity: { value: 0.8 },
     uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
     uFresnelPower: { value: 2.0 },
     uSpecularPower: { value: 32.0 },
     uGlowColor: { value: new THREE.Color(0x88ffcc) }, // Lighter green glow
+    uIOR: { value: 1.5 },
+    uThickness: { value: 1.0 },
+    uReflectivity: { value: 0.3 },
   },
   transparent: true,
   side: THREE.DoubleSide,
   depthTest: true,
-  depthWrite: false, // Better blending for glass
+  depthWrite: false,
   blending: THREE.NormalBlending,
 });
 
@@ -640,30 +648,34 @@ aircraftShape.closePath();
 
 const aircraftBaseGeometry = new THREE.ShapeGeometry(aircraftShape);
 // Rotate geometry so it lies flat on the surface (face points +Y, away from Earth)
-// Negative rotation: nose (at +Y in shape) goes to -Z
 aircraftBaseGeometry.rotateX(-Math.PI / 2);
+// Compute normals for lighting
+aircraftBaseGeometry.computeVertexNormals();
 
 // Create instanced geometry with tracking attributes
 const aircraftGeometry = createTrackingGeometry(aircraftBaseGeometry, MAX_AIRCRAFT);
 
-// Create tactical glass material for aircraft
+// Create glass material for aircraft
 const aircraftMaterial = new THREE.ShaderMaterial({
   vertexShader: glassVertexShader,
   fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uAltitude: { value: AIRCRAFT_ALTITUDE },
-    uColor: { value: new THREE.Color(0xff8800) }, // Slightly deeper orange
-    uOpacity: { value: 0.7 },
+    uColor: { value: new THREE.Color(0xff8800) }, // Orange
+    uOpacity: { value: 0.8 },
     uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
     uFresnelPower: { value: 2.0 },
     uSpecularPower: { value: 32.0 },
     uGlowColor: { value: new THREE.Color(0xffcc66) }, // Lighter orange/yellow glow
+    uIOR: { value: 1.5 },
+    uThickness: { value: 1.0 },
+    uReflectivity: { value: 0.3 },
   },
   transparent: true,
   side: THREE.DoubleSide,
   depthTest: true,
-  depthWrite: false, // Better blending for glass
+  depthWrite: false,
   blending: THREE.NormalBlending,
 });
 
@@ -672,46 +684,6 @@ const aircraftMesh = new THREE.Mesh(aircraftGeometry, aircraftMaterial);
 aircraftMesh.frustumCulled = false;
 aircraftMesh.renderOrder = 2; // Render aircraft after ships (above ships)
 earth.add(aircraftMesh);
-
-// -----------------------------------------------------------------------------
-// Aircraft Shadows - shares attribute buffers with aircraft for automatic sync
-// -----------------------------------------------------------------------------
-const SHADOW_ALTITUDE = 0.001; // Just above surface to prevent z-fighting
-
-// Create shadow geometry that shares the same instanced attributes as aircraft
-const aircraftShadowGeometry = new THREE.InstancedBufferGeometry();
-aircraftShadowGeometry.index = aircraftBaseGeometry.index;
-aircraftShadowGeometry.attributes.position = aircraftBaseGeometry.attributes.position;
-
-// Share the same attribute buffers - shadows auto-update when aircraft move!
-aircraftShadowGeometry.setAttribute('aLat', aircraftGeometry.getAttribute('aLat'));
-aircraftShadowGeometry.setAttribute('aLon', aircraftGeometry.getAttribute('aLon'));
-aircraftShadowGeometry.setAttribute('aHeading', aircraftGeometry.getAttribute('aHeading'));
-aircraftShadowGeometry.setAttribute('aScale', aircraftGeometry.getAttribute('aScale'));
-
-// Shadow material - dark and semi-transparent, offset by sun direction
-const aircraftShadowMaterial = new THREE.ShaderMaterial({
-  vertexShader: shadowVertexShader,
-  fragmentShader: trackingFragmentShader,
-  uniforms: {
-    uEarthRadius: { value: EARTH_RADIUS },
-    uAircraftAltitude: { value: AIRCRAFT_ALTITUDE },
-    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
-    uShadowLength: { value: 1.0 }, // Shadow length multiplier
-    uColor: { value: new THREE.Color(0x000000) }, // Black shadow
-    uOpacity: { value: 0.3 }, // Semi-transparent
-  },
-  transparent: true,
-  side: THREE.FrontSide,
-  depthTest: true,
-  depthWrite: false, // Don't write to depth buffer
-});
-
-// Create shadow mesh
-const aircraftShadowMesh = new THREE.Mesh(aircraftShadowGeometry, aircraftShadowMaterial);
-aircraftShadowMesh.frustumCulled = false;
-aircraftShadowMesh.renderOrder = 0; // Render shadows first (below ships and aircraft)
-earth.add(aircraftShadowMesh);
 
 // -----------------------------------------------------------------------------
 // Satellite Symbol Geometry (diamond with solar panel wings)
@@ -745,13 +717,23 @@ mergedPositions.set(bodyPositions, 0);
 mergedPositions.set(panelPositions, bodyPositions.length);
 satelliteBaseGeometry.setAttribute('position', new THREE.BufferAttribute(mergedPositions, 3));
 
+// Add normals (all pointing up in local space, i.e., +Z before rotation)
+const normalCount = mergedPositions.length / 3;
+const normals = new Float32Array(normalCount * 3);
+for (let i = 0; i < normalCount; i++) {
+  normals[i * 3] = 0;
+  normals[i * 3 + 1] = 0;
+  normals[i * 3 + 2] = 1; // Point up (will become +Y after rotation)
+}
+satelliteBaseGeometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+
 // Rotate to lie flat on surface
 satelliteBaseGeometry.rotateX(-Math.PI / 2);
 
 // Create instanced geometry with tracking attributes
 const satelliteGeometry = createTrackingGeometry(satelliteBaseGeometry, MAX_SATELLITES);
 
-// Create tactical glass material for satellites (cyan/blue color)
+// Create glass material for satellites (cyan/blue color)
 const satelliteMaterial = new THREE.ShaderMaterial({
   vertexShader: satelliteVertexShader,
   fragmentShader: glassFragmentShader,
@@ -761,9 +743,12 @@ const satelliteMaterial = new THREE.ShaderMaterial({
     uColor: { value: new THREE.Color(0x00aaff) }, // Cyan blue
     uOpacity: { value: 0.8 },
     uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
-    uFresnelPower: { value: 2.5 },
-    uSpecularPower: { value: 48.0 },
+    uFresnelPower: { value: 2.0 },
+    uSpecularPower: { value: 32.0 },
     uGlowColor: { value: new THREE.Color(0x66ddff) }, // Lighter cyan glow
+    uIOR: { value: 1.5 },
+    uThickness: { value: 1.0 },
+    uReflectivity: { value: 0.3 },
   },
   transparent: true,
   side: THREE.DoubleSide,
@@ -1180,9 +1165,8 @@ function updateAircraftAttributes() {
   data.headingAttr.needsUpdate = true;
   data.scaleAttr.needsUpdate = true;
 
-  // Set instance count for rendering (aircraft and shadows share buffers)
+  // Set instance count for rendering
   aircraftGeometry.instanceCount = count;
-  aircraftShadowGeometry.instanceCount = count;
 }
 
 /**
@@ -1780,9 +1764,6 @@ function updateSunDirection() {
   shipMaterial.uniforms.uSunDirection.value.copy(sunDir);
   aircraftMaterial.uniforms.uSunDirection.value.copy(sunDir);
   satelliteMaterial.uniforms.uSunDirection.value.copy(sunDir);
-
-  // Update aircraft shadow shader
-  aircraftShadowMaterial.uniforms.uSunDirection.value.copy(sunDir);
 }
 
 // Grid folder
@@ -1937,6 +1918,11 @@ const controls = new OrbitControls(camera, canvas);
 // Enable damping for smooth, momentum-based camera movement
 // Without this, camera stops immediately when you release the mouse
 controls.enableDamping = true;
+controls.dampingFactor = 0.05; // Smoother deceleration
+
+// Prevent zooming inside the Earth
+controls.minDistance = EARTH_RADIUS + 0.5; // Stay above surface
+controls.maxDistance = 20; // Don't zoom too far out
 
 /**
  * =============================================================================
@@ -1992,6 +1978,11 @@ const tick = () => {
   // Icons should be smaller when zoomed in, larger when zoomed out
   const cameraDistance = camera.position.length();
   updateIconScale(cameraDistance);
+
+  // Adjust rotation speed based on zoom level
+  // Slower when zoomed in for precise control, faster when zoomed out
+  const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
+  controls.rotateSpeed = 0.3 + zoomFactor * 0.7; // Range: 0.3 (close) to 1.0 (far)
 
   // Update OrbitControls - required for damping to work
   controls.update();

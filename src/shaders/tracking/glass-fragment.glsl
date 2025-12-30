@@ -1,85 +1,51 @@
 /**
  * Tactical Glass Fragment Shader
  *
- * Creates a frosted glass UI look with:
- * - Fresnel rim lighting (glowing edges)
- * - Specular highlights from sun
- * - Gradient opacity for depth
- * - Bevel/edge glow effects
+ * Efficient glass-like appearance with:
+ * - Fresnel rim lighting
+ * - Specular sun highlight
+ * - Color tinting
  */
 
-uniform vec3 uColor;           // Base color (green for ships, orange for aircraft)
+uniform vec3 uColor;           // Base tint color
 uniform float uOpacity;        // Base opacity
 uniform vec3 uSunDirection;    // Direction to sun for specular
-uniform float uFresnelPower;   // Fresnel edge glow intensity
+uniform float uFresnelPower;   // Fresnel edge intensity
 uniform float uSpecularPower;  // Specular highlight sharpness
-uniform vec3 uGlowColor;       // Edge glow color (usually lighter than base)
+uniform vec3 uGlowColor;       // Edge glow color
 
-varying vec3 vNormal;          // Surface normal in world space
-varying vec3 vViewDirection;   // Direction from fragment to camera
-varying vec2 vLocalPos;        // Local position for gradient effects
+// These uniforms kept for compatibility but simplified
+uniform float uIOR;
+uniform float uThickness;
+uniform float uReflectivity;
+
+varying vec3 vNormal;
+varying vec3 vViewDirection;
+varying vec2 vLocalPos;
 
 void main() {
-  // Normalize interpolated vectors
   vec3 normal = normalize(vNormal);
   vec3 viewDir = normalize(vViewDirection);
 
-  // ==========================================================================
-  // FRESNEL RIM LIGHTING - edges glow brighter
-  // ==========================================================================
-  float fresnel = 1.0 - abs(dot(viewDir, normal));
-  fresnel = pow(fresnel, uFresnelPower);
+  // Facing ratio
+  float NdotV = max(0.0, dot(normal, viewDir));
 
-  // ==========================================================================
-  // SPECULAR HIGHLIGHT - sun reflection
-  // ==========================================================================
+  // Simple fresnel (edge glow)
+  float fresnel = pow(1.0 - NdotV, uFresnelPower);
+
+  // Specular highlight
   vec3 halfVector = normalize(uSunDirection + viewDir);
-  float specular = max(0.0, dot(normal, halfVector));
-  specular = pow(specular, uSpecularPower);
+  float NdotH = max(0.0, dot(normal, halfVector));
+  float specular = pow(NdotH, uSpecularPower);
 
-  // Add a secondary, softer specular for broader shine
-  float specularSoft = pow(max(0.0, dot(normal, halfVector)), uSpecularPower * 0.25);
-
-  // ==========================================================================
-  // GRADIENT OPACITY - slight variation across surface
-  // ==========================================================================
-  // Distance from center for radial gradient
-  float distFromCenter = length(vLocalPos);
-  float gradientOpacity = mix(0.85, 1.0, distFromCenter * 0.5);
-
-  // ==========================================================================
-  // BEVEL SIMULATION - edges catch more light
-  // ==========================================================================
-  float edgeBrightness = smoothstep(0.3, 0.8, distFromCenter);
-
-  // ==========================================================================
-  // COMBINE EFFECTS
-  // ==========================================================================
-
-  // Base frosted glass color
+  // Combine
   vec3 baseColor = uColor;
+  baseColor += uGlowColor * fresnel * 0.5;  // Edge glow
+  baseColor += vec3(1.0) * specular;         // Specular highlight
 
-  // Add fresnel glow (edge lighting)
-  vec3 fresnelGlow = uGlowColor * fresnel * 0.8;
+  // Opacity with fresnel boost at edges
+  float finalOpacity = uOpacity + fresnel * 0.3 + specular * 0.4;
+  finalOpacity = min(1.0, finalOpacity);
 
-  // Add specular highlights
-  vec3 specularColor = vec3(1.0) * (specular * 0.9 + specularSoft * 0.3);
-
-  // Add subtle edge bevel highlight
-  vec3 bevelHighlight = uGlowColor * edgeBrightness * 0.2;
-
-  // Combine all lighting
-  vec3 finalColor = baseColor + fresnelGlow + specularColor + bevelHighlight;
-
-  // Calculate final opacity
-  // - Base opacity
-  // - Fresnel adds opacity at edges (glass effect)
-  // - Gradient varies slightly across surface
-  float finalOpacity = uOpacity * gradientOpacity;
-  finalOpacity = mix(finalOpacity, min(1.0, finalOpacity + 0.3), fresnel);
-
-  // Add extra opacity for specular highlights
-  finalOpacity = min(1.0, finalOpacity + specular * 0.5);
-
-  gl_FragColor = vec4(finalColor, finalOpacity);
+  gl_FragColor = vec4(baseColor, finalOpacity);
 }
