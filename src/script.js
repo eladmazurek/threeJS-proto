@@ -34,6 +34,46 @@ import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
 // Debug GUI - lil-gui provides a panel for tweaking parameters in real-time
 // Access it in the top-right corner of the screen
 const gui = new GUI();
+gui.title("Controls");
+
+// Inject tactical GUI styles immediately
+(function injectTacticalGuiStyles() {
+  const style = document.createElement("style");
+  style.id = "tactical-gui-styles";
+  style.textContent = `
+    /* All folder/section titles - cyan, uppercase, with blue accent border */
+    .lil-gui .lil-title {
+      background: linear-gradient(90deg, rgba(40, 80, 100, 0.5) 0%, transparent 100%) !important;
+      color: #6cf !important;
+      text-transform: uppercase !important;
+      font-weight: 600 !important;
+      letter-spacing: 1.5px !important;
+      font-size: 10px !important;
+      border-left: 3px solid #4af !important;
+      padding-left: 10px !important;
+    }
+
+    /* Controller labels - dimmer gray, normal case */
+    .lil-gui .lil-name {
+      color: rgba(120, 135, 145, 0.85) !important;
+      font-size: 10px !important;
+      font-weight: 400 !important;
+      letter-spacing: 0.3px !important;
+      text-transform: none !important;
+    }
+
+    /* Make sliders more tactical */
+    .lil-gui .slider {
+      background: rgba(40, 60, 80, 0.6) !important;
+    }
+
+    .lil-gui .fill {
+      background: linear-gradient(90deg, #2a6080 0%, #4af 100%) !important;
+    }
+  `;
+  document.head.appendChild(style);
+  console.log("Tactical GUI styles injected");
+})();
 
 // Earth radius constant - must match the sphere geometry radius
 const EARTH_RADIUS = 2;
@@ -1834,6 +1874,7 @@ function updateFpsCounter() {
     lastFpsTime = now;
   }
 }
+
 
 /**
  * =============================================================================
