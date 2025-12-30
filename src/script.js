@@ -35,44 +35,363 @@ import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
 const gui = new GUI();
 gui.title("Controls");
 
-// Inject tactical GUI styles immediately
-(function injectTacticalGuiStyles() {
+// Inject SpaceX-style GUI styles
+(function injectSpacexGuiStyles() {
   const style = document.createElement("style");
-  style.id = "tactical-gui-styles";
+  style.id = "spacex-gui-styles";
   style.textContent = `
-    /* All folder/section titles - cyan, uppercase, with blue accent border */
+    /* Main GUI container - minimal dark style */
+    .lil-gui {
+      --background-color: rgba(0, 0, 0, 0.85) !important;
+      --widget-color: rgba(255, 255, 255, 0.1) !important;
+      --focus-color: rgba(255, 255, 255, 0.2) !important;
+      --hover-color: rgba(255, 255, 255, 0.15) !important;
+      --font-family: "Inter", "Helvetica Neue", Arial, sans-serif !important;
+      --font-size: 10px !important;
+      --number-color: #ffffff !important;
+      --string-color: #ffffff !important;
+      border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    }
+
+    /* Folder titles - minimal uppercase */
     .lil-gui .lil-title {
-      background: linear-gradient(90deg, rgba(40, 80, 100, 0.5) 0%, transparent 100%) !important;
-      color: #6cf !important;
+      background: transparent !important;
+      color: #ffffff !important;
       text-transform: uppercase !important;
-      font-weight: 600 !important;
-      letter-spacing: 1.5px !important;
-      font-size: 10px !important;
-      border-left: 3px solid #4af !important;
-      padding-left: 10px !important;
+      font-weight: 500 !important;
+      letter-spacing: 2px !important;
+      font-size: 9px !important;
+      border-left: 1px solid rgba(255, 255, 255, 0.3) !important;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+      padding: 8px 10px !important;
     }
 
-    /* Controller labels - dimmer gray, normal case */
+    .lil-gui .lil-title:hover {
+      background: rgba(255, 255, 255, 0.05) !important;
+    }
+
+    /* Controller labels - gray uppercase */
     .lil-gui .lil-name {
-      color: rgba(120, 135, 145, 0.85) !important;
-      font-size: 10px !important;
+      color: rgba(255, 255, 255, 0.5) !important;
+      font-size: 9px !important;
       font-weight: 400 !important;
-      letter-spacing: 0.3px !important;
-      text-transform: none !important;
+      letter-spacing: 1px !important;
+      text-transform: uppercase !important;
     }
 
-    /* Make sliders more tactical */
+    /* Sliders - minimal white */
     .lil-gui .slider {
-      background: rgba(40, 60, 80, 0.6) !important;
+      background: rgba(255, 255, 255, 0.1) !important;
     }
 
     .lil-gui .fill {
-      background: linear-gradient(90deg, #2a6080 0%, #4af 100%) !important;
+      background: rgba(255, 255, 255, 0.4) !important;
+    }
+
+    /* Input fields */
+    .lil-gui input {
+      background: rgba(255, 255, 255, 0.05) !important;
+      border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      color: #ffffff !important;
+    }
+
+    .lil-gui input:focus {
+      border-color: rgba(255, 255, 255, 0.4) !important;
+    }
+
+    /* Checkboxes */
+    .lil-gui input[type="checkbox"] {
+      border-color: rgba(255, 255, 255, 0.3) !important;
+    }
+
+    .lil-gui input[type="checkbox"]:checked {
+      background: #ffffff !important;
+    }
+
+    /* Select dropdowns */
+    .lil-gui select {
+      background: rgba(255, 255, 255, 0.05) !important;
+      border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      color: #ffffff !important;
+    }
+
+    /* Controller rows */
+    .lil-gui .controller {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
     }
   `;
   document.head.appendChild(style);
-  console.log("Tactical GUI styles injected");
 })();
+
+/**
+ * =============================================================================
+ * SPACEX-STYLE UI OVERLAYS
+ * =============================================================================
+ * Adds tactical UI elements: telemetry display, crosshair, viewport border, LIVE indicator
+ */
+
+// Create and inject UI overlay container
+(function createSpacexOverlays() {
+  // Main overlay container
+  const overlay = document.createElement("div");
+  overlay.id = "spacex-overlay";
+  overlay.innerHTML = `
+    <!-- Viewport border -->
+    <div id="viewport-border"></div>
+
+    <!-- Crosshair/reticle at center -->
+    <div id="crosshair">
+      <div class="crosshair-h"></div>
+      <div class="crosshair-v"></div>
+      <div class="crosshair-circle"></div>
+    </div>
+
+    <!-- LIVE indicator top-left -->
+    <div id="live-indicator">
+      <span class="live-dot"></span>
+      <span class="live-text">LIVE</span>
+    </div>
+
+    <!-- Telemetry overlay bottom-left -->
+    <div id="telemetry">
+      <div class="telemetry-row">
+        <span class="telemetry-label">ALT</span>
+        <span class="telemetry-value" id="tel-altitude">0.00</span>
+        <span class="telemetry-unit">km</span>
+      </div>
+      <div class="telemetry-row">
+        <span class="telemetry-label">LAT</span>
+        <span class="telemetry-value" id="tel-lat">0.00°</span>
+      </div>
+      <div class="telemetry-row">
+        <span class="telemetry-label">LON</span>
+        <span class="telemetry-value" id="tel-lon">0.00°</span>
+      </div>
+      <div class="telemetry-row">
+        <span class="telemetry-label">UNITS</span>
+        <span class="telemetry-value" id="tel-units">0</span>
+      </div>
+      <div class="telemetry-row">
+        <span class="telemetry-label">UTC</span>
+        <span class="telemetry-value" id="tel-utc">00:00:00</span>
+      </div>
+    </div>
+
+    <!-- Mission elapsed time top-center -->
+    <div id="mission-time">
+      <span class="mission-label">T+</span>
+      <span class="mission-value" id="met-value">00:00:00</span>
+    </div>
+  `;
+
+  // Inject styles for overlays
+  const style = document.createElement("style");
+  style.id = "spacex-overlay-styles";
+  style.textContent = `
+    #spacex-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+      font-family: "SF Mono", "Monaco", "Inconsolata", "Roboto Mono", monospace;
+    }
+
+    /* Viewport border - thin white line */
+    #viewport-border {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      pointer-events: none;
+    }
+
+    /* Crosshair at center */
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 40px;
+      height: 40px;
+    }
+
+    .crosshair-h, .crosshair-v {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .crosshair-h {
+      width: 100%;
+      height: 1px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .crosshair-v {
+      width: 1px;
+      height: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .crosshair-circle {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 16px;
+      height: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 50%;
+    }
+
+    /* LIVE indicator */
+    #live-indicator {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: #ff3333;
+      border-radius: 50%;
+      animation: live-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .live-text {
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 2px;
+    }
+
+    /* Telemetry display */
+    #telemetry {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .telemetry-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .telemetry-label {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 1px;
+      width: 40px;
+    }
+
+    .telemetry-value {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
+      min-width: 70px;
+    }
+
+    .telemetry-unit {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 9px;
+      font-weight: 400;
+    }
+
+    /* Mission elapsed time */
+    #mission-time {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .mission-label {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .mission-value {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 14px;
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 1px;
+    }
+  `;
+
+  document.head.appendChild(style);
+  document.body.appendChild(overlay);
+})();
+
+// References to telemetry elements for updates
+const telAltitude = document.getElementById("tel-altitude");
+const telLat = document.getElementById("tel-lat");
+const telLon = document.getElementById("tel-lon");
+const telUnits = document.getElementById("tel-units");
+const telUtc = document.getElementById("tel-utc");
+const metValue = document.getElementById("met-value");
+
+// Mission start time for elapsed time calculation
+const missionStartTime = Date.now();
+
+/**
+ * Update telemetry display with current values
+ */
+function updateTelemetry(cameraDistance, cameraPosition) {
+  // Altitude (scaled - assuming Earth radius = 6371km, our radius = 2)
+  const scaleFactor = 6371 / EARTH_RADIUS;
+  const altitudeKm = ((cameraDistance - EARTH_RADIUS) * scaleFactor).toFixed(0);
+  telAltitude.textContent = altitudeKm.toLocaleString();
+
+  // Calculate camera lat/lon from position
+  const camLength = cameraPosition.length();
+  const lat = Math.asin(cameraPosition.y / camLength) * (180 / Math.PI);
+  const lon = Math.atan2(cameraPosition.z, -cameraPosition.x) * (180 / Math.PI) - 180;
+  const normalizedLon = lon < -180 ? lon + 360 : lon;
+
+  telLat.textContent = lat.toFixed(2) + "°";
+  telLon.textContent = normalizedLon.toFixed(2) + "°";
+
+  // Unit counts
+  const totalUnits = shipSimState.length + aircraftSimState.length + satelliteSimState.length;
+  telUnits.textContent = totalUnits.toLocaleString();
+
+  // UTC time
+  const now = new Date();
+  telUtc.textContent = now.toISOString().substr(11, 8);
+
+  // Mission elapsed time
+  const elapsed = Math.floor((Date.now() - missionStartTime) / 1000);
+  const hours = Math.floor(elapsed / 3600).toString().padStart(2, "0");
+  const minutes = Math.floor((elapsed % 3600) / 60).toString().padStart(2, "0");
+  const seconds = (elapsed % 60).toString().padStart(2, "0");
+  metValue.textContent = `${hours}:${minutes}:${seconds}`;
+}
 
 // Earth radius constant - must match the sphere geometry radius
 const EARTH_RADIUS = 2;
@@ -118,16 +437,16 @@ const earthSpecularCloudsTexture = textureLoader.load("/earth/specularClouds.jpg
 
 // Parameters that can be adjusted via the GUI
 const earthParameters = {
-  atmosphereDayColor: "#88bbff", // Soft blue atmosphere on day side
-  atmosphereTwilightColor: "#aa7766", // Muted red/brown atmosphere at twilight
-  atmosphereIntensity: 0.18, // Overall atmosphere intensity (subtle)
-  cloudsIntensity: 0.1, // Opacity/intensity of cloud layer
+  atmosphereDayColor: "#4a90c2", // Subtle blue atmosphere (SpaceX style)
+  atmosphereTwilightColor: "#1a3a5c", // Dark blue twilight
+  atmosphereIntensity: 0.12, // Very subtle atmosphere
+  cloudsIntensity: 0.08, // Minimal clouds
   sunDirectionX: -1.0, // Sun direction X component
   sunDirectionY: 0.5, // Sun direction Y component
   sunDirectionZ: 1.0, // Sun direction Z component
-  specularIntensity: 0.4, // Overall sun glint intensity
-  specularSharpness: 800.0, // Sharpness of the center highlight (higher = tighter)
-  specularGlowSize: 200.0, // Size of the medium glow (higher = tighter)
+  specularIntensity: 0.3, // Subtle sun glint
+  specularSharpness: 800.0, // Sharpness of the center highlight
+  specularGlowSize: 200.0, // Size of the medium glow
 };
 
 // Create sphere geometry for the Earth
@@ -595,19 +914,19 @@ shipBaseGeometry.computeVertexNormals();
 // Create instanced geometry with tracking attributes
 const shipGeometry = createTrackingGeometry(shipBaseGeometry, MAX_SHIPS);
 
-// Create glass material for ships
+// Create glass material for ships (SpaceX teal - ocean/maritime)
 const shipMaterial = new THREE.ShaderMaterial({
   vertexShader: glassVertexShader,
   fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uAltitude: { value: SHIP_ALTITUDE },
-    uColor: { value: new THREE.Color(0x00cc66) }, // Green
-    uOpacity: { value: 0.8 },
+    uColor: { value: new THREE.Color(0x2dd4bf) }, // Modern teal
+    uOpacity: { value: 0.9 },
     uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
     uFresnelPower: { value: 2.0 },
     uSpecularPower: { value: 32.0 },
-    uGlowColor: { value: new THREE.Color(0x88ffcc) }, // Lighter green glow
+    uGlowColor: { value: new THREE.Color(0x5eead4) }, // Lighter teal glow
     uIOR: { value: 1.5 },
     uThickness: { value: 1.0 },
     uReflectivity: { value: 0.3 },
@@ -655,19 +974,19 @@ aircraftBaseGeometry.computeVertexNormals();
 // Create instanced geometry with tracking attributes
 const aircraftGeometry = createTrackingGeometry(aircraftBaseGeometry, MAX_AIRCRAFT);
 
-// Create glass material for aircraft
+// Create glass material for aircraft (SpaceX amber/orange - aviation)
 const aircraftMaterial = new THREE.ShaderMaterial({
   vertexShader: glassVertexShader,
   fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uAltitude: { value: AIRCRAFT_ALTITUDE },
-    uColor: { value: new THREE.Color(0xff8800) }, // Orange
-    uOpacity: { value: 0.8 },
+    uColor: { value: new THREE.Color(0xfbbf24) }, // Modern amber
+    uOpacity: { value: 0.9 },
     uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
     uFresnelPower: { value: 2.0 },
     uSpecularPower: { value: 32.0 },
-    uGlowColor: { value: new THREE.Color(0xffcc66) }, // Lighter orange/yellow glow
+    uGlowColor: { value: new THREE.Color(0xfde68a) }, // Lighter amber glow
     uIOR: { value: 1.5 },
     uThickness: { value: 1.0 },
     uReflectivity: { value: 0.3 },
@@ -733,19 +1052,19 @@ satelliteBaseGeometry.rotateX(-Math.PI / 2);
 // Create instanced geometry with tracking attributes
 const satelliteGeometry = createTrackingGeometry(satelliteBaseGeometry, MAX_SATELLITES);
 
-// Create glass material for satellites (cyan/blue color)
+// Create glass material for satellites (SpaceX violet/purple - space/tech)
 const satelliteMaterial = new THREE.ShaderMaterial({
   vertexShader: satelliteVertexShader,
   fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uBaseAltitude: { value: 0.1 },
-    uColor: { value: new THREE.Color(0x00aaff) }, // Cyan blue
-    uOpacity: { value: 0.8 },
+    uColor: { value: new THREE.Color(0xa78bfa) }, // Modern violet
+    uOpacity: { value: 0.85 },
     uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
     uFresnelPower: { value: 2.0 },
     uSpecularPower: { value: 32.0 },
-    uGlowColor: { value: new THREE.Color(0x66ddff) }, // Lighter cyan glow
+    uGlowColor: { value: new THREE.Color(0xc4b5fd) }, // Lighter violet glow
     uIOR: { value: 1.5 },
     uThickness: { value: 1.0 },
     uReflectivity: { value: 0.3 },
@@ -875,7 +1194,7 @@ const shipTrailMaterial = new THREE.ShaderMaterial({
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uPointSize: { value: 8.0 }, // Max size in pixels
-    uColor: { value: new THREE.Color(0x00ff88) }, // Green for ships
+    uColor: { value: new THREE.Color(0x2dd4bf) }, // Teal (matches ships)
     uBaseOpacity: { value: trailParams.opacity },
   },
   transparent: true,
@@ -897,7 +1216,7 @@ const aircraftTrailMaterial = new THREE.ShaderMaterial({
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uPointSize: { value: 8.0 }, // Max size in pixels
-    uColor: { value: new THREE.Color(0xffaa44) }, // Orange for aircraft
+    uColor: { value: new THREE.Color(0xfbbf24) }, // Amber (matches aircraft)
     uBaseOpacity: { value: trailParams.opacity },
   },
   transparent: true,
@@ -1940,8 +2259,8 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(sizes.width, sizes.height);
 renderer.setPixelRatio(sizes.pixelRatio);
 
-// Set background color to dark blue (simulating space)
-renderer.setClearColor("#000011");
+// Set background color to pure black (SpaceX style)
+renderer.setClearColor("#000000");
 
 // Set max anisotropic filtering for sharper textures at oblique angles
 const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -1983,6 +2302,9 @@ const tick = () => {
   // Slower when zoomed in for precise control, faster when zoomed out
   const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
   controls.rotateSpeed = 0.3 + zoomFactor * 0.7; // Range: 0.3 (close) to 1.0 (far)
+
+  // Update telemetry display
+  updateTelemetry(cameraDistance, camera.position);
 
   // Update OrbitControls - required for damping to work
   controls.update();
