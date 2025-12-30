@@ -2075,6 +2075,252 @@ generateDemoData();
 // Build the lat/lon grid (now that latLonToPosition is defined)
 buildGrid();
 
+/**
+ * =============================================================================
+ * AIRPORT MARKERS
+ * =============================================================================
+ * Major world airports with IATA codes displayed in SpaceX minimal style
+ */
+
+// Airport data: [IATA code, latitude, longitude, name]
+const AIRPORTS = [
+  // North America
+  ["JFK", 40.6413, -73.7781, "New York JFK"],
+  ["LAX", 33.9425, -118.4081, "Los Angeles"],
+  ["ORD", 41.9742, -87.9073, "Chicago O'Hare"],
+  ["ATL", 33.6407, -84.4277, "Atlanta"],
+  ["DFW", 32.8998, -97.0403, "Dallas"],
+  ["DEN", 39.8561, -104.6737, "Denver"],
+  ["SFO", 37.6213, -122.379, "San Francisco"],
+  ["SEA", 47.4502, -122.3088, "Seattle"],
+  ["MIA", 25.7959, -80.287, "Miami"],
+  ["YYZ", 43.6777, -79.6248, "Toronto"],
+  // Europe
+  ["LHR", 51.47, -0.4543, "London Heathrow"],
+  ["CDG", 49.0097, 2.5479, "Paris CDG"],
+  ["FRA", 50.0379, 8.5622, "Frankfurt"],
+  ["AMS", 52.3105, 4.7683, "Amsterdam"],
+  ["MAD", 40.4983, -3.5676, "Madrid"],
+  ["FCO", 41.8003, 12.2389, "Rome"],
+  ["MUC", 48.3537, 11.775, "Munich"],
+  ["ZRH", 47.4647, 8.5492, "Zurich"],
+  ["LGW", 51.1537, -0.1821, "London Gatwick"],
+  // Asia
+  ["HND", 35.5494, 139.7798, "Tokyo Haneda"],
+  ["NRT", 35.7653, 140.3856, "Tokyo Narita"],
+  ["PEK", 40.0799, 116.6031, "Beijing"],
+  ["PVG", 31.1443, 121.8083, "Shanghai"],
+  ["HKG", 22.308, 113.9185, "Hong Kong"],
+  ["SIN", 1.3644, 103.9915, "Singapore"],
+  ["ICN", 37.4602, 126.4407, "Seoul Incheon"],
+  ["BKK", 13.6900, 100.7501, "Bangkok"],
+  ["DEL", 28.5562, 77.1, "Delhi"],
+  ["DXB", 25.2532, 55.3657, "Dubai"],
+  // Oceania
+  ["SYD", -33.9399, 151.1753, "Sydney"],
+  ["MEL", -37.6733, 144.8433, "Melbourne"],
+  ["AKL", -37.0082, 174.7850, "Auckland"],
+  // South America
+  ["GRU", -23.4356, -46.4731, "São Paulo"],
+  ["EZE", -34.8222, -58.5358, "Buenos Aires"],
+  ["BOG", 4.7016, -74.1469, "Bogotá"],
+  ["SCL", -33.393, -70.7858, "Santiago"],
+  // Africa / Middle East
+  ["JNB", -26.1392, 28.246, "Johannesburg"],
+  ["CAI", 30.1219, 31.4056, "Cairo"],
+  ["CPT", -33.9715, 18.6021, "Cape Town"],
+  ["DOH", 25.2731, 51.6081, "Doha"],
+];
+
+// Airport display parameters
+const airportParams = {
+  visible: true,
+  showLabels: true,
+  markerSize: 0.02, // Default size (also controls label size)
+};
+
+// Group to hold all airport markers
+const airportGroup = new THREE.Group();
+airportGroup.renderOrder = 5;
+earth.add(airportGroup);
+
+/**
+ * Create airport marker sprite (small diamond shape)
+ */
+function createAirportMarker(lat, lon, code) {
+  const group = new THREE.Group();
+
+  // Calculate position on globe
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lon + 180) * (Math.PI / 180);
+  const radius = EARTH_RADIUS + 0.002; // Slightly above surface
+
+  const x = -radius * Math.sin(phi) * Math.cos(theta);
+  const y = radius * Math.cos(phi);
+  const z = radius * Math.sin(phi) * Math.sin(theta);
+
+  // Create marker (small diamond/dot)
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  canvas.width = 32;
+  canvas.height = 32;
+
+  // Draw diamond shape
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.beginPath();
+  ctx.moveTo(16, 4);   // top
+  ctx.lineTo(28, 16);  // right
+  ctx.lineTo(16, 28);  // bottom
+  ctx.lineTo(4, 16);   // left
+  ctx.closePath();
+  ctx.fill();
+
+  // Add subtle border
+  ctx.strokeStyle = "rgba(100, 200, 255, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const markerTexture = new THREE.CanvasTexture(canvas);
+  const markerMaterial = new THREE.SpriteMaterial({
+    map: markerTexture,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+  });
+
+  const marker = new THREE.Sprite(markerMaterial);
+  marker.position.set(x, y, z);
+  marker.scale.set(airportParams.markerSize, airportParams.markerSize, 1);
+  group.add(marker);
+
+  // Create label
+  const labelCanvas = document.createElement("canvas");
+  const labelCtx = labelCanvas.getContext("2d");
+  labelCanvas.width = 128;
+  labelCanvas.height = 48;
+
+  // Draw label background (subtle)
+  labelCtx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  labelCtx.roundRect(10, 8, 108, 32, 4);
+  labelCtx.fill();
+
+  // Draw text
+  labelCtx.fillStyle = "rgba(255, 255, 255, 0.95)";
+  labelCtx.font = "bold 22px 'SF Mono', Monaco, monospace";
+  labelCtx.textAlign = "center";
+  labelCtx.textBaseline = "middle";
+  labelCtx.fillText(code, 64, 24);
+
+  const labelTexture = new THREE.CanvasTexture(labelCanvas);
+  const labelMaterial = new THREE.SpriteMaterial({
+    map: labelTexture,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+  });
+
+  const label = new THREE.Sprite(labelMaterial);
+  // Position label to the right of the marker (tangent to surface)
+  const normal = new THREE.Vector3(x, y, z).normalize();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(worldUp, normal).normalize();
+  // Handle poles
+  if (right.length() < 0.001) {
+    right.set(1, 0, 0);
+  }
+  const labelOffset = 0.02;
+  label.position.set(
+    x + right.x * labelOffset,
+    y + right.y * labelOffset,
+    z + right.z * labelOffset
+  );
+  label.scale.set(0.04, 0.015, 1); // Smaller base size
+  label.userData.isLabel = true;
+  label.userData.baseScale = { x: 0.04, y: 0.015 };
+  group.add(label);
+
+  // Store marker base scale for dynamic sizing
+  marker.userData.baseScale = airportParams.markerSize;
+
+  return group;
+}
+
+/**
+ * Build all airport markers
+ */
+function buildAirportMarkers() {
+  // Clear existing markers
+  while (airportGroup.children.length > 0) {
+    const child = airportGroup.children[0];
+    child.traverse((obj) => {
+      if (obj.material) {
+        if (obj.material.map) obj.material.map.dispose();
+        obj.material.dispose();
+      }
+    });
+    airportGroup.remove(child);
+  }
+
+  // Create markers for each airport
+  for (const [code, lat, lon] of AIRPORTS) {
+    const marker = createAirportMarker(lat, lon, code);
+    airportGroup.add(marker);
+  }
+
+  // Update visibility
+  airportGroup.visible = airportParams.visible;
+  updateAirportLabels();
+}
+
+/**
+ * Toggle airport label visibility
+ */
+function updateAirportLabels() {
+  airportGroup.traverse((obj) => {
+    if (obj.userData && obj.userData.isLabel) {
+      obj.visible = airportParams.showLabels;
+    }
+  });
+}
+
+/**
+ * Update airport marker and label scales based on camera distance
+ * Keeps them at a consistent screen size regardless of zoom
+ */
+function updateAirportScales(cameraDistance) {
+  // Scale factor: smaller when zoomed in, larger when zoomed out
+  // Normalize to a comfortable size at mid-zoom
+  const midZoom = 5; // Reference distance
+  const scaleFactor = cameraDistance / midZoom;
+
+  // Clamp scale to reasonable range
+  const clampedScale = Math.max(0.3, Math.min(2.0, scaleFactor));
+
+  // Use markerSize param as multiplier for both marker and label
+  const sizeMultiplier = airportParams.markerSize / 0.02; // Normalize to default size
+
+  airportGroup.traverse((obj) => {
+    if (obj.userData && obj.userData.baseScale) {
+      if (obj.userData.isLabel) {
+        // Labels scale with marker size and zoom
+        const labelScale = clampedScale * sizeMultiplier;
+        obj.scale.set(
+          obj.userData.baseScale.x * labelScale,
+          obj.userData.baseScale.y * labelScale,
+          1
+        );
+      } else {
+        // Markers
+        const size = airportParams.markerSize * clampedScale;
+        obj.scale.set(size, size, 1);
+      }
+    }
+  });
+}
+
+// Build initial airport markers
+buildAirportMarkers();
+
 // Export state and functions for external use (e.g., real AIS/FlightAware data)
 // External code can modify shipSimState/aircraftSimState/satelliteSimState arrays directly,
 // then call updateShipAttributes/updateAircraftAttributes/updateSatelliteAttributes to sync to GPU
@@ -2245,6 +2491,17 @@ gridFolder.add(gridParameters, "latInterval", [10, 15, 30, 45]).name("Lat Interv
 gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interval").onChange(() => {
   buildGrid();
 });
+
+// Airports folder
+const airportsFolder = gui.addFolder("Airports");
+airportsFolder.close();
+airportsFolder.add(airportParams, "visible").name("Show Airports").onChange(() => {
+  airportGroup.visible = airportParams.visible;
+});
+airportsFolder.add(airportParams, "showLabels").name("Show Labels").onChange(() => {
+  updateAirportLabels();
+});
+airportsFolder.add(airportParams, "markerSize", 0.01, 0.05, 0.002).name("Size");
 
 // Motion/Speed folder - simplified controls
 const motionFolder = gui.addFolder("Motion");
@@ -2486,6 +2743,9 @@ const tick = () => {
 
   // Update telemetry display
   updateTelemetry(cameraDistance, camera.position);
+
+  // Update airport marker scales based on zoom
+  updateAirportScales(cameraDistance);
 
   // Update OrbitControls - required for damping to work
   controls.update();
