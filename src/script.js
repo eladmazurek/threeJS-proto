@@ -182,6 +182,37 @@ gui.title("Controls");
       <span class="mission-label">T+</span>
       <span class="mission-value" id="met-value">00:00:00</span>
     </div>
+
+    <!-- Selected unit info panel (bottom-right) -->
+    <div id="unit-info" class="hidden">
+      <div class="unit-info-header">
+        <span class="unit-info-type" id="unit-type">AIRCRAFT</span>
+        <span class="unit-info-id" id="unit-id">#0000</span>
+        <button class="unit-info-close" id="unit-close">×</button>
+      </div>
+      <div class="unit-info-body">
+        <div class="unit-info-row">
+          <span class="unit-info-label">LAT</span>
+          <span class="unit-info-value" id="unit-lat">0.00°</span>
+        </div>
+        <div class="unit-info-row">
+          <span class="unit-info-label">LON</span>
+          <span class="unit-info-value" id="unit-lon">0.00°</span>
+        </div>
+        <div class="unit-info-row">
+          <span class="unit-info-label">HDG</span>
+          <span class="unit-info-value" id="unit-hdg">000°</span>
+        </div>
+        <div class="unit-info-row">
+          <span class="unit-info-label">SPD</span>
+          <span class="unit-info-value" id="unit-spd">0 kts</span>
+        </div>
+        <div class="unit-info-row">
+          <span class="unit-info-label">ALT</span>
+          <span class="unit-info-value" id="unit-alt">0 ft</span>
+        </div>
+      </div>
+    </div>
   `;
 
   // Inject styles for overlays
@@ -341,6 +372,89 @@ gui.title("Controls");
       font-weight: 400;
       font-variant-numeric: tabular-nums;
       letter-spacing: 1px;
+    }
+
+    /* Unit info panel */
+    #unit-info {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      min-width: 180px;
+      pointer-events: auto;
+    }
+
+    #unit-info.hidden {
+      display: none;
+    }
+
+    .unit-info-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .unit-info-type {
+      color: #2dd4bf;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1px;
+    }
+
+    .unit-info-type.ship { color: #2dd4bf; }
+    .unit-info-type.aircraft { color: #fbbf24; }
+    .unit-info-type.satellite { color: #a78bfa; }
+
+    .unit-info-id {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 10px;
+      font-weight: 400;
+    }
+
+    .unit-info-close {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+
+    .unit-info-close:hover {
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .unit-info-body {
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .unit-info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .unit-info-label {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 1px;
+    }
+
+    .unit-info-value {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 11px;
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
     }
   `;
 
@@ -2676,6 +2790,231 @@ controls.maxPolarAngle = Math.PI; // Can look straight up at south pole
 
 /**
  * =============================================================================
+ * UNIT SELECTION (Click to select)
+ * =============================================================================
+ */
+
+// Raycaster for click detection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Currently selected unit
+let selectedUnit = null;
+
+// DOM elements for unit info panel
+const unitInfoPanel = document.getElementById("unit-info");
+const unitTypeEl = document.getElementById("unit-type");
+const unitIdEl = document.getElementById("unit-id");
+const unitLatEl = document.getElementById("unit-lat");
+const unitLonEl = document.getElementById("unit-lon");
+const unitHdgEl = document.getElementById("unit-hdg");
+const unitSpdEl = document.getElementById("unit-spd");
+const unitAltEl = document.getElementById("unit-alt");
+const unitCloseBtn = document.getElementById("unit-close");
+
+// Close button handler
+unitCloseBtn?.addEventListener("click", () => {
+  deselectUnit();
+});
+
+/**
+ * Deselect current unit
+ */
+function deselectUnit() {
+  selectedUnit = null;
+  unitInfoPanel?.classList.add("hidden");
+}
+
+/**
+ * Select a unit and show info panel
+ */
+function selectUnit(type, index) {
+  let unitData;
+  let typeLabel;
+  let typeClass;
+  let altitude;
+  let speed;
+
+  if (type === "ship") {
+    unitData = shipSimState[index];
+    typeLabel = "SHIP";
+    typeClass = "ship";
+    altitude = 0;
+    speed = (motionParams.shipSpeed * 50).toFixed(0); // Convert to knots approx
+  } else if (type === "aircraft") {
+    unitData = aircraftSimState[index];
+    typeLabel = "AIRCRAFT";
+    typeClass = "aircraft";
+    altitude = 35000; // Approximate cruise altitude in feet
+    speed = (motionParams.aircraftSpeed * 80).toFixed(0); // Convert to knots approx
+  } else if (type === "satellite") {
+    unitData = satelliteSimState[index];
+    typeLabel = "SATELLITE";
+    typeClass = "satellite";
+    altitude = (unitData.altitude * 6371 * 1000 / EARTH_RADIUS).toFixed(0); // km to display
+    speed = "N/A";
+  }
+
+  if (!unitData) return;
+
+  selectedUnit = { type, index, data: unitData };
+
+  // Update panel content
+  unitTypeEl.textContent = typeLabel;
+  unitTypeEl.className = `unit-info-type ${typeClass}`;
+  unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
+
+  // Show panel
+  unitInfoPanel?.classList.remove("hidden");
+
+  // Update values (will be refreshed each frame)
+  updateSelectedUnitInfo();
+}
+
+/**
+ * Update selected unit info panel with current values
+ */
+function updateSelectedUnitInfo() {
+  if (!selectedUnit) return;
+
+  const { type, index } = selectedUnit;
+  let unitData;
+  let altitude;
+  let speed;
+
+  if (type === "ship") {
+    unitData = shipSimState[index];
+    if (!unitData) { deselectUnit(); return; }
+    altitude = "0 ft";
+    speed = `${(motionParams.shipSpeed * 50).toFixed(0)} kts`;
+  } else if (type === "aircraft") {
+    unitData = aircraftSimState[index];
+    if (!unitData) { deselectUnit(); return; }
+    altitude = "FL350";
+    speed = `${(motionParams.aircraftSpeed * 80).toFixed(0)} kts`;
+  } else if (type === "satellite") {
+    unitData = satelliteSimState[index];
+    if (!unitData) { deselectUnit(); return; }
+    const altKm = (unitData.altitude * 6371 / EARTH_RADIUS).toFixed(0);
+    altitude = `${altKm} km`;
+    speed = `${(7.8 - unitData.altitude * 2).toFixed(1)} km/s`;
+  }
+
+  unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
+  unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
+  unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
+  unitSpdEl.textContent = speed;
+  unitAltEl.textContent = altitude;
+}
+
+/**
+ * Convert lat/lon to 3D world position
+ */
+function latLonTo3D(lat, lon, altitude = 0) {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lon + 180) * (Math.PI / 180);
+  const radius = EARTH_RADIUS + altitude;
+
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+/**
+ * Project 3D position to screen coordinates
+ */
+function projectToScreen(position) {
+  const projected = position.clone().project(camera);
+  return {
+    x: (projected.x + 1) / 2 * canvas.clientWidth,
+    y: (-projected.y + 1) / 2 * canvas.clientHeight,
+    z: projected.z // depth for visibility check
+  };
+}
+
+/**
+ * Handle canvas click for unit selection
+ * Uses screen-space distance checking since instanced meshes don't raycast well
+ */
+function onCanvasClick(event) {
+  // Ignore if clicking on GUI or overlay elements
+  if (event.target.closest(".lil-gui") || event.target.closest("#unit-info")) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const clickX = event.clientX - rect.left;
+  const clickY = event.clientY - rect.top;
+
+  // Click radius in pixels (how close click needs to be to unit)
+  const clickRadius = 20;
+  let closestUnit = null;
+  let closestDist = clickRadius;
+
+  // Check ships
+  for (let i = 0; i < shipSimState.length; i++) {
+    const unit = shipSimState[i];
+    const worldPos = latLonTo3D(unit.lat, unit.lon, SHIP_ALTITUDE);
+
+    // Transform by earth's rotation
+    worldPos.applyMatrix4(earth.matrixWorld);
+
+    const screen = projectToScreen(worldPos);
+
+    // Skip if behind camera
+    if (screen.z > 1) continue;
+
+    const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestUnit = { type: "ship", index: i };
+    }
+  }
+
+  // Check aircraft
+  for (let i = 0; i < aircraftSimState.length; i++) {
+    const unit = aircraftSimState[i];
+    const worldPos = latLonTo3D(unit.lat, unit.lon, AIRCRAFT_ALTITUDE);
+    worldPos.applyMatrix4(earth.matrixWorld);
+
+    const screen = projectToScreen(worldPos);
+    if (screen.z > 1) continue;
+
+    const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestUnit = { type: "aircraft", index: i };
+    }
+  }
+
+  // Check satellites
+  for (let i = 0; i < satelliteSimState.length; i++) {
+    const unit = satelliteSimState[i];
+    const worldPos = latLonTo3D(unit.lat, unit.lon, unit.altitude);
+    worldPos.applyMatrix4(earth.matrixWorld);
+
+    const screen = projectToScreen(worldPos);
+    if (screen.z > 1) continue;
+
+    const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestUnit = { type: "satellite", index: i };
+    }
+  }
+
+  if (closestUnit) {
+    selectUnit(closestUnit.type, closestUnit.index);
+  } else {
+    deselectUnit();
+  }
+}
+
+// Add click listener
+canvas.addEventListener("click", onCanvasClick)
+
+/**
+ * =============================================================================
  * RENDERER
  * =============================================================================
  */
@@ -2746,6 +3085,9 @@ const tick = () => {
 
   // Update airport marker scales based on zoom
   updateAirportScales(cameraDistance);
+
+  // Update selected unit info panel
+  updateSelectedUnitInfo();
 
   // Update OrbitControls - required for damping to work
   controls.update();
