@@ -1912,47 +1912,28 @@ const SHIPPING_LANES = [
 ];
 
 // Realistic flight corridors with concentration weights
+// Weights favor large corridor regions over small hub areas to avoid clustering
 const FLIGHT_CORRIDORS = [
-  // Major hub airports
-  { latRange: [40, 42], lonRange: [-75, -73], weight: 0.05, name: "NYC area" },
-  { latRange: [33, 35], lonRange: [-118, -117], weight: 0.04, name: "Los Angeles" },
-  { latRange: [51, 52], lonRange: [-1, 1], weight: 0.05, name: "London" },
-  { latRange: [48, 50], lonRange: [2, 3], weight: 0.04, name: "Paris" },
-  { latRange: [25, 26], lonRange: [55, 56], weight: 0.04, name: "Dubai" },
-  { latRange: [22, 23], lonRange: [113, 114], weight: 0.04, name: "Hong Kong" },
-  { latRange: [1, 2], lonRange: [103, 104], weight: 0.04, name: "Singapore" },
-  { latRange: [35, 36], lonRange: [139, 140], weight: 0.04, name: "Tokyo" },
-  { latRange: [31, 32], lonRange: [121, 122], weight: 0.04, name: "Shanghai" },
-  { latRange: [37, 38], lonRange: [-122, -121], weight: 0.03, name: "San Francisco" },
-  { latRange: [41, 42], lonRange: [-88, -87], weight: 0.03, name: "Chicago" },
-  { latRange: [49, 51], lonRange: [8, 12], weight: 0.04, name: "Frankfurt / Munich" },
-  // Major flight routes
-  { latRange: [45, 65], lonRange: [-60, -10], weight: 0.12, name: "North Atlantic Track" },
-  { latRange: [35, 55], lonRange: [-130, -70], weight: 0.12, name: "US Domestic" },
-  { latRange: [35, 55], lonRange: [-10, 40], weight: 0.10, name: "European Airspace" },
-  { latRange: [20, 45], lonRange: [100, 140], weight: 0.10, name: "East Asian Routes" },
-  { latRange: [10, 35], lonRange: [70, 100], weight: 0.06, name: "South Asian Routes" },
-  { latRange: [-35, 0], lonRange: [115, 155], weight: 0.04, name: "Australia / Oceania" },
+  // Major flight routes (high weight - most aircraft are en route, not at airports)
+  { latRange: [45, 65], lonRange: [-60, -10], weight: 0.15, name: "North Atlantic Track" },
+  { latRange: [35, 55], lonRange: [-130, -70], weight: 0.18, name: "US Domestic" },
+  { latRange: [35, 55], lonRange: [-10, 40], weight: 0.15, name: "European Airspace" },
+  { latRange: [20, 45], lonRange: [100, 145], weight: 0.15, name: "East Asian Routes" },
+  { latRange: [10, 35], lonRange: [70, 100], weight: 0.10, name: "South Asian Routes" },
+  { latRange: [-35, 5], lonRange: [115, 155], weight: 0.08, name: "Australia / Oceania" },
+  { latRange: [0, 30], lonRange: [-100, -60], weight: 0.06, name: "Central America / Caribbean" },
+  { latRange: [-40, 10], lonRange: [-70, -35], weight: 0.05, name: "South America" },
+  { latRange: [20, 40], lonRange: [-20, 40], weight: 0.04, name: "North Africa / Middle East" },
+  { latRange: [-35, 5], lonRange: [10, 45], weight: 0.04, name: "Sub-Saharan Africa" },
 ];
 
 /**
- * Generate a random point within a region with some gaussian spread
+ * Generate a random point within a region using uniform distribution
  */
 function randomInRegion(latRange, lonRange) {
-  // Add some gaussian-like spread for more natural clustering
-  const latCenter = (latRange[0] + latRange[1]) / 2;
-  const lonCenter = (lonRange[0] + lonRange[1]) / 2;
-  const latSpread = (latRange[1] - latRange[0]) / 2;
-  const lonSpread = (lonRange[1] - lonRange[0]) / 2;
-
-  // Box-Muller for gaussian distribution, clamped to range
-  const u1 = Math.random();
-  const u2 = Math.random();
-  const gaussian = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-
-  const lat = Math.max(latRange[0], Math.min(latRange[1], latCenter + gaussian * latSpread * 0.4));
-  const lon = Math.max(lonRange[0], Math.min(lonRange[1], lonCenter + (Math.random() - 0.5) * lonSpread * 2));
-
+  // Uniform distribution across the entire region
+  const lat = latRange[0] + Math.random() * (latRange[1] - latRange[0]);
+  const lon = lonRange[0] + Math.random() * (lonRange[1] - lonRange[0]);
   return { lat, lon };
 }
 
