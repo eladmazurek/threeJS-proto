@@ -20,7 +20,8 @@ uniform sampler2D uSpecularCloudsTexture; // R: specular mask, G: cloud coverage
 uniform vec3 uSunDirection;              // Direction TO the sun (normalized)
 
 // Atmosphere uniforms
-uniform vec3 uAtmosphereColor;           // Color of atmospheric glow
+uniform vec3 uAtmosphereDayColor;        // Blue atmosphere on day side
+uniform vec3 uAtmosphereTwilightColor;   // Red/orange atmosphere at twilight
 uniform float uAtmosphereDayMix;         // Atmosphere blend on day side (0-1)
 uniform float uAtmosphereTwilightMix;    // Atmosphere blend at twilight (0-1)
 
@@ -107,18 +108,15 @@ void main()
     // viewDirection points FROM camera, so we negate it
     float specularBase = max(0.0, dot(reflection, -viewDirection));
 
-    // Create layered specular for realistic sun glint:
-    // 1. Bright sharp center core (controlled by uSpecularSharpness)
-    float specularSharp = pow(specularBase, uSpecularSharpness) * 2.0;
+    // Create concentrated specular for sun glint:
+    // 1. Tight center core (controlled by uSpecularSharpness)
+    float specularSharp = pow(specularBase, uSpecularSharpness) * 1.2;
 
-    // 2. Medium glow around the center (controlled by uSpecularGlowSize)
-    float specularMedium = pow(specularBase, uSpecularGlowSize) * 0.5;
+    // 2. Very subtle glow around center (controlled by uSpecularGlowSize)
+    float specularMedium = pow(specularBase, uSpecularGlowSize) * 0.15;
 
-    // 3. Large soft outer glow (fixed, provides base diffuse reflection)
-    float specularSoft = pow(specularBase, 2.0) * 0.2;
-
-    // Combine all specular layers with intensity control
-    float specular = (specularSharp + specularMedium + specularSoft) * uSpecularIntensity;
+    // Combine layers - no soft outer glow for tighter appearance
+    float specular = (specularSharp + specularMedium) * uSpecularIntensity;
 
     // Apply specular only to:
     // - Ocean areas (specularMask)
@@ -138,20 +136,24 @@ void main()
     // At edges, normal is perpendicular to view = dot product near 0
     float fresnel = 1.0 - abs(dot(viewDirection, normal));
 
-    // Sharpen the fresnel falloff
-    fresnel = pow(fresnel, 2.0);
+    // Sharpen the fresnel falloff for tighter rim
+    fresnel = pow(fresnel, 3.0);
 
-    // Twilight zone gets stronger atmospheric effect
-    // smoothstep creates smooth transition around the terminator
-    float twilightMix = smoothstep(-0.2, 0.2, sunOrientation);
+    // Calculate atmosphere color based on sun position
+    // Day side (facing sun) = blue, twilight/night side = red/orange
+    float atmosphereColorMix = smoothstep(-0.3, 0.5, sunOrientation);
+    vec3 atmosphereColor = mix(uAtmosphereTwilightColor, uAtmosphereDayColor, atmosphereColorMix);
 
-    // Blend between twilight atmosphere strength and day atmosphere strength
-    float atmosphereStrength = mix(uAtmosphereTwilightMix, uAtmosphereDayMix, twilightMix);
+    // Atmosphere strength varies: stronger at twilight, lighter on day side
+    float twilightFactor = 1.0 - abs(sunOrientation); // Peaks at terminator
+    twilightFactor = pow(twilightFactor, 0.5); // Soften the falloff
+    float atmosphereStrength = mix(uAtmosphereTwilightMix, uAtmosphereDayMix, atmosphereColorMix);
+    atmosphereStrength *= (0.5 + twilightFactor * 0.5); // Boost at terminator
 
-    // Apply atmosphere color with fresnel and strength
-    // Only add atmosphere on the lit side and twilight zone
-    float atmosphereFactor = fresnel * atmosphereStrength * max(0.0, sunOrientation + 0.5);
-    color = mix(color, uAtmosphereColor, atmosphereFactor);
+    // Apply atmosphere with fresnel
+    // Visible on edges, stronger near terminator
+    float atmosphereFactor = fresnel * atmosphereStrength;
+    color = mix(color, atmosphereColor, atmosphereFactor);
 
     // ==========================================================================
     // FINAL OUTPUT

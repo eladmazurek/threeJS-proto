@@ -79,16 +79,16 @@ const earthSpecularCloudsTexture = textureLoader.load("/earth/specularClouds.jpg
 
 // Parameters that can be adjusted via the GUI
 const earthParameters = {
-  atmosphereColor: "#0088ff", // Color of the atmospheric glow
-  atmosphereDayMix: 0.4, // How much atmosphere color blends with day side
-  atmosphereTwilightMix: 0.8, // How much atmosphere color blends at twilight
-  cloudsIntensity: 0.4, // Opacity/intensity of cloud layer
+  atmosphereDayColor: "#88bbff", // Soft blue atmosphere on day side
+  atmosphereTwilightColor: "#aa7766", // Muted red/brown atmosphere at twilight
+  atmosphereIntensity: 0.18, // Overall atmosphere intensity (subtle)
+  cloudsIntensity: 0.1, // Opacity/intensity of cloud layer
   sunDirectionX: -1.0, // Sun direction X component
   sunDirectionY: 0.5, // Sun direction Y component
   sunDirectionZ: 1.0, // Sun direction Z component
-  specularIntensity: 1.0, // Overall sun glint intensity
-  specularSharpness: 64.0, // Sharpness of the center highlight
-  specularGlowSize: 8.0, // Size of the medium glow
+  specularIntensity: 0.4, // Overall sun glint intensity
+  specularSharpness: 800.0, // Sharpness of the center highlight (higher = tighter)
+  specularGlowSize: 200.0, // Size of the medium glow (higher = tighter)
 };
 
 // Create sphere geometry for the Earth
@@ -113,10 +113,11 @@ const earthMaterial = new THREE.ShaderMaterial({
       value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize(),
     },
 
-    // Atmosphere parameters
-    uAtmosphereColor: { value: new THREE.Color(earthParameters.atmosphereColor) },
-    uAtmosphereDayMix: { value: earthParameters.atmosphereDayMix },
-    uAtmosphereTwilightMix: { value: earthParameters.atmosphereTwilightMix },
+    // Atmosphere parameters (kept for minor surface tinting)
+    uAtmosphereDayColor: { value: new THREE.Color(earthParameters.atmosphereDayColor) },
+    uAtmosphereTwilightColor: { value: new THREE.Color(earthParameters.atmosphereTwilightColor) },
+    uAtmosphereDayMix: { value: 0.1 },
+    uAtmosphereTwilightMix: { value: 0.15 },
 
     // Cloud parameters
     uCloudsIntensity: { value: earthParameters.cloudsIntensity },
@@ -133,6 +134,76 @@ const earth = new THREE.Mesh(earthGeometry, earthMaterial);
 
 // Add the Earth to the scene graph
 scene.add(earth);
+
+/**
+ * =============================================================================
+ * ATMOSPHERE GLOW (Separate sphere extending beyond Earth)
+ * =============================================================================
+ * Creates the blue/red atmospheric rim visible at Earth's edges
+ */
+
+const ATMOSPHERE_SCALE = 1.025; // Atmosphere extends 2.5% beyond Earth surface (thin rim)
+
+const atmosphereGeometry = new THREE.SphereGeometry(EARTH_RADIUS * ATMOSPHERE_SCALE, 64, 64);
+
+const atmosphereMaterial = new THREE.ShaderMaterial({
+  vertexShader: `
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 uSunDirection;
+    uniform vec3 uDayColor;
+    uniform vec3 uTwilightColor;
+    uniform float uIntensity;
+
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+
+    void main() {
+      vec3 viewDirection = normalize(cameraPosition - vPosition);
+      vec3 normal = normalize(vNormal);
+
+      // Soft fresnel - gradual glow at edges
+      float fresnel = 1.0 - dot(viewDirection, normal);
+      fresnel = pow(fresnel, 4.0); // Higher power = thinner rim
+      fresnel = smoothstep(0.0, 1.0, fresnel); // Soften the falloff
+
+      // Sun orientation for color mixing
+      float sunOrientation = dot(normal, uSunDirection);
+      float colorMix = smoothstep(-0.3, 0.6, sunOrientation);
+
+      // Blend between twilight (red) and day (blue) colors
+      vec3 atmosphereColor = mix(uTwilightColor, uDayColor, colorMix);
+
+      // Soft visibility falloff
+      float visibility = 0.5 + 0.5 * smoothstep(-0.5, 0.3, sunOrientation);
+
+      float alpha = fresnel * uIntensity * visibility;
+
+      gl_FragColor = vec4(atmosphereColor, alpha);
+    }
+  `,
+  uniforms: {
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+    uDayColor: { value: new THREE.Color(earthParameters.atmosphereDayColor) },
+    uTwilightColor: { value: new THREE.Color(earthParameters.atmosphereTwilightColor) },
+    uIntensity: { value: earthParameters.atmosphereIntensity },
+  },
+  transparent: true,
+  side: THREE.BackSide, // Render inside of sphere (we're looking at it from outside)
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+
+const atmosphereMesh = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+scene.add(atmosphereMesh);
 
 /**
  * =============================================================================
@@ -668,6 +739,354 @@ satelliteMesh.renderOrder = 3; // Render above aircraft (highest altitude)
 earth.add(satelliteMesh);
 
 // -----------------------------------------------------------------------------
+// Unit Trails - Fading dot trails showing recent positions
+// -----------------------------------------------------------------------------
+
+const TRAIL_LENGTH = 6; // Number of trail points per unit
+const MAX_TRAIL_POINTS = 60000; // Total trail points (limits memory usage)
+const TRAIL_UPDATE_INTERVAL = 400; // ms between trail position captures
+const MIN_TRAIL_DISTANCE = 0.15; // Minimum distance (degrees) before adding new trail point
+
+// Trail parameters
+const trailParams = {
+  enabled: true,
+  shipTrails: true,
+  aircraftTrails: true,
+  opacity: 0.7,
+};
+
+// Trail vertex shader - positions dots at lat/lon with altitude
+const trailVertexShader = `
+  attribute float aLat;
+  attribute float aLon;
+  attribute float aOpacity;
+  attribute float aAltitude;
+
+  uniform float uEarthRadius;
+  uniform float uPointSize;
+
+  varying float vOpacity;
+
+  const float PI = 3.141592653589793;
+  const float DEG_TO_RAD = PI / 180.0;
+
+  void main() {
+    vOpacity = aOpacity;
+
+    // Convert lat/lon to 3D position
+    float phi = (90.0 - aLat) * DEG_TO_RAD;
+    float theta = (aLon + 180.0) * DEG_TO_RAD;
+    float radius = uEarthRadius + aAltitude;
+
+    vec3 worldPosition = vec3(
+      -radius * sin(phi) * cos(theta),
+      radius * cos(phi),
+      radius * sin(phi) * sin(theta)
+    );
+
+    vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+
+    // Scale with distance - smaller when zoomed out, larger when zoomed in
+    gl_PointSize = clamp(uPointSize * (6.0 / -mvPosition.z), 1.0, uPointSize);
+  }
+`;
+
+// Trail fragment shader - renders circular dots
+const trailFragmentShader = `
+  uniform vec3 uColor;
+  uniform float uBaseOpacity;
+
+  varying float vOpacity;
+
+  void main() {
+    // Circular point
+    vec2 center = gl_PointCoord - vec2(0.5);
+    float dist = length(center);
+    if (dist > 0.5) discard;
+
+    // Slight soft edge but mostly solid
+    float alpha = smoothstep(0.5, 0.35, dist);
+    alpha *= vOpacity * uBaseOpacity;
+
+    gl_FragColor = vec4(uColor, alpha);
+  }
+`;
+
+// Create trail geometry
+function createTrailGeometry(maxPoints) {
+  const geometry = new THREE.BufferGeometry();
+
+  const latArray = new Float32Array(maxPoints);
+  const lonArray = new Float32Array(maxPoints);
+  const opacityArray = new Float32Array(maxPoints);
+  const altitudeArray = new Float32Array(maxPoints);
+
+  const latAttr = new THREE.BufferAttribute(latArray, 1);
+  const lonAttr = new THREE.BufferAttribute(lonArray, 1);
+  const opacityAttr = new THREE.BufferAttribute(opacityArray, 1);
+  const altitudeAttr = new THREE.BufferAttribute(altitudeArray, 1);
+
+  latAttr.setUsage(THREE.DynamicDrawUsage);
+  lonAttr.setUsage(THREE.DynamicDrawUsage);
+  opacityAttr.setUsage(THREE.DynamicDrawUsage);
+  altitudeAttr.setUsage(THREE.DynamicDrawUsage);
+
+  geometry.setAttribute('aLat', latAttr);
+  geometry.setAttribute('aLon', lonAttr);
+  geometry.setAttribute('aOpacity', opacityAttr);
+  geometry.setAttribute('aAltitude', altitudeAttr);
+
+  geometry.userData = { latArray, lonArray, opacityArray, altitudeArray, latAttr, lonAttr, opacityAttr, altitudeAttr };
+
+  return geometry;
+}
+
+// Ship trails
+const shipTrailGeometry = createTrailGeometry(MAX_TRAIL_POINTS);
+const shipTrailMaterial = new THREE.ShaderMaterial({
+  vertexShader: trailVertexShader,
+  fragmentShader: trailFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uPointSize: { value: 8.0 }, // Max size in pixels
+    uColor: { value: new THREE.Color(0x00ff88) }, // Green for ships
+    uBaseOpacity: { value: trailParams.opacity },
+  },
+  transparent: true,
+  depthTest: true,
+  depthWrite: false,
+  blending: THREE.NormalBlending,
+});
+
+const shipTrailMesh = new THREE.Points(shipTrailGeometry, shipTrailMaterial);
+shipTrailMesh.frustumCulled = false;
+shipTrailMesh.renderOrder = 0.5; // Just above shadows
+earth.add(shipTrailMesh);
+
+// Aircraft trails
+const aircraftTrailGeometry = createTrailGeometry(MAX_TRAIL_POINTS);
+const aircraftTrailMaterial = new THREE.ShaderMaterial({
+  vertexShader: trailVertexShader,
+  fragmentShader: trailFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uPointSize: { value: 8.0 }, // Max size in pixels
+    uColor: { value: new THREE.Color(0xffaa44) }, // Orange for aircraft
+    uBaseOpacity: { value: trailParams.opacity },
+  },
+  transparent: true,
+  depthTest: true,
+  depthWrite: false,
+  blending: THREE.NormalBlending,
+});
+
+const aircraftTrailMesh = new THREE.Points(aircraftTrailGeometry, aircraftTrailMaterial);
+aircraftTrailMesh.frustumCulled = false;
+aircraftTrailMesh.renderOrder = 1.8; // Just below aircraft
+earth.add(aircraftTrailMesh);
+
+// Trail history storage - ring buffers per unit
+let shipTrailHistory = []; // Array of arrays, one per ship
+let aircraftTrailHistory = []; // Array of arrays, one per aircraft
+let lastTrailUpdateTime = 0;
+let activeShipTrailCount = 0;
+let activeAircraftTrailCount = 0;
+
+/**
+ * Initialize trail history for units
+ */
+function initTrailHistory() {
+  // Calculate how many units can have trails based on MAX_TRAIL_POINTS
+  const maxShipsWithTrails = Math.floor(MAX_TRAIL_POINTS / TRAIL_LENGTH / 2);
+  const maxAircraftWithTrails = Math.floor(MAX_TRAIL_POINTS / TRAIL_LENGTH / 2);
+
+  shipTrailHistory = [];
+  aircraftTrailHistory = [];
+
+  // Initialize ring buffers for ships (limited count)
+  const shipCount = Math.min(shipSimState.length, maxShipsWithTrails);
+  for (let i = 0; i < shipCount; i++) {
+    shipTrailHistory.push({
+      positions: [], // Array of {lat, lon} objects
+      headIndex: 0,
+    });
+  }
+
+  // Initialize ring buffers for aircraft (limited count)
+  const aircraftCount = Math.min(aircraftSimState.length, maxAircraftWithTrails);
+  for (let i = 0; i < aircraftCount; i++) {
+    aircraftTrailHistory.push({
+      positions: [],
+      headIndex: 0,
+    });
+  }
+
+  activeShipTrailCount = shipCount;
+  activeAircraftTrailCount = aircraftCount;
+}
+
+/**
+ * Calculate distance between two lat/lon points (simple approximation)
+ */
+function latLonDistance(lat1, lon1, lat2, lon2) {
+  const dLat = lat2 - lat1;
+  const dLon = lon2 - lon1;
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+}
+
+/**
+ * Capture current positions into trail history
+ * Only adds new point if unit has moved enough from last captured position
+ */
+function captureTrailPositions() {
+  // Capture ship positions
+  for (let i = 0; i < shipTrailHistory.length; i++) {
+    const ship = shipSimState[i];
+    const trail = shipTrailHistory[i];
+
+    // Check if moved enough from last position
+    let shouldAdd = true;
+    if (trail.positions.length > 0) {
+      const lastIdx = (trail.headIndex - 1 + trail.positions.length) % trail.positions.length;
+      const last = trail.positions[lastIdx];
+      if (latLonDistance(ship.lat, ship.lon, last.lat, last.lon) < MIN_TRAIL_DISTANCE) {
+        shouldAdd = false;
+      }
+    }
+
+    if (shouldAdd) {
+      if (trail.positions.length < TRAIL_LENGTH) {
+        trail.positions.push({ lat: ship.lat, lon: ship.lon });
+      } else {
+        trail.positions[trail.headIndex] = { lat: ship.lat, lon: ship.lon };
+        trail.headIndex = (trail.headIndex + 1) % TRAIL_LENGTH;
+      }
+    }
+  }
+
+  // Capture aircraft positions
+  for (let i = 0; i < aircraftTrailHistory.length; i++) {
+    const aircraft = aircraftSimState[i];
+    const trail = aircraftTrailHistory[i];
+
+    // Check if moved enough from last position
+    let shouldAdd = true;
+    if (trail.positions.length > 0) {
+      const lastIdx = (trail.headIndex - 1 + trail.positions.length) % trail.positions.length;
+      const last = trail.positions[lastIdx];
+      if (latLonDistance(aircraft.lat, aircraft.lon, last.lat, last.lon) < MIN_TRAIL_DISTANCE) {
+        shouldAdd = false;
+      }
+    }
+
+    if (shouldAdd) {
+      if (trail.positions.length < TRAIL_LENGTH) {
+        trail.positions.push({ lat: aircraft.lat, lon: aircraft.lon });
+      } else {
+        trail.positions[trail.headIndex] = { lat: aircraft.lat, lon: aircraft.lon };
+        trail.headIndex = (trail.headIndex + 1) % TRAIL_LENGTH;
+      }
+    }
+  }
+}
+
+/**
+ * Update trail GPU buffers from history
+ */
+function updateTrailAttributes() {
+  if (!trailParams.enabled) {
+    shipTrailGeometry.setDrawRange(0, 0);
+    aircraftTrailGeometry.setDrawRange(0, 0);
+    return;
+  }
+
+  // Update ship trails
+  if (trailParams.shipTrails) {
+    const data = shipTrailGeometry.userData;
+    let pointIndex = 0;
+
+    for (let i = 0; i < shipTrailHistory.length; i++) {
+      const trail = shipTrailHistory[i];
+      const posCount = trail.positions.length;
+
+      // Skip j=0 (newest) so trail starts behind the unit, not on it
+      for (let j = 1; j < posCount; j++) {
+        const ringIndex = (trail.headIndex - 1 - j + posCount) % posCount;
+        const pos = trail.positions[ringIndex];
+        // Age starts at 0 for first visible point, goes to 1 for oldest
+        const age = (j - 1) / (TRAIL_LENGTH - 1);
+
+        data.latArray[pointIndex] = pos.lat;
+        data.lonArray[pointIndex] = pos.lon;
+        data.opacityArray[pointIndex] = 1.0 - age * 0.6; // Bright to dim
+        data.altitudeArray[pointIndex] = SHIP_ALTITUDE * 0.5; // Well below ships
+        pointIndex++;
+      }
+    }
+
+    data.latAttr.needsUpdate = true;
+    data.lonAttr.needsUpdate = true;
+    data.opacityAttr.needsUpdate = true;
+    data.altitudeAttr.needsUpdate = true;
+    shipTrailGeometry.setDrawRange(0, pointIndex);
+  } else {
+    shipTrailGeometry.setDrawRange(0, 0);
+  }
+
+  // Update aircraft trails
+  if (trailParams.aircraftTrails) {
+    const data = aircraftTrailGeometry.userData;
+    let pointIndex = 0;
+
+    for (let i = 0; i < aircraftTrailHistory.length; i++) {
+      const trail = aircraftTrailHistory[i];
+      const posCount = trail.positions.length;
+
+      // Skip j=0 (newest) so trail starts behind the unit
+      for (let j = 1; j < posCount; j++) {
+        const ringIndex = (trail.headIndex - 1 - j + posCount) % posCount;
+        const pos = trail.positions[ringIndex];
+        const age = (j - 1) / (TRAIL_LENGTH - 1);
+
+        data.latArray[pointIndex] = pos.lat;
+        data.lonArray[pointIndex] = pos.lon;
+        data.opacityArray[pointIndex] = 1.0 - age * 0.6; // Bright to dim
+        data.altitudeArray[pointIndex] = AIRCRAFT_ALTITUDE * 0.5;
+        pointIndex++;
+      }
+    }
+
+    data.latAttr.needsUpdate = true;
+    data.lonAttr.needsUpdate = true;
+    data.opacityAttr.needsUpdate = true;
+    data.altitudeAttr.needsUpdate = true;
+    aircraftTrailGeometry.setDrawRange(0, pointIndex);
+  } else {
+    aircraftTrailGeometry.setDrawRange(0, 0);
+  }
+}
+
+/**
+ * Update trails (called from animation loop, throttled)
+ */
+function updateTrails() {
+  if (!trailParams.enabled) return;
+
+  const now = performance.now();
+  if (now - lastTrailUpdateTime < TRAIL_UPDATE_INTERVAL) return;
+  lastTrailUpdateTime = now;
+
+  // Reinitialize if unit counts changed significantly
+  if (shipTrailHistory.length === 0 && shipSimState.length > 0) {
+    initTrailHistory();
+  }
+
+  captureTrailPositions();
+  updateTrailAttributes();
+}
+
+// -----------------------------------------------------------------------------
 // Tracking Data Management (GPU-based)
 // -----------------------------------------------------------------------------
 
@@ -771,7 +1190,7 @@ const motionParams = {
   // Speed multipliers (1 = normal, higher = faster)
   shipSpeed: 10.0,
   aircraftSpeed: 10.0,
-  satelliteSpeed: 1.0,
+  satelliteSpeed: 10.0,
 
   // Base values (internal, not exposed to GUI)
   shipBaseSpeed: 0.002,      // degrees per second at multiplier 1
@@ -784,7 +1203,7 @@ const motionParams = {
   courseChangeVariance: 5,
 
   // Performance: motion update interval in ms (0 = every frame)
-  motionUpdateInterval: 50, // Update motion every 50ms (~20 updates/sec)
+  motionUpdateInterval: 10, // Update motion every 10ms (~100 updates/sec)
 };
 
 // Throttle tracking
@@ -1151,6 +1570,9 @@ function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount =
 
   console.log(`Generated ${shipSimState.length} ships and ${aircraftSimState.length} aircraft (realistic: ${unitCountParams.realisticRoutes})`);
 
+  // Reset trail history for new units
+  initTrailHistory();
+
   // Generate satellites with realistic orbital parameters
   generateSatelliteData(unitCountParams.satelliteCount);
 }
@@ -1252,14 +1674,16 @@ window.generateSatelliteData = generateSatelliteData;
 
 // Atmosphere folder
 const atmosphereFolder = gui.addFolder("Atmosphere");
-atmosphereFolder.addColor(earthParameters, "atmosphereColor").onChange(() => {
-  earthMaterial.uniforms.uAtmosphereColor.value.set(earthParameters.atmosphereColor);
+atmosphereFolder.addColor(earthParameters, "atmosphereDayColor").name("Day Color").onChange(() => {
+  earthMaterial.uniforms.uAtmosphereDayColor.value.set(earthParameters.atmosphereDayColor);
+  atmosphereMaterial.uniforms.uDayColor.value.set(earthParameters.atmosphereDayColor);
 });
-atmosphereFolder.add(earthParameters, "atmosphereDayMix", 0, 1, 0.01).onChange(() => {
-  earthMaterial.uniforms.uAtmosphereDayMix.value = earthParameters.atmosphereDayMix;
+atmosphereFolder.addColor(earthParameters, "atmosphereTwilightColor").name("Twilight Color").onChange(() => {
+  earthMaterial.uniforms.uAtmosphereTwilightColor.value.set(earthParameters.atmosphereTwilightColor);
+  atmosphereMaterial.uniforms.uTwilightColor.value.set(earthParameters.atmosphereTwilightColor);
 });
-atmosphereFolder.add(earthParameters, "atmosphereTwilightMix", 0, 1, 0.01).onChange(() => {
-  earthMaterial.uniforms.uAtmosphereTwilightMix.value = earthParameters.atmosphereTwilightMix;
+atmosphereFolder.add(earthParameters, "atmosphereIntensity", 0, 1, 0.01).name("Intensity").onChange(() => {
+  atmosphereMaterial.uniforms.uIntensity.value = earthParameters.atmosphereIntensity;
 });
 
 // Clouds folder
@@ -1306,6 +1730,9 @@ function updateSunDirection() {
   // Update Earth shader
   earthMaterial.uniforms.uSunDirection.value.copy(sunDir);
 
+  // Update atmosphere glow
+  atmosphereMaterial.uniforms.uSunDirection.value.copy(sunDir);
+
   // Update cloud layer
   cloudMaterial.uniforms.uSunDirection.value.copy(sunDir);
 
@@ -1339,16 +1766,45 @@ motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
 motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
 motionFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
 
+// Trails folder
+const trailsFolder = gui.addFolder("Trails");
+trailsFolder.add(trailParams, "enabled").name("Show Trails").onChange(() => {
+  updateTrailAttributes();
+});
+trailsFolder.add(trailParams, "shipTrails").name("Ship Trails").onChange(() => {
+  updateTrailAttributes();
+});
+trailsFolder.add(trailParams, "aircraftTrails").name("Aircraft Trails").onChange(() => {
+  updateTrailAttributes();
+});
+trailsFolder.add(trailParams, "opacity", 0.1, 1.0, 0.1).name("Opacity").onChange(() => {
+  shipTrailMaterial.uniforms.uBaseOpacity.value = trailParams.opacity;
+  aircraftTrailMaterial.uniforms.uBaseOpacity.value = trailParams.opacity;
+});
+
 // Unit count folder - for testing performance
 const unitsFolder = gui.addFolder("Units (Performance Test)");
+
+// Use K notation for large numbers (display in thousands)
+const unitCountDisplay = {
+  totalCountK: unitCountParams.totalCount / 1000,
+  satelliteCountK: unitCountParams.satelliteCount / 1000,
+};
+
 unitsFolder
-  .add(unitCountParams, "totalCount", 100, 500000, 100)
-  .name("Ships + Aircraft")
-  .onChange(updateUnitCounts);
+  .add(unitCountDisplay, "totalCountK", 0.1, 500, 0.1)
+  .name("Ships + Aircraft (K)")
+  .onChange((value) => {
+    unitCountParams.totalCount = Math.round(value * 1000);
+    updateUnitCounts();
+  });
 unitsFolder
-  .add(unitCountParams, "satelliteCount", 0, 5000, 50)
-  .name("Satellites")
-  .onChange(() => generateSatelliteData(unitCountParams.satelliteCount));
+  .add(unitCountDisplay, "satelliteCountK", 0, 5, 0.05)
+  .name("Satellites (K)")
+  .onChange((value) => {
+    unitCountParams.satelliteCount = Math.round(value * 1000);
+    generateSatelliteData(unitCountParams.satelliteCount);
+  });
 unitsFolder
   .add(unitCountParams, "realisticRoutes")
   .name("Realistic Routes")
@@ -1487,6 +1943,9 @@ const tick = () => {
 
   // Update motion simulation for ships and aircraft
   updateMotionSimulation(elapsedTime);
+
+  // Update unit trails (throttled internally)
+  updateTrails();
 
   // Scale tracking icons based on camera distance
   // Icons should be smaller when zoomed in, larger when zoomed out
