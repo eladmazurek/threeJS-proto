@@ -413,21 +413,115 @@ const textureLoader = new THREE.TextureLoader();
  * =============================================================================
  */
 
-// Load Earth textures from the static/earth/ directory
-// These textures are used in the fragment shader for realistic Earth rendering
+// Texture presets - different Earth imagery options
+// Users can add their own high-res textures to static/earth/ folder
+const texturePresets = {
+  "Standard": {
+    day: "/earth/day.jpg",
+    night: "/earth/night.jpg",
+    specularClouds: "/earth/specularClouds.jpg",
+    description: "Default Earth textures",
+  },
+  "Black Marble (NASA)": {
+    // NASA Black Marble - 8K night imagery showing city lights
+    // Source: https://earthobservatory.nasa.gov/features/NightLights
+    day: "/earth/blackmarble_night.jpg",  // Use night for both - city lights view
+    night: "/earth/blackmarble_night.jpg",
+    specularClouds: "/earth/specularClouds.jpg",
+    description: "NASA night imagery - city lights",
+  },
+  "Blue Marble (NASA)": {
+    // NASA Blue Marble - true color satellite imagery
+    // Source: https://visibleearth.nasa.gov/collection/1484/blue-marble
+    day: "/earth/bluemarble_day.jpg",
+    night: "/earth/night.jpg",
+    specularClouds: "/earth/specularClouds.jpg",
+    description: "NASA true color day imagery",
+  },
+  "Topo + Bathymetry": {
+    // Topographic relief with ocean bathymetry
+    // Shows elevation data - great for tactical/military look
+    day: "/earth/topo_bathymetry.jpg",
+    night: "/earth/night.jpg",
+    specularClouds: "/earth/specularClouds.jpg",
+    description: "Elevation + ocean depth",
+  },
+};
 
-// Day texture - shows continents, oceans, and land during daytime
-const earthDayTexture = textureLoader.load("/earth/day.jpg");
-earthDayTexture.colorSpace = THREE.SRGBColorSpace; // Correct color space for display
+// Current texture preset selection
+const textureParams = {
+  preset: "Standard",
+};
 
-// Night texture - shows city lights on the dark side of Earth
-const earthNightTexture = textureLoader.load("/earth/night.jpg");
-earthNightTexture.colorSpace = THREE.SRGBColorSpace;
+// Texture cache to avoid reloading
+const textureCache = {};
 
-// Specular and clouds texture - contains cloud data and ocean specularity
-// Red channel: specular intensity (oceans are reflective)
-// Green channel: cloud coverage
-const earthSpecularCloudsTexture = textureLoader.load("/earth/specularClouds.jpg");
+/**
+ * Load a texture with caching
+ */
+function loadTexture(path, isSRGB = true) {
+  if (textureCache[path]) {
+    return textureCache[path];
+  }
+
+  const texture = textureLoader.load(
+    path,
+    // onLoad
+    (tex) => {
+      console.log(`Loaded texture: ${path}`);
+    },
+    // onProgress
+    undefined,
+    // onError
+    (err) => {
+      console.warn(`Failed to load texture: ${path}. Using fallback.`);
+    }
+  );
+
+  if (isSRGB) {
+    texture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  textureCache[path] = texture;
+  return texture;
+}
+
+/**
+ * Switch to a different texture preset
+ */
+function switchTexturePreset(presetName) {
+  const preset = texturePresets[presetName];
+  if (!preset) {
+    console.warn(`Unknown texture preset: ${presetName}`);
+    return;
+  }
+
+  console.log(`Switching to texture preset: ${presetName}`);
+
+  // Load and apply textures
+  const dayTex = loadTexture(preset.day, true);
+  const nightTex = loadTexture(preset.night, true);
+  const specCloudsTex = loadTexture(preset.specularClouds, false);
+
+  // Update Earth material uniforms
+  earthMaterial.uniforms.uDayTexture.value = dayTex;
+  earthMaterial.uniforms.uNightTexture.value = nightTex;
+  earthMaterial.uniforms.uSpecularCloudsTexture.value = specCloudsTex;
+
+  // Update cloud layer
+  cloudMaterial.uniforms.uCloudsTexture.value = specCloudsTex;
+
+  // Update anisotropic filtering on new textures
+  const maxAniso = renderer?.capabilities?.getMaxAnisotropy() || 1;
+  dayTex.anisotropy = maxAniso;
+  nightTex.anisotropy = maxAniso;
+  specCloudsTex.anisotropy = maxAniso;
+}
+
+// Load initial textures (Standard preset)
+const earthDayTexture = loadTexture("/earth/day.jpg", true);
+const earthNightTexture = loadTexture("/earth/night.jpg", true);
+const earthSpecularCloudsTexture = loadTexture("/earth/specularClouds.jpg", false);
 
 /**
  * =============================================================================
@@ -484,6 +578,9 @@ const earthMaterial = new THREE.ShaderMaterial({
     uSpecularIntensity: { value: earthParameters.specularIntensity },
     uSpecularSharpness: { value: earthParameters.specularSharpness },
     uSpecularGlowSize: { value: earthParameters.specularGlowSize },
+
+    // Color mode (0=normal, 1=grayscale, 2=night vision, 3=thermal, 4=hologram)
+    uColorMode: { value: 0 },
   },
 });
 
@@ -2014,6 +2111,31 @@ window.generateSatelliteData = generateSatelliteData;
  * GUI CONTROLS
  * =============================================================================
  */
+
+// Texture preset folder
+const textureFolder = gui.addFolder("Textures");
+textureFolder
+  .add(textureParams, "preset", Object.keys(texturePresets))
+  .name("Preset")
+  .onChange((value) => {
+    switchTexturePreset(value);
+  });
+
+// Color mode options
+const colorModes = {
+  "Normal": 0,
+  "Grayscale (Tactical)": 1,
+  "Night Vision": 2,
+  "Thermal": 3,
+  "Hologram": 4,
+};
+const colorModeParams = { mode: "Normal" };
+textureFolder
+  .add(colorModeParams, "mode", Object.keys(colorModes))
+  .name("Color Mode")
+  .onChange((value) => {
+    earthMaterial.uniforms.uColorMode.value = colorModes[value];
+  });
 
 // Atmosphere folder
 const atmosphereFolder = gui.addFolder("Atmosphere");

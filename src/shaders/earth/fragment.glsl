@@ -33,6 +33,9 @@ uniform float uSpecularIntensity;        // Overall specular intensity
 uniform float uSpecularSharpness;        // Sharpness of center highlight (higher = smaller)
 uniform float uSpecularGlowSize;         // Size of medium glow (higher = smaller)
 
+// Color mode uniforms
+uniform int uColorMode;                  // 0=normal, 1=grayscale, 2=night vision, 3=thermal, 4=hologram
+
 // Varyings from vertex shader
 varying vec2 vUv;                        // Texture coordinates
 varying vec3 vNormal;                    // Surface normal in world space
@@ -154,6 +157,52 @@ void main()
     // Visible on edges, stronger near terminator
     float atmosphereFactor = fresnel * atmosphereStrength;
     color = mix(color, atmosphereColor, atmosphereFactor);
+
+    // ==========================================================================
+    // COLOR MODE PROCESSING
+    // ==========================================================================
+
+    // Apply color mode transformation
+    if (uColorMode == 1) {
+      // GRAYSCALE - Tactical/military look
+      float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+      color = vec3(luminance);
+    }
+    else if (uColorMode == 2) {
+      // NIGHT VISION - Green phosphor look
+      float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+      // Boost brightness and add green tint
+      luminance = pow(luminance, 0.7) * 1.2; // Gamma boost
+      color = vec3(luminance * 0.2, luminance, luminance * 0.2);
+    }
+    else if (uColorMode == 3) {
+      // THERMAL - Heat map false color
+      float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+      // Map luminance to thermal gradient: black -> blue -> purple -> red -> orange -> yellow -> white
+      vec3 thermal;
+      if (luminance < 0.25) {
+        thermal = mix(vec3(0.0, 0.0, 0.2), vec3(0.3, 0.0, 0.5), luminance * 4.0);
+      } else if (luminance < 0.5) {
+        thermal = mix(vec3(0.3, 0.0, 0.5), vec3(0.8, 0.1, 0.1), (luminance - 0.25) * 4.0);
+      } else if (luminance < 0.75) {
+        thermal = mix(vec3(0.8, 0.1, 0.1), vec3(1.0, 0.6, 0.0), (luminance - 0.5) * 4.0);
+      } else {
+        thermal = mix(vec3(1.0, 0.6, 0.0), vec3(1.0, 1.0, 0.8), (luminance - 0.75) * 4.0);
+      }
+      color = thermal;
+    }
+    else if (uColorMode == 4) {
+      // HOLOGRAM - Cyan/blue wireframe sci-fi look
+      float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+      // Edge detection using fresnel
+      float edge = pow(fresnel, 1.5) * 2.0;
+      // Scanline effect
+      float scanline = sin(vUv.y * 800.0) * 0.5 + 0.5;
+      scanline = pow(scanline, 0.5) * 0.3 + 0.7;
+      // Combine: cyan base with edge glow
+      luminance = luminance * scanline;
+      color = vec3(luminance * 0.3, luminance * 0.8, luminance) + vec3(0.0, edge * 0.3, edge * 0.4);
+    }
 
     // ==========================================================================
     // FINAL OUTPUT
