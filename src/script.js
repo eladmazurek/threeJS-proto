@@ -549,8 +549,8 @@ function updateIconScale(cameraDistance) {
 // Motion parameters - simplified with single speed slider per type
 const motionParams = {
   // Speed multipliers (1 = normal, higher = faster)
-  shipSpeed: 1.0,
-  aircraftSpeed: 1.0,
+  shipSpeed: 10.0,
+  aircraftSpeed: 10.0,
 
   // Base values (internal, not exposed to GUI)
   shipBaseSpeed: 0.002,      // degrees per second at multiplier 1
@@ -724,44 +724,131 @@ const unitCountParams = {
   shipCount: 200,
   aircraftCount: 300,
   totalCount: 500, // Combined slider for easy testing
+  realisticRoutes: false, // Toggle between global spread and realistic traffic patterns
 };
+
+// Realistic shipping lanes with concentration weights
+const SHIPPING_LANES = [
+  // High traffic areas
+  { latRange: [1, 8], lonRange: [103, 117], weight: 0.12, name: "South China Sea / Malacca" },
+  { latRange: [29, 32], lonRange: [32, 34], weight: 0.04, name: "Suez Canal approach" },
+  { latRange: [47, 49], lonRange: [-123, -122], weight: 0.03, name: "Puget Sound" },
+  { latRange: [50, 52], lonRange: [0, 2], weight: 0.04, name: "English Channel" },
+  { latRange: [35, 37], lonRange: [139, 141], weight: 0.04, name: "Tokyo Bay" },
+  { latRange: [22, 23], lonRange: [113, 115], weight: 0.04, name: "Hong Kong / Pearl River" },
+  { latRange: [1, 2], lonRange: [103, 104], weight: 0.04, name: "Singapore Strait" },
+  { latRange: [37, 38], lonRange: [-122, -121], weight: 0.03, name: "San Francisco Bay" },
+  { latRange: [40, 41], lonRange: [-74, -73], weight: 0.03, name: "New York Harbor" },
+  { latRange: [51, 54], lonRange: [3, 8], weight: 0.04, name: "Rotterdam / North Sea" },
+  // Medium traffic - major routes
+  { latRange: [30, 45], lonRange: [-80, -10], weight: 0.10, name: "North Atlantic" },
+  { latRange: [0, 25], lonRange: [50, 75], weight: 0.08, name: "Indian Ocean / Arabian Sea" },
+  { latRange: [10, 40], lonRange: [120, 145], weight: 0.10, name: "West Pacific" },
+  { latRange: [35, 50], lonRange: [-130, -120], weight: 0.06, name: "US West Coast" },
+  { latRange: [25, 45], lonRange: [-85, -75], weight: 0.06, name: "US East Coast" },
+  { latRange: [35, 42], lonRange: [-5, 15], weight: 0.05, name: "Mediterranean West" },
+  { latRange: [32, 38], lonRange: [15, 35], weight: 0.05, name: "Mediterranean East" },
+  { latRange: [55, 62], lonRange: [5, 25], weight: 0.05, name: "Baltic Sea" },
+];
+
+// Realistic flight corridors with concentration weights
+const FLIGHT_CORRIDORS = [
+  // Major hub airports
+  { latRange: [40, 42], lonRange: [-75, -73], weight: 0.05, name: "NYC area" },
+  { latRange: [33, 35], lonRange: [-118, -117], weight: 0.04, name: "Los Angeles" },
+  { latRange: [51, 52], lonRange: [-1, 1], weight: 0.05, name: "London" },
+  { latRange: [48, 50], lonRange: [2, 3], weight: 0.04, name: "Paris" },
+  { latRange: [25, 26], lonRange: [55, 56], weight: 0.04, name: "Dubai" },
+  { latRange: [22, 23], lonRange: [113, 114], weight: 0.04, name: "Hong Kong" },
+  { latRange: [1, 2], lonRange: [103, 104], weight: 0.04, name: "Singapore" },
+  { latRange: [35, 36], lonRange: [139, 140], weight: 0.04, name: "Tokyo" },
+  { latRange: [31, 32], lonRange: [121, 122], weight: 0.04, name: "Shanghai" },
+  { latRange: [37, 38], lonRange: [-122, -121], weight: 0.03, name: "San Francisco" },
+  { latRange: [41, 42], lonRange: [-88, -87], weight: 0.03, name: "Chicago" },
+  { latRange: [49, 51], lonRange: [8, 12], weight: 0.04, name: "Frankfurt / Munich" },
+  // Major flight routes
+  { latRange: [45, 65], lonRange: [-60, -10], weight: 0.12, name: "North Atlantic Track" },
+  { latRange: [35, 55], lonRange: [-130, -70], weight: 0.12, name: "US Domestic" },
+  { latRange: [35, 55], lonRange: [-10, 40], weight: 0.10, name: "European Airspace" },
+  { latRange: [20, 45], lonRange: [100, 140], weight: 0.10, name: "East Asian Routes" },
+  { latRange: [10, 35], lonRange: [70, 100], weight: 0.06, name: "South Asian Routes" },
+  { latRange: [-35, 0], lonRange: [115, 155], weight: 0.04, name: "Australia / Oceania" },
+];
+
+/**
+ * Generate a random point within a region with some gaussian spread
+ */
+function randomInRegion(latRange, lonRange) {
+  // Add some gaussian-like spread for more natural clustering
+  const latCenter = (latRange[0] + latRange[1]) / 2;
+  const lonCenter = (lonRange[0] + lonRange[1]) / 2;
+  const latSpread = (latRange[1] - latRange[0]) / 2;
+  const lonSpread = (lonRange[1] - lonRange[0]) / 2;
+
+  // Box-Muller for gaussian distribution, clamped to range
+  const u1 = Math.random();
+  const u2 = Math.random();
+  const gaussian = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+
+  const lat = Math.max(latRange[0], Math.min(latRange[1], latCenter + gaussian * latSpread * 0.4));
+  const lon = Math.max(lonRange[0], Math.min(lonRange[1], lonCenter + (Math.random() - 0.5) * lonSpread * 2));
+
+  return { lat, lon };
+}
+
+/**
+ * Select a random region based on weights
+ */
+function selectWeightedRegion(regions) {
+  const totalWeight = regions.reduce((sum, r) => sum + r.weight, 0);
+  let random = Math.random() * totalWeight;
+
+  for (const region of regions) {
+    random -= region.weight;
+    if (random <= 0) return region;
+  }
+  return regions[regions.length - 1];
+}
 
 /**
  * Generate demo ships and aircraft with specified counts
- * Distributes units globally with even spacing
+ * Distributes units globally or along realistic routes based on setting
  */
 function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount = unitCountParams.aircraftCount) {
-  // Generate ships distributed globally across oceans
   shipSimState = [];
-  for (let i = 0; i < shipCount; i++) {
-    // Use golden ratio for more even spherical distribution
-    const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI); // -90 to 90, evenly distributed
-    const lon = Math.random() * 360 - 180; // -180 to 180
-
-    shipSimState.push(initUnitState(
-      lat,
-      lon,
-      Math.random() * 360,
-      false // isAircraft
-    ));
-  }
-
-  // Generate aircraft distributed globally
   aircraftSimState = [];
-  for (let i = 0; i < aircraftCount; i++) {
-    // Use golden ratio for more even spherical distribution
-    const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI); // -90 to 90, evenly distributed
-    const lon = Math.random() * 360 - 180; // -180 to 180
 
-    aircraftSimState.push(initUnitState(
-      lat,
-      lon,
-      Math.random() * 360,
-      true // isAircraft
-    ));
+  if (unitCountParams.realisticRoutes) {
+    // Generate ships along realistic shipping lanes
+    for (let i = 0; i < shipCount; i++) {
+      const region = selectWeightedRegion(SHIPPING_LANES);
+      const { lat, lon } = randomInRegion(region.latRange, region.lonRange);
+      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false));
+    }
+
+    // Generate aircraft along realistic flight corridors
+    for (let i = 0; i < aircraftCount; i++) {
+      const region = selectWeightedRegion(FLIGHT_CORRIDORS);
+      const { lat, lon } = randomInRegion(region.latRange, region.lonRange);
+      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true));
+    }
+  } else {
+    // Generate ships distributed globally
+    for (let i = 0; i < shipCount; i++) {
+      const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI);
+      const lon = Math.random() * 360 - 180;
+      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false));
+    }
+
+    // Generate aircraft distributed globally
+    for (let i = 0; i < aircraftCount; i++) {
+      const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI);
+      const lon = Math.random() * 360 - 180;
+      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true));
+    }
   }
 
-  console.log(`Generated ${shipSimState.length} ships and ${aircraftSimState.length} aircraft`);
+  console.log(`Generated ${shipSimState.length} ships and ${aircraftSimState.length} aircraft (realistic: ${unitCountParams.realisticRoutes})`);
 }
 
 /**
@@ -872,6 +959,10 @@ const unitsFolder = gui.addFolder("Units (Performance Test)");
 unitsFolder
   .add(unitCountParams, "totalCount", 100, 500000, 100)
   .name("Total Units")
+  .onChange(updateUnitCounts);
+unitsFolder
+  .add(unitCountParams, "realisticRoutes")
+  .name("Realistic Routes")
   .onChange(updateUnitCounts);
 unitsFolder
   .add(motionParams, "motionUpdateInterval", 0, 200, 10)
