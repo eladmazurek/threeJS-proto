@@ -15,6 +15,10 @@ import GUI from "lil-gui";
 import earthVertexShader from "./shaders/earth/vertex.glsl";
 import earthFragmentShader from "./shaders/earth/fragment.glsl";
 
+// Import tracking icon shaders (GPU-based orientation)
+import trackingVertexShader from "./shaders/tracking/vertex.glsl";
+import trackingFragmentShader from "./shaders/tracking/fragment.glsl";
+
 /**
  * =============================================================================
  * BASE SETUP
@@ -296,10 +300,12 @@ function buildGrid() {
 
 // Constants
 const EARTH_RADIUS = 2; // Must match the sphere geometry radius
-const MAX_SHIPS = 1000; // Maximum number of ship instances
-const MAX_AIRCRAFT = 1000; // Maximum number of aircraft instances
+const MAX_SHIPS = 250000; // Maximum number of ship instances
+const MAX_AIRCRAFT = 250000; // Maximum number of aircraft instances
 const SHIP_ALTITUDE = 0.005; // Height above Earth surface for ships
 const AIRCRAFT_ALTITUDE = 0.02; // Height above Earth surface for aircraft
+
+// Note: Matrix pooling removed - GPU now handles orientation calculations
 
 /**
  * Convert latitude/longitude to 3D position on Earth surface
@@ -321,75 +327,64 @@ function latLonToPosition(lat, lon, altitude = 0) {
   );
 }
 
+// Note: createInstanceMatrix removed - GPU vertex shader now handles orientation
+
+// -----------------------------------------------------------------------------
+// GPU-Based Instanced Tracking Icons
+// -----------------------------------------------------------------------------
+// Uses InstancedBufferGeometry with custom attributes for lat/lon/heading.
+// The vertex shader computes position and orientation on the GPU.
+
 /**
- * Create a matrix for positioning and orienting an instance on the Earth
- * @param {number} lat - Latitude in degrees
- * @param {number} lon - Longitude in degrees
- * @param {number} heading - Heading in degrees (0 = North, clockwise)
- * @param {number} altitude - Height above surface
- * @param {number} scale - Scale factor for the symbol
- * @returns {THREE.Matrix4} Transformation matrix
+ * Create an instanced buffer geometry with tracking attributes
+ * @param {THREE.BufferGeometry} baseGeometry - The icon shape geometry
+ * @param {number} maxInstances - Maximum number of instances
+ * @returns {THREE.InstancedBufferGeometry} Geometry with instanced attributes
  */
-function createInstanceMatrix(lat, lon, heading, altitude, scale) {
-  const position = latLonToPosition(lat, lon, altitude);
+function createTrackingGeometry(baseGeometry, maxInstances) {
+  const instancedGeometry = new THREE.InstancedBufferGeometry();
+  instancedGeometry.index = baseGeometry.index;
+  instancedGeometry.attributes.position = baseGeometry.attributes.position;
 
-  // Surface normal - points away from Earth center (icon's local Y axis)
-  const surfaceNormal = position.clone().normalize();
+  // Create instanced attribute buffers
+  const latArray = new Float32Array(maxInstances);
+  const lonArray = new Float32Array(maxInstances);
+  const headingArray = new Float32Array(maxInstances);
+  const scaleArray = new Float32Array(maxInstances);
 
-  // Calculate tangent directions at this point on the sphere
-  // We need "north" and "east" directions that lie flat on the surface
-  const worldUp = new THREE.Vector3(0, 1, 0);
+  // Initialize with default values
+  scaleArray.fill(1.0);
 
-  // East = worldUp × surfaceNormal (perpendicular to both, tangent to surface)
-  const east = new THREE.Vector3().crossVectors(worldUp, surfaceNormal).normalize();
+  // Create instanced buffer attributes
+  const latAttr = new THREE.InstancedBufferAttribute(latArray, 1);
+  const lonAttr = new THREE.InstancedBufferAttribute(lonArray, 1);
+  const headingAttr = new THREE.InstancedBufferAttribute(headingArray, 1);
+  const scaleAttr = new THREE.InstancedBufferAttribute(scaleArray, 1);
 
-  // North = surfaceNormal × east (tangent to surface, pointing toward north pole)
-  const north = new THREE.Vector3().crossVectors(surfaceNormal, east).normalize();
+  // Mark as dynamic for frequent updates
+  latAttr.setUsage(THREE.DynamicDrawUsage);
+  lonAttr.setUsage(THREE.DynamicDrawUsage);
+  headingAttr.setUsage(THREE.DynamicDrawUsage);
+  scaleAttr.setUsage(THREE.DynamicDrawUsage);
 
-  // Handle poles where east becomes undefined
-  if (east.lengthSq() < 0.001) {
-    east.set(1, 0, 0);
-    north.set(0, 0, lat > 0 ? -1 : 1);
-  }
+  instancedGeometry.setAttribute('aLat', latAttr);
+  instancedGeometry.setAttribute('aLon', lonAttr);
+  instancedGeometry.setAttribute('aHeading', headingAttr);
+  instancedGeometry.setAttribute('aScale', scaleAttr);
 
-  // Calculate heading direction on the surface
-  // Heading: 0° = North, 90° = East (clockwise when viewed from above)
-  const headingRad = heading * (Math.PI / 180);
-  const headingDir = new THREE.Vector3()
-    .addScaledVector(north, Math.cos(headingRad))
-    .addScaledVector(east, Math.sin(headingRad))
-    .normalize();
+  // Store references for easy access
+  instancedGeometry.userData = {
+    latArray,
+    lonArray,
+    headingArray,
+    scaleArray,
+    latAttr,
+    lonAttr,
+    headingAttr,
+    scaleAttr,
+  };
 
-  // Build orthonormal basis for the icon orientation:
-  // After rotateX(-PI/2), the geometry has:
-  //   - Face normal at local +Y (should point away from Earth = surfaceNormal)
-  //   - Nose at local -Z (should point in heading direction)
-  //   - Right wing at local +X
-  //
-  // So we set:
-  //   - basisY = surfaceNormal (face points away from Earth)
-  //   - basisZ = -headingDir (so that local -Z points in headingDir)
-  //   - basisX = basisY × basisZ (right-hand rule)
-
-  const basisY = surfaceNormal;
-  const basisZ = headingDir.clone().negate();
-  const basisX = new THREE.Vector3().crossVectors(basisY, basisZ).normalize();
-
-  // Re-orthogonalize basisZ to ensure perfect orthonormality
-  const correctedBasisZ = new THREE.Vector3().crossVectors(basisX, basisY).normalize();
-
-  // Build rotation matrix with columns [X, Y, Z]
-  const rotationMatrix = new THREE.Matrix4().makeBasis(basisX, basisY, correctedBasisZ);
-
-  // Combine position, rotation, and scale
-  const matrix = new THREE.Matrix4();
-  matrix.compose(
-    position,
-    new THREE.Quaternion().setFromRotationMatrix(rotationMatrix),
-    new THREE.Vector3(scale, scale, scale)
-  );
-
-  return matrix;
+  return instancedGeometry;
 }
 
 // -----------------------------------------------------------------------------
@@ -402,25 +397,34 @@ shipShape.lineTo(0, -0.005); // Center stern notch
 shipShape.lineTo(-0.012, -0.015); // Port stern
 shipShape.closePath();
 
-const shipGeometry = new THREE.ShapeGeometry(shipShape);
+const shipBaseGeometry = new THREE.ShapeGeometry(shipShape);
 // Rotate geometry so it lies flat on the surface (face points +Y, away from Earth)
 // Negative rotation: bow (at +Y in shape) goes to -Z
-shipGeometry.rotateX(-Math.PI / 2);
+shipBaseGeometry.rotateX(-Math.PI / 2);
 
-const shipMaterial = new THREE.MeshBasicMaterial({
-  color: 0x00ff88,
-  side: THREE.FrontSide,
+// Create instanced geometry with tracking attributes
+const shipGeometry = createTrackingGeometry(shipBaseGeometry, MAX_SHIPS);
+
+// Create shader material for ships
+const shipMaterial = new THREE.ShaderMaterial({
+  vertexShader: trackingVertexShader,
+  fragmentShader: trackingFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uAltitude: { value: SHIP_ALTITUDE },
+    uColor: { value: new THREE.Color(0x00ff88) },
+    uOpacity: { value: 0.9 },
+  },
   transparent: true,
-  opacity: 0.9,
+  side: THREE.FrontSide,
   depthTest: true,
   depthWrite: true,
 });
 
-// Create InstancedMesh for ships
-const shipInstances = new THREE.InstancedMesh(shipGeometry, shipMaterial, MAX_SHIPS);
-shipInstances.count = 0; // Start with no visible instances
-shipInstances.frustumCulled = false; // Ensure all instances render
-earth.add(shipInstances); // Add to Earth so they rotate with it
+// Create mesh for ships
+const shipMesh = new THREE.Mesh(shipGeometry, shipMaterial);
+shipMesh.frustumCulled = false;
+earth.add(shipMesh);
 
 // -----------------------------------------------------------------------------
 // Aircraft Symbol Geometry (airplane shape)
@@ -443,86 +447,95 @@ aircraftShape.lineTo(-0.02, 0.005); // Left wing tip
 aircraftShape.lineTo(-0.003, 0.01); // Left fuselage
 aircraftShape.closePath();
 
-const aircraftGeometry = new THREE.ShapeGeometry(aircraftShape);
+const aircraftBaseGeometry = new THREE.ShapeGeometry(aircraftShape);
 // Rotate geometry so it lies flat on the surface (face points +Y, away from Earth)
 // Negative rotation: nose (at +Y in shape) goes to -Z
-aircraftGeometry.rotateX(-Math.PI / 2);
+aircraftBaseGeometry.rotateX(-Math.PI / 2);
 
-const aircraftMaterial = new THREE.MeshBasicMaterial({
-  color: 0xffaa00,
-  side: THREE.FrontSide,
+// Create instanced geometry with tracking attributes
+const aircraftGeometry = createTrackingGeometry(aircraftBaseGeometry, MAX_AIRCRAFT);
+
+// Create shader material for aircraft
+const aircraftMaterial = new THREE.ShaderMaterial({
+  vertexShader: trackingVertexShader,
+  fragmentShader: trackingFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uAltitude: { value: AIRCRAFT_ALTITUDE },
+    uColor: { value: new THREE.Color(0xffaa00) },
+    uOpacity: { value: 0.9 },
+  },
   transparent: true,
-  opacity: 0.9,
+  side: THREE.FrontSide,
   depthTest: true,
   depthWrite: true,
 });
 
-// Create InstancedMesh for aircraft
-const aircraftInstances = new THREE.InstancedMesh(aircraftGeometry, aircraftMaterial, MAX_AIRCRAFT);
-aircraftInstances.count = 0; // Start with no visible instances
-aircraftInstances.frustumCulled = false;
-earth.add(aircraftInstances); // Add to Earth so they rotate with it
+// Create mesh for aircraft
+const aircraftMesh = new THREE.Mesh(aircraftGeometry, aircraftMaterial);
+aircraftMesh.frustumCulled = false;
+earth.add(aircraftMesh);
 
 // -----------------------------------------------------------------------------
-// Tracking Data Management
+// Tracking Data Management (GPU-based)
 // -----------------------------------------------------------------------------
 
-// Store current tracking data for dynamic rescaling
-let currentShipsData = [];
-let currentAircraftData = [];
+// Store current icon scale for dynamic rescaling based on camera distance
 let currentIconScale = 1;
 
 /**
- * Update ship instances with new data
- * @param {Array} ships - Array of ship objects with {lat, lon, heading, [scale]}
- * @param {number} globalScale - Global scale multiplier for all icons
+ * Update ship instances by writing directly to GPU attribute buffers
+ * Much more efficient than uploading full matrices
  */
-function updateShips(ships, globalScale = currentIconScale) {
-  currentShipsData = ships;
-  shipInstances.count = Math.min(ships.length, MAX_SHIPS);
+function updateShipAttributes() {
+  const data = shipGeometry.userData;
+  const count = Math.min(shipSimState.length, MAX_SHIPS);
 
-  for (let i = 0; i < shipInstances.count; i++) {
-    const ship = ships[i];
-    const matrix = createInstanceMatrix(
-      ship.lat,
-      ship.lon,
-      ship.heading || 0,
-      SHIP_ALTITUDE,
-      (ship.scale || 1) * globalScale
-    );
-    shipInstances.setMatrixAt(i, matrix);
+  for (let i = 0; i < count; i++) {
+    const ship = shipSimState[i];
+    data.latArray[i] = ship.lat;
+    data.lonArray[i] = ship.lon;
+    data.headingArray[i] = ship.heading;
+    data.scaleArray[i] = ship.scale * currentIconScale;
   }
 
-  shipInstances.instanceMatrix.needsUpdate = true;
+  // Mark attributes as needing upload to GPU
+  data.latAttr.needsUpdate = true;
+  data.lonAttr.needsUpdate = true;
+  data.headingAttr.needsUpdate = true;
+  data.scaleAttr.needsUpdate = true;
+
+  // Set instance count for rendering
+  shipGeometry.instanceCount = count;
 }
 
 /**
- * Update aircraft instances with new data
- * @param {Array} aircraft - Array of aircraft objects with {lat, lon, heading, [scale]}
- * @param {number} globalScale - Global scale multiplier for all icons
+ * Update aircraft instances by writing directly to GPU attribute buffers
  */
-function updateAircraft(aircraft, globalScale = currentIconScale) {
-  currentAircraftData = aircraft;
-  aircraftInstances.count = Math.min(aircraft.length, MAX_AIRCRAFT);
+function updateAircraftAttributes() {
+  const data = aircraftGeometry.userData;
+  const count = Math.min(aircraftSimState.length, MAX_AIRCRAFT);
 
-  for (let i = 0; i < aircraftInstances.count; i++) {
-    const plane = aircraft[i];
-    const matrix = createInstanceMatrix(
-      plane.lat,
-      plane.lon,
-      plane.heading || 0,
-      AIRCRAFT_ALTITUDE,
-      (plane.scale || 1) * globalScale
-    );
-    aircraftInstances.setMatrixAt(i, matrix);
+  for (let i = 0; i < count; i++) {
+    const aircraft = aircraftSimState[i];
+    data.latArray[i] = aircraft.lat;
+    data.lonArray[i] = aircraft.lon;
+    data.headingArray[i] = aircraft.heading;
+    data.scaleArray[i] = aircraft.scale * currentIconScale;
   }
 
-  aircraftInstances.instanceMatrix.needsUpdate = true;
+  // Mark attributes as needing upload to GPU
+  data.latAttr.needsUpdate = true;
+  data.lonAttr.needsUpdate = true;
+  data.headingAttr.needsUpdate = true;
+  data.scaleAttr.needsUpdate = true;
+
+  // Set instance count for rendering
+  aircraftGeometry.instanceCount = count;
 }
 
 /**
  * Update icon scale based on camera distance
- * The motion simulation handles matrix rebuilds, this just updates the scale factor
  */
 function updateIconScale(cameraDistance) {
   const baseDistance = 13;
@@ -548,7 +561,13 @@ const motionParams = {
   // How often units change course (seconds)
   courseChangeInterval: 10,
   courseChangeVariance: 5,
+
+  // Performance: motion update interval in ms (0 = every frame)
+  motionUpdateInterval: 50, // Update motion every 50ms (~20 updates/sec)
 };
+
+// Throttle tracking
+let lastMotionUpdateTime = 0;
 
 // Simulation state for all units
 let shipSimState = [];
@@ -655,6 +674,8 @@ function updateUnitMotion(unit, deltaTime) {
 
 /**
  * Update all units' motion and refresh the display
+ * Throttled to reduce CPU load with large unit counts
+ * Now uses GPU-based orientation - only uploads lat/lon/heading/scale (16 bytes vs 64 bytes)
  */
 function updateMotionSimulation(currentTime) {
   const deltaTime = lastSimTime === 0 ? 0 : currentTime - lastSimTime;
@@ -663,81 +684,95 @@ function updateMotionSimulation(currentTime) {
   // Skip if deltaTime is too large (e.g., tab was inactive)
   if (deltaTime > 1) return;
 
-  // Update ships
-  for (const ship of shipSimState) {
-    updateUnitMotion(ship, deltaTime);
+  // Throttle: only update at specified interval
+  const now = performance.now();
+  const timeSinceLastUpdate = now - lastMotionUpdateTime;
+
+  if (motionParams.motionUpdateInterval > 0 && timeSinceLastUpdate < motionParams.motionUpdateInterval) {
+    return; // Skip this frame
   }
 
-  // Update aircraft
-  for (const aircraft of aircraftSimState) {
-    updateUnitMotion(aircraft, deltaTime);
+  // Use actual elapsed time for physics (not frame delta) for smoother motion
+  const physicsDelta = motionParams.motionUpdateInterval > 0
+    ? timeSinceLastUpdate / 1000
+    : deltaTime;
+
+  lastMotionUpdateTime = now;
+
+  // Update ship motion (CPU physics simulation)
+  for (let i = 0; i < shipSimState.length; i++) {
+    updateUnitMotion(shipSimState[i], physicsDelta);
   }
 
-  // Convert sim state to display data and update instances
-  currentShipsData = shipSimState.map(s => ({
-    lat: s.lat,
-    lon: s.lon,
-    heading: s.heading,
-    scale: s.scale,
-  }));
+  // Update aircraft motion (CPU physics simulation)
+  for (let i = 0; i < aircraftSimState.length; i++) {
+    updateUnitMotion(aircraftSimState[i], physicsDelta);
+  }
 
-  currentAircraftData = aircraftSimState.map(a => ({
-    lat: a.lat,
-    lon: a.lon,
-    heading: a.heading,
-    scale: a.scale,
-  }));
-
-  // Update instance matrices
-  updateShips(currentShipsData, currentIconScale);
-  updateAircraft(currentAircraftData, currentIconScale);
+  // Upload updated attributes to GPU (much smaller than full matrices)
+  // GPU vertex shader will compute position and orientation
+  updateShipAttributes();
+  updateAircraftAttributes();
 }
 
 // -----------------------------------------------------------------------------
 // Demo Data - Generate sample ships and aircraft around the world
 // -----------------------------------------------------------------------------
-function generateDemoData() {
-  // Generate demo ships (major shipping routes)
-  const shippingRoutes = [
-    { latRange: [30, 40], lonRange: [-80, -10], count: 50 }, // Atlantic
-    { latRange: [0, 30], lonRange: [50, 100], count: 40 }, // Indian Ocean
-    { latRange: [10, 50], lonRange: [100, 150], count: 60 }, // Pacific Asia
-    { latRange: [30, 50], lonRange: [-160, -120], count: 30 }, // Pacific US
-    { latRange: [50, 60], lonRange: [-10, 30], count: 25 }, // North Sea / Baltic
-  ];
 
+// Unit count parameters (adjustable via GUI)
+const unitCountParams = {
+  shipCount: 200,
+  aircraftCount: 300,
+  totalCount: 500, // Combined slider for easy testing
+};
+
+/**
+ * Generate demo ships and aircraft with specified counts
+ * Distributes units globally with even spacing
+ */
+function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount = unitCountParams.aircraftCount) {
+  // Generate ships distributed globally across oceans
   shipSimState = [];
-  for (const route of shippingRoutes) {
-    for (let i = 0; i < route.count; i++) {
-      shipSimState.push(initUnitState(
-        route.latRange[0] + Math.random() * (route.latRange[1] - route.latRange[0]),
-        route.lonRange[0] + Math.random() * (route.lonRange[1] - route.lonRange[0]),
-        Math.random() * 360,
-        false // isAircraft
-      ));
-    }
+  for (let i = 0; i < shipCount; i++) {
+    // Use golden ratio for more even spherical distribution
+    const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI); // -90 to 90, evenly distributed
+    const lon = Math.random() * 360 - 180; // -180 to 180
+
+    shipSimState.push(initUnitState(
+      lat,
+      lon,
+      Math.random() * 360,
+      false // isAircraft
+    ));
   }
 
-  // Generate demo aircraft (major flight corridors)
-  const flightCorridors = [
-    { latRange: [35, 55], lonRange: [-130, -70], count: 80 }, // US domestic
-    { latRange: [45, 65], lonRange: [-60, 30], count: 70 }, // Transatlantic
-    { latRange: [20, 50], lonRange: [70, 140], count: 90 }, // Asia
-    { latRange: [30, 50], lonRange: [-10, 40], count: 60 }, // Europe
-    { latRange: [-40, 0], lonRange: [110, 160], count: 30 }, // Australia
-  ];
-
+  // Generate aircraft distributed globally
   aircraftSimState = [];
-  for (const corridor of flightCorridors) {
-    for (let i = 0; i < corridor.count; i++) {
-      aircraftSimState.push(initUnitState(
-        corridor.latRange[0] + Math.random() * (corridor.latRange[1] - corridor.latRange[0]),
-        corridor.lonRange[0] + Math.random() * (corridor.lonRange[1] - corridor.lonRange[0]),
-        Math.random() * 360,
-        true // isAircraft
-      ));
-    }
+  for (let i = 0; i < aircraftCount; i++) {
+    // Use golden ratio for more even spherical distribution
+    const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI); // -90 to 90, evenly distributed
+    const lon = Math.random() * 360 - 180; // -180 to 180
+
+    aircraftSimState.push(initUnitState(
+      lat,
+      lon,
+      Math.random() * 360,
+      true // isAircraft
+    ));
   }
+
+  console.log(`Generated ${shipSimState.length} ships and ${aircraftSimState.length} aircraft`);
+}
+
+/**
+ * Update unit counts (called from GUI)
+ */
+function updateUnitCounts() {
+  // When using total slider, split 40% ships, 60% aircraft
+  const total = unitCountParams.totalCount;
+  unitCountParams.shipCount = Math.floor(total * 0.4);
+  unitCountParams.aircraftCount = Math.floor(total * 0.6);
+  generateDemoData(unitCountParams.shipCount, unitCountParams.aircraftCount);
 }
 
 // Initialize demo data
@@ -746,11 +781,14 @@ generateDemoData();
 // Build the lat/lon grid (now that latLonToPosition is defined)
 buildGrid();
 
-// Export update functions for external use (e.g., real AIS/FlightAware data)
-window.updateShips = updateShips;
-window.updateAircraft = updateAircraft;
+// Export state and functions for external use (e.g., real AIS/FlightAware data)
+// External code can modify shipSimState/aircraftSimState arrays directly,
+// then call updateShipAttributes/updateAircraftAttributes to sync to GPU
 window.shipSimState = shipSimState;
 window.aircraftSimState = aircraftSimState;
+window.updateShipAttributes = updateShipAttributes;
+window.updateAircraftAttributes = updateAircraftAttributes;
+window.generateDemoData = generateDemoData;
 
 /**
  * =============================================================================
@@ -828,6 +866,38 @@ gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interv
 const motionFolder = gui.addFolder("Motion");
 motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
 motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
+
+// Unit count folder - for testing performance
+const unitsFolder = gui.addFolder("Units (Performance Test)");
+unitsFolder
+  .add(unitCountParams, "totalCount", 100, 500000, 100)
+  .name("Total Units")
+  .onChange(updateUnitCounts);
+unitsFolder
+  .add(motionParams, "motionUpdateInterval", 0, 200, 10)
+  .name("Update Interval (ms)")
+  .onChange(() => {
+    // Reset throttle timer when interval changes
+    lastMotionUpdateTime = 0;
+  });
+
+// Performance stats display
+const perfStats = { fps: 0, ships: 0, aircraft: 0 };
+const statsDisplay = unitsFolder.add(perfStats, "fps").name("FPS").listen().disable();
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
+function updateFpsCounter() {
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    perfStats.fps = Math.round(frameCount * 1000 / (now - lastFpsTime));
+    perfStats.ships = shipSimState.length;
+    perfStats.aircraft = aircraftSimState.length;
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
 
 /**
  * =============================================================================
@@ -948,6 +1018,9 @@ const tick = () => {
 
   // Render the scene from the camera's perspective
   renderer.render(scene, camera);
+
+  // Update FPS counter for performance monitoring
+  updateFpsCounter();
 
   // Request the next frame, creating an infinite loop
   window.requestAnimationFrame(tick);
