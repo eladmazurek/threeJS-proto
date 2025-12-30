@@ -18,6 +18,7 @@ import earthFragmentShader from "./shaders/earth/fragment.glsl";
 // Import tracking icon shaders (GPU-based orientation)
 import trackingVertexShader from "./shaders/tracking/vertex.glsl";
 import trackingFragmentShader from "./shaders/tracking/fragment.glsl";
+import shadowVertexShader from "./shaders/tracking/shadow-vertex.glsl";
 
 /**
  * =============================================================================
@@ -477,6 +478,46 @@ aircraftMesh.frustumCulled = false;
 earth.add(aircraftMesh);
 
 // -----------------------------------------------------------------------------
+// Aircraft Shadows - shares attribute buffers with aircraft for automatic sync
+// -----------------------------------------------------------------------------
+const SHADOW_ALTITUDE = 0.001; // Just above surface to prevent z-fighting
+
+// Create shadow geometry that shares the same instanced attributes as aircraft
+const aircraftShadowGeometry = new THREE.InstancedBufferGeometry();
+aircraftShadowGeometry.index = aircraftBaseGeometry.index;
+aircraftShadowGeometry.attributes.position = aircraftBaseGeometry.attributes.position;
+
+// Share the same attribute buffers - shadows auto-update when aircraft move!
+aircraftShadowGeometry.setAttribute('aLat', aircraftGeometry.getAttribute('aLat'));
+aircraftShadowGeometry.setAttribute('aLon', aircraftGeometry.getAttribute('aLon'));
+aircraftShadowGeometry.setAttribute('aHeading', aircraftGeometry.getAttribute('aHeading'));
+aircraftShadowGeometry.setAttribute('aScale', aircraftGeometry.getAttribute('aScale'));
+
+// Shadow material - dark and semi-transparent, offset by sun direction
+const aircraftShadowMaterial = new THREE.ShaderMaterial({
+  vertexShader: shadowVertexShader,
+  fragmentShader: trackingFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uAircraftAltitude: { value: AIRCRAFT_ALTITUDE },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+    uShadowLength: { value: 1.0 }, // Shadow length multiplier
+    uColor: { value: new THREE.Color(0x000000) }, // Black shadow
+    uOpacity: { value: 0.3 }, // Semi-transparent
+  },
+  transparent: true,
+  side: THREE.FrontSide,
+  depthTest: true,
+  depthWrite: false, // Don't write to depth buffer
+});
+
+// Create shadow mesh
+const aircraftShadowMesh = new THREE.Mesh(aircraftShadowGeometry, aircraftShadowMaterial);
+aircraftShadowMesh.frustumCulled = false;
+aircraftShadowMesh.renderOrder = -1; // Render shadows first (under aircraft)
+earth.add(aircraftShadowMesh);
+
+// -----------------------------------------------------------------------------
 // Tracking Data Management (GPU-based)
 // -----------------------------------------------------------------------------
 
@@ -530,8 +571,9 @@ function updateAircraftAttributes() {
   data.headingAttr.needsUpdate = true;
   data.scaleAttr.needsUpdate = true;
 
-  // Set instance count for rendering
+  // Set instance count for rendering (aircraft and shadows share buffers)
   aircraftGeometry.instanceCount = count;
+  aircraftShadowGeometry.instanceCount = count;
 }
 
 /**
@@ -929,9 +971,17 @@ sunFolder.add(earthParameters, "sunDirectionY", -1, 1, 0.01).onChange(updateSunD
 sunFolder.add(earthParameters, "sunDirectionZ", -1, 1, 0.01).onChange(updateSunDirection);
 
 function updateSunDirection() {
-  earthMaterial.uniforms.uSunDirection.value
-    .set(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ)
-    .normalize();
+  const sunDir = new THREE.Vector3(
+    earthParameters.sunDirectionX,
+    earthParameters.sunDirectionY,
+    earthParameters.sunDirectionZ
+  ).normalize();
+
+  // Update Earth shader
+  earthMaterial.uniforms.uSunDirection.value.copy(sunDir);
+
+  // Update aircraft shadow shader
+  aircraftShadowMaterial.uniforms.uSunDirection.value.copy(sunDir);
 }
 
 // Grid folder
