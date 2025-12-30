@@ -20,6 +20,10 @@ import trackingVertexShader from "./shaders/tracking/vertex.glsl";
 import trackingFragmentShader from "./shaders/tracking/fragment.glsl";
 import shadowVertexShader from "./shaders/tracking/shadow-vertex.glsl";
 
+// Import glass shaders for tactical UI look
+import glassVertexShader from "./shaders/tracking/glass-vertex.glsl";
+import glassFragmentShader from "./shaders/tracking/glass-fragment.glsl";
+
 /**
  * =============================================================================
  * BASE SETUP
@@ -29,6 +33,9 @@ import shadowVertexShader from "./shaders/tracking/shadow-vertex.glsl";
 // Debug GUI - lil-gui provides a panel for tweaking parameters in real-time
 // Access it in the top-right corner of the screen
 const gui = new GUI();
+
+// Earth radius constant - must match the sphere geometry radius
+const EARTH_RADIUS = 2;
 
 // Get reference to the WebGL canvas element defined in index.html
 const canvas = document.querySelector("canvas.webgl");
@@ -125,6 +132,66 @@ const earth = new THREE.Mesh(earthGeometry, earthMaterial);
 
 // Add the Earth to the scene graph
 scene.add(earth);
+
+/**
+ * =============================================================================
+ * CLOUD LAYER (Separate sphere for proper depth ordering)
+ * =============================================================================
+ * Renders clouds as a separate transparent layer so ships appear below clouds
+ * but aircraft appear above them.
+ */
+
+const CLOUD_ALTITUDE = 0.008; // Slightly above ships (0.005) but below aircraft (0.02)
+
+const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS + CLOUD_ALTITUDE, 64, 64);
+
+const cloudMaterial = new THREE.ShaderMaterial({
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D uCloudsTexture;
+    uniform float uCloudsIntensity;
+    uniform vec3 uSunDirection;
+
+    varying vec2 vUv;
+
+    void main() {
+      // Sample cloud coverage from green channel
+      float clouds = texture2D(uCloudsTexture, vUv).g;
+
+      // Calculate basic day/night based on normal (approximate from UV)
+      vec3 normal = normalize(vec3(
+        -sin(vUv.y * 3.14159) * cos(vUv.x * 6.28318),
+        cos(vUv.y * 3.14159),
+        sin(vUv.y * 3.14159) * sin(vUv.x * 6.28318)
+      ));
+      float dayMix = smoothstep(-0.2, 0.4, dot(normal, uSunDirection));
+
+      // Clouds only visible on day side
+      float cloudAlpha = clouds * uCloudsIntensity * dayMix * 0.9;
+
+      gl_FragColor = vec4(1.0, 1.0, 1.0, cloudAlpha);
+    }
+  `,
+  uniforms: {
+    uCloudsTexture: { value: earthSpecularCloudsTexture },
+    uCloudsIntensity: { value: earthParameters.cloudsIntensity },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+  },
+  transparent: true,
+  side: THREE.FrontSide,
+  depthTest: true,
+  depthWrite: false,
+});
+
+const cloudMesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
+cloudMesh.renderOrder = 1.5; // Between ships (1) and aircraft (2)
+earth.add(cloudMesh);
 
 /**
  * =============================================================================
@@ -300,7 +367,6 @@ function buildGrid() {
  */
 
 // Constants
-const EARTH_RADIUS = 2; // Must match the sphere geometry radius
 const MAX_SHIPS = 250000; // Maximum number of ship instances
 const MAX_AIRCRAFT = 250000; // Maximum number of aircraft instances
 const SHIP_ALTITUDE = 0.005; // Height above Earth surface for ships
@@ -406,25 +472,31 @@ shipBaseGeometry.rotateX(-Math.PI / 2);
 // Create instanced geometry with tracking attributes
 const shipGeometry = createTrackingGeometry(shipBaseGeometry, MAX_SHIPS);
 
-// Create shader material for ships
+// Create tactical glass material for ships
 const shipMaterial = new THREE.ShaderMaterial({
-  vertexShader: trackingVertexShader,
-  fragmentShader: trackingFragmentShader,
+  vertexShader: glassVertexShader,
+  fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uAltitude: { value: SHIP_ALTITUDE },
-    uColor: { value: new THREE.Color(0x00ff88) },
-    uOpacity: { value: 0.9 },
+    uColor: { value: new THREE.Color(0x00cc66) }, // Slightly deeper green
+    uOpacity: { value: 0.7 },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+    uFresnelPower: { value: 2.0 },
+    uSpecularPower: { value: 32.0 },
+    uGlowColor: { value: new THREE.Color(0x88ffcc) }, // Lighter green glow
   },
   transparent: true,
-  side: THREE.FrontSide,
+  side: THREE.DoubleSide,
   depthTest: true,
-  depthWrite: true,
+  depthWrite: false, // Better blending for glass
+  blending: THREE.NormalBlending,
 });
 
 // Create mesh for ships
 const shipMesh = new THREE.Mesh(shipGeometry, shipMaterial);
 shipMesh.frustumCulled = false;
+shipMesh.renderOrder = 1; // Render ships first (below aircraft)
 earth.add(shipMesh);
 
 // -----------------------------------------------------------------------------
@@ -456,25 +528,31 @@ aircraftBaseGeometry.rotateX(-Math.PI / 2);
 // Create instanced geometry with tracking attributes
 const aircraftGeometry = createTrackingGeometry(aircraftBaseGeometry, MAX_AIRCRAFT);
 
-// Create shader material for aircraft
+// Create tactical glass material for aircraft
 const aircraftMaterial = new THREE.ShaderMaterial({
-  vertexShader: trackingVertexShader,
-  fragmentShader: trackingFragmentShader,
+  vertexShader: glassVertexShader,
+  fragmentShader: glassFragmentShader,
   uniforms: {
     uEarthRadius: { value: EARTH_RADIUS },
     uAltitude: { value: AIRCRAFT_ALTITUDE },
-    uColor: { value: new THREE.Color(0xffaa00) },
-    uOpacity: { value: 0.9 },
+    uColor: { value: new THREE.Color(0xff8800) }, // Slightly deeper orange
+    uOpacity: { value: 0.7 },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+    uFresnelPower: { value: 2.0 },
+    uSpecularPower: { value: 32.0 },
+    uGlowColor: { value: new THREE.Color(0xffcc66) }, // Lighter orange/yellow glow
   },
   transparent: true,
-  side: THREE.FrontSide,
+  side: THREE.DoubleSide,
   depthTest: true,
-  depthWrite: true,
+  depthWrite: false, // Better blending for glass
+  blending: THREE.NormalBlending,
 });
 
 // Create mesh for aircraft
 const aircraftMesh = new THREE.Mesh(aircraftGeometry, aircraftMaterial);
 aircraftMesh.frustumCulled = false;
+aircraftMesh.renderOrder = 2; // Render aircraft after ships (above ships)
 earth.add(aircraftMesh);
 
 // -----------------------------------------------------------------------------
@@ -514,7 +592,7 @@ const aircraftShadowMaterial = new THREE.ShaderMaterial({
 // Create shadow mesh
 const aircraftShadowMesh = new THREE.Mesh(aircraftShadowGeometry, aircraftShadowMaterial);
 aircraftShadowMesh.frustumCulled = false;
-aircraftShadowMesh.renderOrder = -1; // Render shadows first (under aircraft)
+aircraftShadowMesh.renderOrder = 0; // Render shadows first (below ships and aircraft)
 earth.add(aircraftShadowMesh);
 
 // -----------------------------------------------------------------------------
@@ -941,6 +1019,7 @@ atmosphereFolder.add(earthParameters, "atmosphereTwilightMix", 0, 1, 0.01).onCha
 const cloudsFolder = gui.addFolder("Clouds");
 cloudsFolder.add(earthParameters, "cloudsIntensity", 0, 1, 0.01).onChange(() => {
   earthMaterial.uniforms.uCloudsIntensity.value = earthParameters.cloudsIntensity;
+  cloudMaterial.uniforms.uCloudsIntensity.value = earthParameters.cloudsIntensity;
 });
 
 // Sun glint/specular folder
@@ -979,6 +1058,13 @@ function updateSunDirection() {
 
   // Update Earth shader
   earthMaterial.uniforms.uSunDirection.value.copy(sunDir);
+
+  // Update cloud layer
+  cloudMaterial.uniforms.uSunDirection.value.copy(sunDir);
+
+  // Update tracking icon glass shaders
+  shipMaterial.uniforms.uSunDirection.value.copy(sunDir);
+  aircraftMaterial.uniforms.uSunDirection.value.copy(sunDir);
 
   // Update aircraft shadow shader
   aircraftShadowMaterial.uniforms.uSunDirection.value.copy(sunDir);
