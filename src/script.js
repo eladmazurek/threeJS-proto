@@ -2394,8 +2394,15 @@ const tick = () => {
   // Get total time elapsed since the clock started
   const elapsedTime = clock.getElapsedTime();
 
-  // Earth rotation disabled
-  // earth.rotation.y = elapsedTime * 0.01;
+  // Earth rotation - smooth fade in when altitude > 9000km for cinematic effect
+  const scaleFactor = 6371 / EARTH_RADIUS;
+  const altitudeKm = (camera.position.length() - EARTH_RADIUS) * scaleFactor;
+  // Smoothly ramp rotation from 9000km to 12000km
+  const rotationFactor = Math.max(0, Math.min(1, (altitudeKm - 9000) / 3000));
+  if (rotationFactor > 0) {
+    // Slow rotation that fades in smoothly
+    earth.rotation.y += 0.0003 * rotationFactor;
+  }
 
   // Update motion simulation for ships and aircraft
   updateMotionSimulation(elapsedTime);
