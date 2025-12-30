@@ -23,6 +23,7 @@ import shadowVertexShader from "./shaders/tracking/shadow-vertex.glsl";
 // Import glass shaders for tactical UI look
 import glassVertexShader from "./shaders/tracking/glass-vertex.glsl";
 import glassFragmentShader from "./shaders/tracking/glass-fragment.glsl";
+import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
 
 /**
  * =============================================================================
@@ -372,6 +373,12 @@ const MAX_AIRCRAFT = 250000; // Maximum number of aircraft instances
 const SHIP_ALTITUDE = 0.005; // Height above Earth surface for ships
 const AIRCRAFT_ALTITUDE = 0.02; // Height above Earth surface for aircraft
 
+// Satellite altitude ranges (scaled to Earth radius of 2)
+const SATELLITE_ALTITUDE_LEO = { min: 0.06, max: 0.12 };  // Low Earth Orbit
+const SATELLITE_ALTITUDE_MEO = { min: 0.15, max: 0.25 };  // Medium Earth Orbit
+const SATELLITE_ALTITUDE_GEO = { min: 0.35, max: 0.40 };  // Geostationary
+const MAX_SATELLITES = 5000;
+
 // Note: Matrix pooling removed - GPU now handles orientation calculations
 
 /**
@@ -596,6 +603,71 @@ aircraftShadowMesh.renderOrder = 0; // Render shadows first (below ships and air
 earth.add(aircraftShadowMesh);
 
 // -----------------------------------------------------------------------------
+// Satellite Symbol Geometry (diamond with solar panel wings)
+// -----------------------------------------------------------------------------
+const satelliteShape = new THREE.Shape();
+// Main body - diamond shape
+satelliteShape.moveTo(0, 0.012);      // Top
+satelliteShape.lineTo(0.004, 0);       // Right
+satelliteShape.lineTo(0, -0.012);      // Bottom
+satelliteShape.lineTo(-0.004, 0);      // Left
+satelliteShape.closePath();
+
+// Add solar panel wings as separate geometry
+const satelliteBodyGeom = new THREE.ShapeGeometry(satelliteShape);
+
+// Solar panels - horizontal bars
+const panelShape = new THREE.Shape();
+panelShape.moveTo(-0.018, 0.003);
+panelShape.lineTo(0.018, 0.003);
+panelShape.lineTo(0.018, -0.003);
+panelShape.lineTo(-0.018, -0.003);
+panelShape.closePath();
+const panelGeom = new THREE.ShapeGeometry(panelShape);
+
+// Merge geometries
+const satelliteBaseGeometry = new THREE.BufferGeometry();
+const bodyPositions = satelliteBodyGeom.attributes.position.array;
+const panelPositions = panelGeom.attributes.position.array;
+const mergedPositions = new Float32Array(bodyPositions.length + panelPositions.length);
+mergedPositions.set(bodyPositions, 0);
+mergedPositions.set(panelPositions, bodyPositions.length);
+satelliteBaseGeometry.setAttribute('position', new THREE.BufferAttribute(mergedPositions, 3));
+
+// Rotate to lie flat on surface
+satelliteBaseGeometry.rotateX(-Math.PI / 2);
+
+// Create instanced geometry with tracking attributes
+const satelliteGeometry = createTrackingGeometry(satelliteBaseGeometry, MAX_SATELLITES);
+
+// Create tactical glass material for satellites (cyan/blue color)
+const satelliteMaterial = new THREE.ShaderMaterial({
+  vertexShader: satelliteVertexShader,
+  fragmentShader: glassFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uBaseAltitude: { value: 0.1 },
+    uColor: { value: new THREE.Color(0x00aaff) }, // Cyan blue
+    uOpacity: { value: 0.8 },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+    uFresnelPower: { value: 2.5 },
+    uSpecularPower: { value: 48.0 },
+    uGlowColor: { value: new THREE.Color(0x66ddff) }, // Lighter cyan glow
+  },
+  transparent: true,
+  side: THREE.DoubleSide,
+  depthTest: true,
+  depthWrite: false,
+  blending: THREE.NormalBlending,
+});
+
+// Create mesh for satellites
+const satelliteMesh = new THREE.Mesh(satelliteGeometry, satelliteMaterial);
+satelliteMesh.frustumCulled = false;
+satelliteMesh.renderOrder = 3; // Render above aircraft (highest altitude)
+earth.add(satelliteMesh);
+
+// -----------------------------------------------------------------------------
 // Tracking Data Management (GPU-based)
 // -----------------------------------------------------------------------------
 
@@ -662,6 +734,34 @@ function updateIconScale(cameraDistance) {
   currentIconScale = cameraDistance / baseDistance;
 }
 
+/**
+ * Update satellite instances by writing directly to GPU attribute buffers
+ */
+function updateSatelliteAttributes() {
+  const data = satelliteGeometry.userData;
+  const count = Math.min(satelliteSimState.length, MAX_SATELLITES);
+
+  for (let i = 0; i < count; i++) {
+    const sat = satelliteSimState[i];
+    data.latArray[i] = sat.lat;
+    data.lonArray[i] = sat.lon;
+    data.headingArray[i] = sat.heading;
+    // Encode altitude and display scale in a single float:
+    // Integer part: display scale * 10 (includes camera scaling)
+    // Fractional part: altitude / 0.5 (normalized to 0-1 range)
+    const scaledDisplay = sat.scale * currentIconScale;
+    const normalizedAlt = sat.altitude / 0.5; // altitude 0-0.5 -> 0-1
+    data.scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
+  }
+
+  data.latAttr.needsUpdate = true;
+  data.lonAttr.needsUpdate = true;
+  data.headingAttr.needsUpdate = true;
+  data.scaleAttr.needsUpdate = true;
+
+  satelliteGeometry.instanceCount = count;
+}
+
 // -----------------------------------------------------------------------------
 // Motion Simulation System
 // -----------------------------------------------------------------------------
@@ -671,6 +771,7 @@ const motionParams = {
   // Speed multipliers (1 = normal, higher = faster)
   shipSpeed: 10.0,
   aircraftSpeed: 10.0,
+  satelliteSpeed: 1.0,
 
   // Base values (internal, not exposed to GUI)
   shipBaseSpeed: 0.002,      // degrees per second at multiplier 1
@@ -692,6 +793,7 @@ let lastMotionUpdateTime = 0;
 // Simulation state for all units
 let shipSimState = [];
 let aircraftSimState = [];
+let satelliteSimState = [];
 let lastSimTime = 0;
 
 /**
@@ -730,6 +832,77 @@ function normalizeAngle(angle) {
 function shortestTurnDirection(current, target) {
   const diff = normalizeAngle(target - current);
   return diff <= 180 ? diff : diff - 360;
+}
+
+/**
+ * Initialize simulation state for a satellite with orbital elements
+ * Uses Keplerian orbital mechanics for realistic motion
+ */
+function initSatelliteState(altitude, inclination, ascendingNode, phase) {
+  // Orbital period scales with altitude (simplified Kepler's 3rd law)
+  // LEO (~400km): ~90 min, MEO (~20000km): ~12 hrs, GEO (~36000km): ~24 hrs
+  // Since our Earth radius is 2, we scale accordingly
+  // Period in seconds = baseperiod * (1 + altitude)^1.5
+  const basePeriod = 5400; // 90 min in seconds for very low orbit
+  const orbitalPeriod = basePeriod * Math.pow(1 + altitude * 5, 1.5);
+
+  return {
+    // Orbital elements
+    altitude,           // Height above Earth surface
+    inclination,        // Orbital plane tilt (degrees from equator)
+    ascendingNode,      // Longitude where orbit crosses equator northward (degrees)
+    phase,              // Current position in orbit (0-360 degrees)
+    orbitalPeriod,      // Time to complete one orbit (seconds)
+
+    // Computed position (updated each frame)
+    lat: 0,
+    lon: 0,
+    heading: 0,
+    scale: 0.6 + Math.random() * 0.4, // Visual scale
+  };
+}
+
+/**
+ * Update satellite position based on orbital mechanics
+ * Computes lat/lon from orbital elements
+ */
+function updateSatelliteMotion(sat, deltaTime, speedMultiplier) {
+  // Update orbital phase (position along orbit)
+  // Phase increases by 360° per orbital period
+  const phaseRate = (360 / sat.orbitalPeriod) * speedMultiplier;
+  sat.phase = normalizeAngle(sat.phase + phaseRate * deltaTime);
+
+  // Convert orbital elements to lat/lon
+  // This is a simplified two-body orbital mechanics calculation
+  const phaseRad = sat.phase * (Math.PI / 180);
+  const inclinationRad = sat.inclination * (Math.PI / 180);
+
+  // Position in orbital plane
+  // x = cos(phase), y = sin(phase) in the orbital plane
+  const xOrbit = Math.cos(phaseRad);
+  const yOrbit = Math.sin(phaseRad);
+
+  // Latitude is determined by inclination and position in orbit
+  // At phase=0 and phase=180, satellite crosses equator
+  // At phase=90, satellite is at max northern latitude (= inclination)
+  // At phase=270, satellite is at max southern latitude (= -inclination)
+  sat.lat = Math.asin(yOrbit * Math.sin(inclinationRad)) * (180 / Math.PI);
+
+  // Longitude advances with the orbit and ascending node
+  // For a prograde orbit, longitude increases when inclination > 0
+  const lonInOrbit = Math.atan2(yOrbit * Math.cos(inclinationRad), xOrbit) * (180 / Math.PI);
+  sat.lon = normalizeAngle(sat.ascendingNode + lonInOrbit + 180) - 180;
+
+  // Heading is tangent to the orbit
+  // Satellites generally travel eastward (prograde) with some north/south component
+  // The heading depends on where in the orbit the satellite is
+  const dLatDPhase = Math.cos(phaseRad) * Math.sin(inclinationRad);
+  const dLonDPhase = (Math.cos(phaseRad) * Math.cos(inclinationRad) * xOrbit + yOrbit * (-Math.sin(phaseRad))) /
+                     (xOrbit * xOrbit + yOrbit * yOrbit * Math.cos(inclinationRad) * Math.cos(inclinationRad));
+
+  // Simplified heading calculation: direction of motion
+  // 0 = North, 90 = East
+  sat.heading = normalizeAngle(90 - Math.atan2(dLatDPhase, dLonDPhase * Math.cos(sat.lat * Math.PI / 180)) * (180 / Math.PI));
 }
 
 /**
@@ -829,10 +1002,17 @@ function updateMotionSimulation(currentTime) {
     updateUnitMotion(aircraftSimState[i], physicsDelta);
   }
 
+  // Update satellite motion (orbital mechanics simulation)
+  const satSpeedMultiplier = motionParams.satelliteSpeed;
+  for (let i = 0; i < satelliteSimState.length; i++) {
+    updateSatelliteMotion(satelliteSimState[i], physicsDelta, satSpeedMultiplier);
+  }
+
   // Upload updated attributes to GPU (much smaller than full matrices)
   // GPU vertex shader will compute position and orientation
   updateShipAttributes();
   updateAircraftAttributes();
+  updateSatelliteAttributes();
 }
 
 // -----------------------------------------------------------------------------
@@ -843,6 +1023,7 @@ function updateMotionSimulation(currentTime) {
 const unitCountParams = {
   shipCount: 200,
   aircraftCount: 300,
+  satelliteCount: 100,
   totalCount: 500, // Combined slider for easy testing
   realisticRoutes: false, // Toggle between global spread and realistic traffic patterns
 };
@@ -969,6 +1150,69 @@ function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount =
   }
 
   console.log(`Generated ${shipSimState.length} ships and ${aircraftSimState.length} aircraft (realistic: ${unitCountParams.realisticRoutes})`);
+
+  // Generate satellites with realistic orbital parameters
+  generateSatelliteData(unitCountParams.satelliteCount);
+}
+
+/**
+ * Generate satellite constellation with realistic orbital distributions
+ * Creates a mix of LEO, MEO, and GEO satellites
+ */
+function generateSatelliteData(count = unitCountParams.satelliteCount) {
+  satelliteSimState = [];
+
+  for (let i = 0; i < count; i++) {
+    // Distribute satellites across orbit types:
+    // 60% LEO (communications, Earth observation, ISS-like)
+    // 25% MEO (GPS, navigation)
+    // 15% GEO (weather, communications)
+    const orbitType = Math.random();
+    let altitude, inclination;
+
+    if (orbitType < 0.60) {
+      // LEO - Low Earth Orbit
+      altitude = SATELLITE_ALTITUDE_LEO.min +
+        Math.random() * (SATELLITE_ALTITUDE_LEO.max - SATELLITE_ALTITUDE_LEO.min);
+      // LEO inclinations vary widely: sun-synchronous (~98°), ISS (~51.6°), polar (~90°)
+      const inclinationType = Math.random();
+      if (inclinationType < 0.3) {
+        inclination = 51 + Math.random() * 5; // ISS-like
+      } else if (inclinationType < 0.6) {
+        inclination = 85 + Math.random() * 10; // Polar/sun-synchronous
+      } else {
+        inclination = 20 + Math.random() * 60; // Various
+      }
+    } else if (orbitType < 0.85) {
+      // MEO - Medium Earth Orbit (GPS constellation at ~55° inclination)
+      altitude = SATELLITE_ALTITUDE_MEO.min +
+        Math.random() * (SATELLITE_ALTITUDE_MEO.max - SATELLITE_ALTITUDE_MEO.min);
+      inclination = 50 + Math.random() * 15; // GPS-like inclination
+    } else {
+      // GEO - Geostationary (0° inclination, appears stationary)
+      altitude = SATELLITE_ALTITUDE_GEO.min +
+        Math.random() * (SATELLITE_ALTITUDE_GEO.max - SATELLITE_ALTITUDE_GEO.min);
+      inclination = Math.random() * 5; // Near-equatorial
+    }
+
+    // Random ascending node (longitude of orbit plane)
+    const ascendingNode = Math.random() * 360;
+
+    // Random starting phase (position in orbit)
+    const phase = Math.random() * 360;
+
+    satelliteSimState.push(initSatelliteState(altitude, inclination, ascendingNode, phase));
+  }
+
+  // Initialize positions
+  for (const sat of satelliteSimState) {
+    updateSatelliteMotion(sat, 0, 1);
+  }
+
+  // Update GPU buffers
+  updateSatelliteAttributes();
+
+  console.log(`Generated ${satelliteSimState.length} satellites (LEO/MEO/GEO mix)`);
 }
 
 /**
@@ -989,13 +1233,16 @@ generateDemoData();
 buildGrid();
 
 // Export state and functions for external use (e.g., real AIS/FlightAware data)
-// External code can modify shipSimState/aircraftSimState arrays directly,
-// then call updateShipAttributes/updateAircraftAttributes to sync to GPU
+// External code can modify shipSimState/aircraftSimState/satelliteSimState arrays directly,
+// then call updateShipAttributes/updateAircraftAttributes/updateSatelliteAttributes to sync to GPU
 window.shipSimState = shipSimState;
 window.aircraftSimState = aircraftSimState;
+window.satelliteSimState = satelliteSimState;
 window.updateShipAttributes = updateShipAttributes;
 window.updateAircraftAttributes = updateAircraftAttributes;
+window.updateSatelliteAttributes = updateSatelliteAttributes;
 window.generateDemoData = generateDemoData;
+window.generateSatelliteData = generateSatelliteData;
 
 /**
  * =============================================================================
@@ -1065,6 +1312,7 @@ function updateSunDirection() {
   // Update tracking icon glass shaders
   shipMaterial.uniforms.uSunDirection.value.copy(sunDir);
   aircraftMaterial.uniforms.uSunDirection.value.copy(sunDir);
+  satelliteMaterial.uniforms.uSunDirection.value.copy(sunDir);
 
   // Update aircraft shadow shader
   aircraftShadowMaterial.uniforms.uSunDirection.value.copy(sunDir);
@@ -1089,13 +1337,18 @@ gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interv
 const motionFolder = gui.addFolder("Motion");
 motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
 motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
+motionFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
 
 // Unit count folder - for testing performance
 const unitsFolder = gui.addFolder("Units (Performance Test)");
 unitsFolder
   .add(unitCountParams, "totalCount", 100, 500000, 100)
-  .name("Total Units")
+  .name("Ships + Aircraft")
   .onChange(updateUnitCounts);
+unitsFolder
+  .add(unitCountParams, "satelliteCount", 0, 5000, 50)
+  .name("Satellites")
+  .onChange(() => generateSatelliteData(unitCountParams.satelliteCount));
 unitsFolder
   .add(unitCountParams, "realisticRoutes")
   .name("Realistic Routes")
