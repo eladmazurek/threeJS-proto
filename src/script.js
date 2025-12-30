@@ -2139,6 +2139,7 @@ textureFolder
 
 // Atmosphere folder
 const atmosphereFolder = gui.addFolder("Atmosphere");
+atmosphereFolder.close();
 atmosphereFolder.addColor(earthParameters, "atmosphereDayColor").name("Day Color").onChange(() => {
   earthMaterial.uniforms.uAtmosphereDayColor.value.set(earthParameters.atmosphereDayColor);
   atmosphereMaterial.uniforms.uDayColor.value.set(earthParameters.atmosphereDayColor);
@@ -2153,6 +2154,7 @@ atmosphereFolder.add(earthParameters, "atmosphereIntensity", 0, 1, 0.01).name("I
 
 // Clouds folder
 const cloudsFolder = gui.addFolder("Clouds");
+cloudsFolder.close();
 cloudsFolder.add(earthParameters, "cloudsIntensity", 0, 1, 0.01).onChange(() => {
   earthMaterial.uniforms.uCloudsIntensity.value = earthParameters.cloudsIntensity;
   cloudMaterial.uniforms.uCloudsIntensity.value = earthParameters.cloudsIntensity;
@@ -2160,6 +2162,7 @@ cloudsFolder.add(earthParameters, "cloudsIntensity", 0, 1, 0.01).onChange(() => 
 
 // Sun glint/specular folder
 const specularFolder = gui.addFolder("Sun Glint");
+specularFolder.close();
 specularFolder
   .add(earthParameters, "specularIntensity", 0, 3, 0.01)
   .name("Intensity")
@@ -2181,6 +2184,7 @@ specularFolder
 
 // Sun direction folder
 const sunFolder = gui.addFolder("Sun Direction");
+sunFolder.close();
 sunFolder.add(earthParameters, "sunDirectionX", -1, 1, 0.01).onChange(updateSunDirection);
 sunFolder.add(earthParameters, "sunDirectionY", -1, 1, 0.01).onChange(updateSunDirection);
 sunFolder.add(earthParameters, "sunDirectionZ", -1, 1, 0.01).onChange(updateSunDirection);
@@ -2209,6 +2213,7 @@ function updateSunDirection() {
 
 // Grid folder
 const gridFolder = gui.addFolder("Lat/Lon Grid");
+gridFolder.close();
 gridFolder.add(gridParameters, "visible").name("Show Grid").onChange(() => {
   gridGroup.visible = gridParameters.visible;
 });
@@ -2224,12 +2229,14 @@ gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interv
 
 // Motion/Speed folder - simplified controls
 const motionFolder = gui.addFolder("Motion");
+motionFolder.close();
 motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
 motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
 motionFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
 
 // Trails folder
 const trailsFolder = gui.addFolder("Trails");
+trailsFolder.close();
 trailsFolder.add(trailParams, "enabled").name("Show Trails").onChange(() => {
   updateTrailAttributes();
 });
