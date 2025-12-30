@@ -1882,7 +1882,7 @@ function updateMotionSimulation(currentTime) {
 const unitCountParams = {
   shipCount: 200,
   aircraftCount: 300,
-  satelliteCount: 100,
+  satelliteCount: 4000,
   totalCount: 500, // Combined slider for easy testing
   realisticRoutes: false, // Toggle between global spread and realistic traffic patterns
 };
@@ -2087,6 +2087,44 @@ window.updateSatelliteAttributes = updateSatelliteAttributes;
 window.generateDemoData = generateDemoData;
 window.generateSatelliteData = generateSatelliteData;
 
+// Camera/view parameters (defined here for GUI access)
+const cameraParams = {
+  tiltAngle: 0, // Default tilt in degrees (0 = looking at center, 90 = looking at horizon)
+};
+
+/**
+ * Set camera tilt angle (view angle)
+ * 0 = looking straight at Earth center (default globe view)
+ * 90 = looking toward horizon (good for watching aircraft fly by)
+ *
+ * Works by offsetting the OrbitControls target from Earth center
+ */
+function setCameraTilt(degrees) {
+  // Clamp to valid range
+  const tilt = Math.max(0, Math.min(85, degrees));
+  cameraParams.tiltAngle = tilt;
+
+  // Calculate target offset based on tilt
+  // At tilt=0, look at center. At tilt=90, look at a point near surface level
+  const tiltFactor = tilt / 90;
+
+  // Get direction from Earth center to camera
+  const cameraDir = camera.position.clone().normalize();
+
+  // Calculate a "up" vector tangent to Earth surface at camera's ground point
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(worldUp, cameraDir).normalize();
+  const surfaceUp = new THREE.Vector3().crossVectors(cameraDir, right).normalize();
+
+  // Offset target upward (in surface tangent direction) based on tilt
+  // More tilt = look higher toward horizon
+  const targetOffset = surfaceUp.multiplyScalar(tiltFactor * EARTH_RADIUS * 1.5);
+
+  // Set new target
+  controls.target.copy(targetOffset);
+  controls.update();
+}
+
 /**
  * =============================================================================
  * GUI CONTROLS
@@ -2214,6 +2252,28 @@ motionFolder.close();
 motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
 motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
 motionFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
+
+// Camera/View folder
+const cameraFolder = gui.addFolder("Camera");
+cameraFolder.close();
+cameraFolder
+  .add(cameraParams, "tiltAngle", 0, 90, 1)
+  .name("Tilt (degrees)")
+  .onChange((value) => {
+    setCameraTilt(value);
+  });
+
+// Tilt presets
+const tiltPresets = {
+  "Center": () => setCameraTilt(0),
+  "Slight Tilt": () => setCameraTilt(30),
+  "Tracking": () => setCameraTilt(55),
+  "Horizon": () => setCameraTilt(80),
+};
+cameraFolder.add(tiltPresets, "Center").name("● Center (default)");
+cameraFolder.add(tiltPresets, "Slight Tilt").name("◢ Slight Tilt");
+cameraFolder.add(tiltPresets, "Tracking").name("→ Tracking View");
+cameraFolder.add(tiltPresets, "Horizon").name("— Horizon");
 
 // Trails folder
 const trailsFolder = gui.addFolder("Trails");
@@ -2353,6 +2413,10 @@ controls.dampingFactor = 0.05; // Smoother deceleration
 controls.minDistance = EARTH_RADIUS + 0.5; // Stay above surface
 controls.maxDistance = 20; // Don't zoom too far out
 
+// Allow full vertical rotation for tilt views
+controls.minPolarAngle = 0; // Can look straight down at north pole
+controls.maxPolarAngle = Math.PI; // Can look straight up at south pole
+
 /**
  * =============================================================================
  * RENDERER
@@ -2425,6 +2489,14 @@ const tick = () => {
 
   // Update OrbitControls - required for damping to work
   controls.update();
+
+  // Enforce minimum distance from Earth center (not just from target)
+  // This prevents zooming into the globe when tilt is applied
+  const minDistanceFromCenter = EARTH_RADIUS + 0.3;
+  const distanceFromCenter = camera.position.length();
+  if (distanceFromCenter < minDistanceFromCenter) {
+    camera.position.normalize().multiplyScalar(minDistanceFromCenter);
+  }
 
   // Render the scene from the camera's perspective
   renderer.render(scene, camera);
