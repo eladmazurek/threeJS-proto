@@ -1361,6 +1361,8 @@ const h3Params = {
 let h3Mesh = null;
 let h3LineMesh = null;
 let lastH3Resolution = -1;
+let lastH3UpdateTime = 0;
+const H3_UPDATE_INTERVAL = 2; // Rebuild H3 grid every N seconds to track unit movement
 
 // Shared materials for H3
 const h3Material = new THREE.MeshBasicMaterial({
@@ -1456,37 +1458,72 @@ function isInVisibleRange(lat, lon, centerLat, centerLon, maxDist) {
 }
 
 /**
+ * Check if longitude is within range (handles date line wrapping)
+ */
+function isLonInRange(lon, minLon, maxLon) {
+  if (minLon <= maxLon) {
+    // Normal case: range doesn't cross date line
+    return lon >= minLon && lon <= maxLon;
+  } else {
+    // Range crosses date line (e.g., minLon=170, maxLon=-170)
+    return lon >= minLon || lon <= maxLon;
+  }
+}
+
+/**
  * Calculate unit density per H3 cell (only visible area)
+ * Uses bounding box pre-filter and sampling for performance
  */
 function calculateH3Density(resolution, cameraDistance) {
   const densityMap = new Map();
 
   // Get view center and calculate visible radius based on zoom
   const center = getCameraViewCenter();
-  // Visible radius in degrees - larger when zoomed out, smaller when zoomed in
-  const visibleRadius = Math.min(180, cameraDistance * 15);
+  const visibleRadius = Math.min(90, cameraDistance * 12);
+
+  // Fast bounding box for quick rejection (avoids expensive trig)
+  const minLat = Math.max(-90, center.lat - visibleRadius);
+  const maxLat = Math.min(90, center.lat + visibleRadius);
+  const lonRange = visibleRadius / Math.max(0.1, Math.cos(center.lat * Math.PI / 180));
+  // Normalize longitude bounds to -180 to 180 range
+  let minLon = center.lon - lonRange;
+  let maxLon = center.lon + lonRange;
+  // Wrap to valid range
+  if (minLon < -180) minLon += 360;
+  if (maxLon > 180) maxLon -= 360;
+
+  // Sample more aggressively for large unit counts
+  const totalUnits = shipSimState.length + aircraftSimState.length;
+  const sampleRate = totalUnits > 50000 ? Math.ceil(totalUnits / 20000) : 1;
+  const densityMultiplier = sampleRate;
 
   // Count ships in visible area
-  for (const ship of shipSimState) {
-    if (!isInVisibleRange(ship.lat, ship.lon, center.lat, center.lon, visibleRadius)) continue;
+  for (let i = 0; i < shipSimState.length; i += sampleRate) {
+    const ship = shipSimState[i];
+    // Fast bounding box check
+    if (ship.lat < minLat || ship.lat > maxLat) continue;
+    if (!isLonInRange(ship.lon, minLon, maxLon)) continue;
     try {
       const cellIndex = h3.latLngToCell(ship.lat, ship.lon, resolution);
-      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + 1);
+      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + densityMultiplier);
     } catch (e) { /* Skip invalid coords */ }
   }
 
   // Count aircraft in visible area
-  for (const aircraft of aircraftSimState) {
-    if (!isInVisibleRange(aircraft.lat, aircraft.lon, center.lat, center.lon, visibleRadius)) continue;
+  for (let i = 0; i < aircraftSimState.length; i += sampleRate) {
+    const aircraft = aircraftSimState[i];
+    if (aircraft.lat < minLat || aircraft.lat > maxLat) continue;
+    if (!isLonInRange(aircraft.lon, minLon, maxLon)) continue;
     try {
       const cellIndex = h3.latLngToCell(aircraft.lat, aircraft.lon, resolution);
-      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + 1);
+      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + densityMultiplier);
     } catch (e) { /* Skip invalid coords */ }
   }
 
-  // Count satellites in visible area
+  // Count satellites (small count, no sampling needed)
   for (const sat of satelliteSimState) {
-    if (!isInVisibleRange(sat.lat, sat.lon, center.lat, center.lon, visibleRadius)) continue;
+    if (sat.lat < minLat || sat.lat > maxLat) continue;
+    if (!isLonInRange(sat.lon, minLon, maxLon)) continue;
     try {
       const cellIndex = h3.latLngToCell(sat.lat, sat.lon, resolution);
       densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + 1);
@@ -1555,7 +1592,7 @@ function buildH3Geometry(densityMap, maxDensity) {
 /**
  * Update H3 grid visualization - optimized single draw call
  */
-function updateH3Grid(cameraDistance) {
+function updateH3Grid(cameraDistance, elapsedTime) {
   if (!h3Params.enabled) {
     if (h3Mesh) h3Mesh.visible = false;
     if (h3LineMesh) h3LineMesh.visible = false;
@@ -1564,14 +1601,18 @@ function updateH3Grid(cameraDistance) {
 
   const resolution = getH3ResolutionForDistance(cameraDistance);
 
-  // Only rebuild if resolution changed
-  if (resolution === lastH3Resolution) {
+  // Rebuild if resolution changed OR enough time passed (to track unit movement)
+  const timeSinceUpdate = elapsedTime - lastH3UpdateTime;
+  const needsUpdate = resolution !== lastH3Resolution || timeSinceUpdate > H3_UPDATE_INTERVAL;
+
+  if (!needsUpdate) {
     if (h3Mesh) h3Mesh.visible = true;
     if (h3LineMesh) h3LineMesh.visible = true;
     return;
   }
 
   lastH3Resolution = resolution;
+  lastH3UpdateTime = elapsedTime;
 
   // Clean up old meshes
   if (h3Mesh) {
@@ -3958,7 +3999,7 @@ const tick = () => {
   updateAirportScales(cameraDistance);
 
   // Update H3 grid if enabled
-  updateH3Grid(cameraDistance);
+  updateH3Grid(cameraDistance, elapsedTime);
 
   // Update selected unit info panel and selection highlight
   updateSelectedUnitInfo();
