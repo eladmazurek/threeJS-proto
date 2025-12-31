@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [glsl()],
 
   // Base path for GitHub Pages (repo name)
-  base: '/3JS-proto/',
+  base: '/threeJS-proto/',
 
   root: 'src',
   publicDir: '../static',

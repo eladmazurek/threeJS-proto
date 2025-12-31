@@ -547,33 +547,33 @@ const textureLoader = new THREE.TextureLoader();
 // Users can add their own high-res textures to static/earth/ folder
 const texturePresets = {
   "Standard": {
-    day: "/earth/day.jpg",
-    night: "/earth/night.jpg",
-    specularClouds: "/earth/specularClouds.jpg",
+    day: "earth/day.jpg",
+    night: "earth/night.jpg",
+    specularClouds: "earth/specularClouds.jpg",
     description: "Default Earth textures",
   },
   "Black Marble (NASA)": {
     // NASA Black Marble - 8K night imagery showing city lights
     // Source: https://earthobservatory.nasa.gov/features/NightLights
-    day: "/earth/blackmarble_night.jpg",  // Use night for both - city lights view
-    night: "/earth/blackmarble_night.jpg",
-    specularClouds: "/earth/specularClouds.jpg",
+    day: "earth/blackmarble_night.jpg",  // Use night for both - city lights view
+    night: "earth/blackmarble_night.jpg",
+    specularClouds: "earth/specularClouds.jpg",
     description: "NASA night imagery - city lights",
   },
   "Blue Marble (NASA)": {
     // NASA Blue Marble - true color satellite imagery
     // Source: https://visibleearth.nasa.gov/collection/1484/blue-marble
-    day: "/earth/bluemarble_day.jpg",
-    night: "/earth/night.jpg",
-    specularClouds: "/earth/specularClouds.jpg",
+    day: "earth/bluemarble_day.jpg",
+    night: "earth/night.jpg",
+    specularClouds: "earth/specularClouds.jpg",
     description: "NASA true color day imagery",
   },
   "Topo + Bathymetry": {
     // Topographic relief with ocean bathymetry
     // Shows elevation data - great for tactical/military look
-    day: "/earth/topo_bathymetry.jpg",
-    night: "/earth/night.jpg",
-    specularClouds: "/earth/specularClouds.jpg",
+    day: "earth/topo_bathymetry.jpg",
+    night: "earth/night.jpg",
+    specularClouds: "earth/specularClouds.jpg",
     description: "Elevation + ocean depth",
   },
 };
@@ -594,8 +594,11 @@ function loadTexture(path, isSRGB = true) {
     return textureCache[path];
   }
 
+  // Prepend base URL for GitHub Pages deployment
+  const fullPath = import.meta.env.BASE_URL + path;
+
   const texture = textureLoader.load(
-    path,
+    fullPath,
     // onLoad
     (tex) => {
       console.log(`Loaded texture: ${path}`);
@@ -649,9 +652,9 @@ function switchTexturePreset(presetName) {
 }
 
 // Load initial textures (Standard preset)
-const earthDayTexture = loadTexture("/earth/day.jpg", true);
-const earthNightTexture = loadTexture("/earth/night.jpg", true);
-const earthSpecularCloudsTexture = loadTexture("/earth/specularClouds.jpg", false);
+const earthDayTexture = loadTexture("earth/day.jpg", true);
+const earthNightTexture = loadTexture("earth/night.jpg", true);
+const earthSpecularCloudsTexture = loadTexture("earth/specularClouds.jpg", false);
 
 /**
  * =============================================================================
