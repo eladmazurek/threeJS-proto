@@ -192,23 +192,23 @@ gui.title("Controls");
       </div>
       <div class="unit-info-body">
         <div class="unit-info-row">
-          <span class="unit-info-label">LAT</span>
+          <span class="unit-info-label" id="unit-label-1">LAT</span>
           <span class="unit-info-value" id="unit-lat">0.00°</span>
         </div>
         <div class="unit-info-row">
-          <span class="unit-info-label">LON</span>
+          <span class="unit-info-label" id="unit-label-2">LON</span>
           <span class="unit-info-value" id="unit-lon">0.00°</span>
         </div>
         <div class="unit-info-row">
-          <span class="unit-info-label">HDG</span>
+          <span class="unit-info-label" id="unit-label-3">HDG</span>
           <span class="unit-info-value" id="unit-hdg">000°</span>
         </div>
         <div class="unit-info-row">
-          <span class="unit-info-label">SPD</span>
+          <span class="unit-info-label" id="unit-label-4">SPD</span>
           <span class="unit-info-value" id="unit-spd">0 kts</span>
         </div>
         <div class="unit-info-row">
-          <span class="unit-info-label">ALT</span>
+          <span class="unit-info-label" id="unit-label-5">ALT</span>
           <span class="unit-info-value" id="unit-alt">0 ft</span>
         </div>
       </div>
@@ -408,6 +408,7 @@ gui.title("Controls");
     .unit-info-type.ship { color: #2dd4bf; }
     .unit-info-type.aircraft { color: #fbbf24; }
     .unit-info-type.satellite { color: #a78bfa; }
+    .unit-info-type.airport { color: #22d3ee; }
 
     .unit-info-id {
       color: rgba(255, 255, 255, 0.5);
@@ -1633,6 +1634,123 @@ const satelliteMesh = new THREE.Mesh(satelliteGeometry, satelliteMaterial);
 satelliteMesh.frustumCulled = false;
 satelliteMesh.renderOrder = 3; // Render above aircraft (highest altitude)
 earth.add(satelliteMesh);
+
+// -----------------------------------------------------------------------------
+// Selection Highlight Ring - Shows which unit is selected
+// -----------------------------------------------------------------------------
+
+const selectionRingGeometry = new THREE.RingGeometry(0.025, 0.032, 32);
+selectionRingGeometry.rotateX(-Math.PI / 2); // Lay flat on surface
+
+const selectionRingMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uColor: { value: new THREE.Color(0xffffff) },
+    uTime: { value: 0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 uColor;
+    uniform float uTime;
+    varying vec2 vUv;
+    void main() {
+      // Pulsing glow effect
+      float pulse = 0.7 + 0.3 * sin(uTime * 4.0);
+      // Radial gradient for soft edges
+      float dist = length(vUv - 0.5) * 2.0;
+      float alpha = pulse * smoothstep(1.0, 0.5, dist);
+      gl_FragColor = vec4(uColor, alpha);
+    }
+  `,
+  transparent: true,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+const selectionRing = new THREE.Mesh(selectionRingGeometry, selectionRingMaterial);
+selectionRing.visible = false;
+selectionRing.renderOrder = 10; // Render on top
+earth.add(selectionRing);
+
+/**
+ * Update selection ring position to follow selected unit
+ */
+const _ringUp = new THREE.Vector3(0, 1, 0);
+const _ringQuat = new THREE.Quaternion();
+
+function updateSelectionRing() {
+  if (!selectedUnit) {
+    selectionRing.visible = false;
+    return;
+  }
+
+  const { type, index } = selectedUnit;
+  let lat, lon, altitude;
+
+  if (type === "ship") {
+    const unitData = shipSimState[index];
+    if (!unitData) { selectionRing.visible = false; return; }
+    lat = unitData.lat;
+    lon = unitData.lon;
+    altitude = SHIP_ALTITUDE;
+  } else if (type === "aircraft") {
+    const unitData = aircraftSimState[index];
+    if (!unitData) { selectionRing.visible = false; return; }
+    lat = unitData.lat;
+    lon = unitData.lon;
+    altitude = AIRCRAFT_ALTITUDE;
+  } else if (type === "satellite") {
+    const unitData = satelliteSimState[index];
+    if (!unitData) { selectionRing.visible = false; return; }
+    lat = unitData.lat;
+    lon = unitData.lon;
+    altitude = unitData.altitude;
+  } else if (type === "airport") {
+    const airport = AIRPORTS[index];
+    if (!airport) { selectionRing.visible = false; return; }
+    lat = airport[1];
+    lon = airport[2];
+    altitude = 0.002; // Same as airport markers
+  } else {
+    selectionRing.visible = false;
+    return;
+  }
+
+  // Convert lat/lon to 3D position (same formula as shader)
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lon + 180) * (Math.PI / 180);
+  const radius = EARTH_RADIUS + altitude;
+
+  const x = -radius * Math.sin(phi) * Math.cos(theta);
+  const y = radius * Math.cos(phi);
+  const z = radius * Math.sin(phi) * Math.sin(theta);
+
+  selectionRing.position.set(x, y, z);
+
+  // Orient ring perpendicular to surface (face outward from Earth center)
+  // Surface normal points from origin to position
+  const surfaceNormal = selectionRing.position.clone().normalize();
+
+  // Use quaternion to rotate from default up (0,1,0) to surface normal
+  _ringQuat.setFromUnitVectors(_ringUp, surfaceNormal);
+  selectionRing.quaternion.copy(_ringQuat);
+
+  // Set color based on unit type
+  const colors = {
+    ship: 0x00ffff,     // Teal
+    aircraft: 0xffa500, // Amber
+    satellite: 0xaa88ff, // Violet
+    airport: 0x22d3ee   // Cyan for airports
+  };
+  selectionRingMaterial.uniforms.uColor.value.setHex(colors[type] || 0xffffff);
+
+  selectionRing.visible = true;
+}
 
 // -----------------------------------------------------------------------------
 // Unit Trails - Fading dot trails showing recent positions
@@ -3166,6 +3284,11 @@ const unitHdgEl = document.getElementById("unit-hdg");
 const unitSpdEl = document.getElementById("unit-spd");
 const unitAltEl = document.getElementById("unit-alt");
 const unitCloseBtn = document.getElementById("unit-close");
+const unitLabel1 = document.getElementById("unit-label-1");
+const unitLabel2 = document.getElementById("unit-label-2");
+const unitLabel3 = document.getElementById("unit-label-3");
+const unitLabel4 = document.getElementById("unit-label-4");
+const unitLabel5 = document.getElementById("unit-label-5");
 
 // Close button handler
 unitCloseBtn?.addEventListener("click", () => {
@@ -3178,6 +3301,7 @@ unitCloseBtn?.addEventListener("click", () => {
 function deselectUnit() {
   selectedUnit = null;
   unitInfoPanel?.classList.add("hidden");
+  selectionRing.visible = false;
 }
 
 /**
@@ -3187,27 +3311,26 @@ function selectUnit(type, index) {
   let unitData;
   let typeLabel;
   let typeClass;
-  let altitude;
-  let speed;
 
   if (type === "ship") {
     unitData = shipSimState[index];
     typeLabel = "SHIP";
     typeClass = "ship";
-    altitude = 0;
-    speed = (motionParams.shipSpeed * 50).toFixed(0); // Convert to knots approx
   } else if (type === "aircraft") {
     unitData = aircraftSimState[index];
     typeLabel = "AIRCRAFT";
     typeClass = "aircraft";
-    altitude = 35000; // Approximate cruise altitude in feet
-    speed = (motionParams.aircraftSpeed * 80).toFixed(0); // Convert to knots approx
   } else if (type === "satellite") {
     unitData = satelliteSimState[index];
     typeLabel = "SATELLITE";
     typeClass = "satellite";
-    altitude = (unitData.altitude * 6371 * 1000 / EARTH_RADIUS).toFixed(0); // km to display
-    speed = "N/A";
+  } else if (type === "airport") {
+    const airport = AIRPORTS[index];
+    if (!airport) return;
+    const [code, lat, lon, name] = airport;
+    unitData = { lat, lon, heading: 0, code, name };
+    typeLabel = "AIRPORT";
+    typeClass = "airport";
   }
 
   if (!unitData) return;
@@ -3217,7 +3340,13 @@ function selectUnit(type, index) {
   // Update panel content
   unitTypeEl.textContent = typeLabel;
   unitTypeEl.className = `unit-info-type ${typeClass}`;
-  unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
+
+  // Show IATA code for airports, index for others
+  if (type === "airport") {
+    unitIdEl.textContent = unitData.code;
+  } else {
+    unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
+  }
 
   // Show panel
   unitInfoPanel?.classList.remove("hidden");
@@ -3242,24 +3371,74 @@ function updateSelectedUnitInfo() {
     if (!unitData) { deselectUnit(); return; }
     altitude = "0 ft";
     speed = `${(motionParams.shipSpeed * 50).toFixed(0)} kts`;
+
+    // Set standard labels
+    unitLabel1.textContent = "LAT";
+    unitLabel2.textContent = "LON";
+    unitLabel3.textContent = "HDG";
+    unitLabel4.textContent = "SPD";
+    unitLabel5.textContent = "ALT";
+
+    unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
+    unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
+    unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
+    unitSpdEl.textContent = speed;
+    unitAltEl.textContent = altitude;
   } else if (type === "aircraft") {
     unitData = aircraftSimState[index];
     if (!unitData) { deselectUnit(); return; }
     altitude = "FL350";
     speed = `${(motionParams.aircraftSpeed * 80).toFixed(0)} kts`;
+
+    // Set standard labels
+    unitLabel1.textContent = "LAT";
+    unitLabel2.textContent = "LON";
+    unitLabel3.textContent = "HDG";
+    unitLabel4.textContent = "SPD";
+    unitLabel5.textContent = "ALT";
+
+    unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
+    unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
+    unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
+    unitSpdEl.textContent = speed;
+    unitAltEl.textContent = altitude;
   } else if (type === "satellite") {
     unitData = satelliteSimState[index];
     if (!unitData) { deselectUnit(); return; }
     const altKm = (unitData.altitude * 6371 / EARTH_RADIUS).toFixed(0);
     altitude = `${altKm} km`;
     speed = `${(7.8 - unitData.altitude * 2).toFixed(1)} km/s`;
-  }
 
-  unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-  unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-  unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-  unitSpdEl.textContent = speed;
-  unitAltEl.textContent = altitude;
+    // Set standard labels
+    unitLabel1.textContent = "LAT";
+    unitLabel2.textContent = "LON";
+    unitLabel3.textContent = "HDG";
+    unitLabel4.textContent = "SPD";
+    unitLabel5.textContent = "ALT";
+
+    unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
+    unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
+    unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
+    unitSpdEl.textContent = speed;
+    unitAltEl.textContent = altitude;
+  } else if (type === "airport") {
+    const airport = AIRPORTS[index];
+    if (!airport) { deselectUnit(); return; }
+    const [code, lat, lon, name] = airport;
+
+    // Set airport-specific labels
+    unitLabel1.textContent = "NAME";
+    unitLabel2.textContent = "LAT";
+    unitLabel3.textContent = "LON";
+    unitLabel4.textContent = "ELEV";
+    unitLabel5.textContent = "TYPE";
+
+    unitLatEl.textContent = name;
+    unitLonEl.textContent = `${lat.toFixed(4)}°`;
+    unitHdgEl.textContent = `${lon.toFixed(4)}°`;
+    unitSpdEl.textContent = "—"; // Elevation data not available
+    unitAltEl.textContent = "INTL";
+  }
 }
 
 /**
@@ -3358,6 +3537,24 @@ function onCanvasClick(event) {
     }
   }
 
+  // Check airports (if visible)
+  if (airportParams.visible) {
+    for (let i = 0; i < AIRPORTS.length; i++) {
+      const [code, lat, lon, name] = AIRPORTS[i];
+      const worldPos = latLonTo3D(lat, lon, 0.002);
+      worldPos.applyMatrix4(earth.matrixWorld);
+
+      const screen = projectToScreen(worldPos);
+      if (screen.z > 1) continue;
+
+      const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestUnit = { type: "airport", index: i };
+      }
+    }
+  }
+
   if (closestUnit) {
     selectUnit(closestUnit.type, closestUnit.index);
   } else {
@@ -3446,8 +3643,10 @@ const tick = () => {
   // Update airport marker scales based on zoom
   updateAirportScales(cameraDistance);
 
-  // Update selected unit info panel
+  // Update selected unit info panel and selection highlight
   updateSelectedUnitInfo();
+  updateSelectionRing();
+  selectionRingMaterial.uniforms.uTime.value = elapsedTime;
 
   // Update OrbitControls - required for damping to work
   controls.update();
