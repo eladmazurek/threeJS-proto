@@ -1,59 +1,31 @@
-/**
- * Vite Configuration
- *
- * Vite is a modern build tool that provides fast development server
- * with hot module replacement (HMR) and optimized production builds.
- *
- * This configuration is set up for a Three.js project with GLSL shaders.
- */
+import { defineConfig } from 'vite';
 
-import restart from 'vite-plugin-restart'
-import glsl from 'vite-plugin-glsl'
+export default defineConfig({
+  // Base path for GitHub Pages (repo name)
+  base: '/3JS-proto/',
 
-export default {
-    // Source directory - where index.html and source files are located
-    root: 'src/',
+  root: 'src',
+  publicDir: '../static',
 
-    // Static assets directory - files here are served as-is and copied to dist
-    // Contains textures like earth/day.jpg, earth/night.jpg, etc.
-    publicDir: '../static/',
-
-    // Base path for all assets - './' means relative paths
-    // This allows the built app to work from any subdirectory
-    base: './',
-
-    // Development server configuration
-    server: {
-        // Allow access from other devices on the local network
-        // Useful for testing on mobile devices
-        host: true,
-
-        // Automatically open browser when dev server starts
-        // Disabled in CodeSandbox environments (they handle this themselves)
-        open: !('SANDBOX_URL' in process.env || 'CODESANDBOX_HOST' in process.env)
+  build: {
+    outDir: '../dist',
+    emptyOutDir: true,
+    // Minification and tree-shaking (enabled by default, but being explicit)
+    minify: 'esbuild',
+    target: 'es2020',
+    rollupOptions: {
+      output: {
+        // Chunk large dependencies separately for better caching
+        manualChunks: {
+          three: ['three'],
+          h3: ['h3-js'],
+        },
+      },
     },
+  },
 
-    // Production build configuration
-    build: {
-        // Output directory for production build
-        outDir: '../dist',
-
-        // Clean the output directory before building
-        emptyOutDir: true,
-
-        // Generate source maps for debugging production code
-        sourcemap: true
-    },
-
-    // Vite plugins
-    plugins: [
-        // vite-plugin-restart: Automatically restart dev server when
-        // static files change (textures, etc.)
-        // Without this, you'd need to manually restart after adding new textures
-        restart({ restart: ['../static/**'] }),
-
-        // vite-plugin-glsl: Enables importing .glsl shader files as strings
-        // Also provides shader minification and include support
-        glsl()
-    ]
-}
+  // Optimize dependencies
+  optimizeDeps: {
+    include: ['three', 'h3-js'],
+  },
+});
