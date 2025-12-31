@@ -504,8 +504,11 @@ function updateTelemetry(cameraDistance, cameraPosition) {
     telLon.textContent = normalizedLon.toFixed(2) + "°";
   }
 
-  // Unit counts
-  const totalUnits = shipSimState.length + aircraftSimState.length + satelliteSimState.length;
+  // Unit counts (only visible units)
+  let totalUnits = 0;
+  if (unitCountParams.showShips) totalUnits += shipSimState.length;
+  if (unitCountParams.showAircraft) totalUnits += aircraftSimState.length;
+  if (unitCountParams.showSatellites) totalUnits += satelliteSimState.length;
   telUnits.textContent = totalUnits.toLocaleString();
 
   // UTC time
@@ -1508,37 +1511,43 @@ function calculateH3Density(resolution, cameraDistance) {
   const sampleRate = totalUnits > 50000 ? Math.ceil(totalUnits / 20000) : 1;
   const densityMultiplier = sampleRate;
 
-  // Count ships in visible area
-  for (let i = 0; i < shipSimState.length; i += sampleRate) {
-    const ship = shipSimState[i];
-    // Fast bounding box check
-    if (ship.lat < minLat || ship.lat > maxLat) continue;
-    if (!isLonInRange(ship.lon, minLon, maxLon)) continue;
-    try {
-      const cellIndex = h3.latLngToCell(ship.lat, ship.lon, resolution);
-      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + densityMultiplier);
-    } catch (e) { /* Skip invalid coords */ }
+  // Count ships in visible area (if enabled)
+  if (unitCountParams.showShips) {
+    for (let i = 0; i < shipSimState.length; i += sampleRate) {
+      const ship = shipSimState[i];
+      // Fast bounding box check
+      if (ship.lat < minLat || ship.lat > maxLat) continue;
+      if (!isLonInRange(ship.lon, minLon, maxLon)) continue;
+      try {
+        const cellIndex = h3.latLngToCell(ship.lat, ship.lon, resolution);
+        densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + densityMultiplier);
+      } catch (e) { /* Skip invalid coords */ }
+    }
   }
 
-  // Count aircraft in visible area
-  for (let i = 0; i < aircraftSimState.length; i += sampleRate) {
-    const aircraft = aircraftSimState[i];
-    if (aircraft.lat < minLat || aircraft.lat > maxLat) continue;
-    if (!isLonInRange(aircraft.lon, minLon, maxLon)) continue;
-    try {
-      const cellIndex = h3.latLngToCell(aircraft.lat, aircraft.lon, resolution);
-      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + densityMultiplier);
-    } catch (e) { /* Skip invalid coords */ }
+  // Count aircraft in visible area (if enabled)
+  if (unitCountParams.showAircraft) {
+    for (let i = 0; i < aircraftSimState.length; i += sampleRate) {
+      const aircraft = aircraftSimState[i];
+      if (aircraft.lat < minLat || aircraft.lat > maxLat) continue;
+      if (!isLonInRange(aircraft.lon, minLon, maxLon)) continue;
+      try {
+        const cellIndex = h3.latLngToCell(aircraft.lat, aircraft.lon, resolution);
+        densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + densityMultiplier);
+      } catch (e) { /* Skip invalid coords */ }
+    }
   }
 
-  // Count satellites (small count, no sampling needed)
-  for (const sat of satelliteSimState) {
-    if (sat.lat < minLat || sat.lat > maxLat) continue;
-    if (!isLonInRange(sat.lon, minLon, maxLon)) continue;
-    try {
-      const cellIndex = h3.latLngToCell(sat.lat, sat.lon, resolution);
-      densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + 1);
-    } catch (e) { /* Skip invalid coords */ }
+  // Count satellites (if enabled, small count so no sampling needed)
+  if (unitCountParams.showSatellites) {
+    for (const sat of satelliteSimState) {
+      if (sat.lat < minLat || sat.lat > maxLat) continue;
+      if (!isLonInRange(sat.lon, minLon, maxLon)) continue;
+      try {
+        const cellIndex = h3.latLngToCell(sat.lat, sat.lon, resolution);
+        densityMap.set(cellIndex, (densityMap.get(cellIndex) || 0) + 1);
+      } catch (e) { /* Skip invalid coords */ }
+    }
   }
 
   return densityMap;
@@ -2792,6 +2801,9 @@ const unitCountParams = {
   satelliteCount: 4000,
   totalCount: 500, // Combined slider for easy testing
   realisticRoutes: false, // Toggle between global spread and realistic traffic patterns
+  showShips: true,
+  showAircraft: true,
+  showSatellites: true,
 };
 
 // Realistic shipping lanes with concentration weights
@@ -3412,12 +3424,12 @@ h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
     shipTrailMesh.visible = false;
     aircraftTrailMesh.visible = false;
   } else {
-    // Show flying units when H3 is disabled
-    shipMesh.visible = true;
-    aircraftMesh.visible = true;
-    satelliteMesh.visible = true;
-    shipTrailMesh.visible = trailParams.enabled && trailParams.shipTrails;
-    aircraftTrailMesh.visible = trailParams.enabled && trailParams.aircraftTrails;
+    // Show flying units when H3 is disabled (respecting individual toggles)
+    shipMesh.visible = unitCountParams.showShips;
+    aircraftMesh.visible = unitCountParams.showAircraft;
+    satelliteMesh.visible = unitCountParams.showSatellites;
+    shipTrailMesh.visible = unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
+    aircraftTrailMesh.visible = unitCountParams.showAircraft && trailParams.enabled && trailParams.aircraftTrails;
     // Hide H3 meshes
     if (h3Mesh) h3Mesh.visible = false;
     if (h3LineMesh) h3LineMesh.visible = false;
@@ -3536,6 +3548,29 @@ unitsFolder
 unitsFolder
   .add(iconScaleParams, "multiplier", 1.0, 3.0, 0.1)
   .name("Icon Size");
+unitsFolder
+  .add(unitCountParams, "showShips")
+  .name("Ships")
+  .onChange((value) => {
+    shipMesh.visible = value && !h3Params.enabled;
+    shipTrailMesh.visible = value && trailParams.enabled && trailParams.shipTrails && !h3Params.enabled;
+    lastH3Resolution = -1; // Force H3 rebuild
+  });
+unitsFolder
+  .add(unitCountParams, "showAircraft")
+  .name("Aircraft")
+  .onChange((value) => {
+    aircraftMesh.visible = value && !h3Params.enabled;
+    aircraftTrailMesh.visible = value && trailParams.enabled && trailParams.aircraftTrails && !h3Params.enabled;
+    lastH3Resolution = -1; // Force H3 rebuild
+  });
+unitsFolder
+  .add(unitCountParams, "showSatellites")
+  .name("Satellites")
+  .onChange((value) => {
+    satelliteMesh.visible = value && !h3Params.enabled;
+    lastH3Resolution = -1; // Force H3 rebuild
+  });
 
 // Performance stats display
 const perfStats = { fps: 0, ships: 0, aircraft: 0 };
