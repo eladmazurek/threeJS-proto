@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite';
+import glsl from 'vite-plugin-glsl';
 
 export default defineConfig({
+  plugins: [glsl()],
+
   // Base path for GitHub Pages (repo name)
   base: '/3JS-proto/',
 
