@@ -484,14 +484,25 @@ function updateTelemetry(cameraDistance, cameraPosition) {
   const altitudeKm = ((cameraDistance - EARTH_RADIUS) * scaleFactor).toFixed(0);
   telAltitude.textContent = altitudeKm.toLocaleString();
 
-  // Calculate camera lat/lon from position
-  const camLength = cameraPosition.length();
-  const lat = Math.asin(cameraPosition.y / camLength) * (180 / Math.PI);
-  const lon = Math.atan2(cameraPosition.z, -cameraPosition.x) * (180 / Math.PI) - 180;
-  const normalizedLon = lon < -180 ? lon + 360 : lon;
+  // Calculate view center lat/lon (accounts for Earth rotation)
+  // Raycast from camera to Earth center to find what we're looking at
+  const toEarth = new THREE.Vector3(0, 0, 0).sub(cameraPosition).normalize();
+  const raycaster = new THREE.Raycaster(cameraPosition.clone(), toEarth);
+  const intersects = raycaster.intersectObject(earth, false);
 
-  telLat.textContent = lat.toFixed(2) + "°";
-  telLon.textContent = normalizedLon.toFixed(2) + "°";
+  if (intersects.length > 0) {
+    const point = intersects[0].point;
+    // Apply inverse of Earth's rotation to get local coordinates
+    const localPoint = point.clone().applyMatrix4(earth.matrixWorld.clone().invert());
+
+    const r = localPoint.length();
+    const lat = 90 - Math.acos(localPoint.y / r) * (180 / Math.PI);
+    const lon = Math.atan2(localPoint.z, -localPoint.x) * (180 / Math.PI) - 180;
+    const normalizedLon = lon < -180 ? lon + 360 : (lon > 180 ? lon - 360 : lon);
+
+    telLat.textContent = lat.toFixed(2) + "°";
+    telLon.textContent = normalizedLon.toFixed(2) + "°";
+  }
 
   // Unit counts
   const totalUnits = shipSimState.length + aircraftSimState.length + satelliteSimState.length;
