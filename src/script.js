@@ -3524,7 +3524,7 @@ unitsFolder
   });
 unitsFolder
   .add(unitCountParams, "realisticRoutes")
-  .name("Realistic Routes")
+  .name("Cluster on Routes")
   .onChange(updateUnitCounts);
 unitsFolder
   .add(motionParams, "motionUpdateInterval", 0, 200, 10)
@@ -3753,7 +3753,9 @@ function updateSelectedUnitInfo() {
   } else if (type === "aircraft") {
     unitData = aircraftSimState[index];
     if (!unitData) { deselectUnit(); return; }
-    altitude = "FL350";
+    // Generate consistent altitude based on index (28,000-41,000 ft)
+    const altFeet = (28000 + (index % 14) * 1000).toLocaleString();
+    altitude = `${altFeet} ft`;
     speed = `${(motionParams.aircraftSpeed * 80).toFixed(0)} kts`;
 
     // Set standard labels
