@@ -836,6 +836,347 @@ earth.add(cloudMesh);
 
 /**
  * =============================================================================
+ * WEATHER OVERLAY
+ * =============================================================================
+ * Real-time weather data visualization using NASA GIBS imagery
+ * Supports multiple weather layers: clouds, precipitation, temperature, etc.
+ */
+
+const WEATHER_ALTITUDE = 0.006; // Between surface and clouds
+
+// Weather overlay parameters
+const weatherParams = {
+  enabled: false,
+  layer: "precipitation", // precipitation, temperature, wind, pressure
+  opacity: 0.6,
+  animate: true,
+};
+
+// Weather layer definitions with NASA GIBS tile URLs
+// Using NASA EOSDIS Global Imagery Browse Services
+const WEATHER_LAYERS = {
+  clouds: {
+    name: "Cloud Cover",
+    // NASA MODIS Terra Cloud imagery
+    url: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
+    layer: "MODIS_Terra_CorrectedReflectance_TrueColor",
+    color: new THREE.Color(0xffffff),
+    description: "Satellite cloud imagery",
+  },
+  precipitation: {
+    name: "Precipitation",
+    // IMERG precipitation data
+    layer: "IMERG_Precipitation_Rate",
+    color: new THREE.Color(0x00aaff),
+    description: "Global precipitation rate",
+  },
+  temperature: {
+    name: "Temperature",
+    layer: "MODIS_Terra_Land_Surface_Temp_Day",
+    color: new THREE.Color(0xff6600),
+    description: "Land surface temperature",
+  },
+  wind: {
+    name: "Wind Speed",
+    layer: "MERRA2_Wind_Speed_50m",
+    color: new THREE.Color(0x00ff88),
+    description: "Wind speed at 50m",
+  },
+};
+
+// Create weather overlay geometry (sphere slightly above surface)
+const weatherGeometry = new THREE.SphereGeometry(EARTH_RADIUS + WEATHER_ALTITUDE, 64, 64);
+
+// Weather overlay shader - procedural clouds/weather patterns
+const weatherMaterial = new THREE.ShaderMaterial({
+  vertexShader: `
+    varying vec2 vUv;
+    varying vec3 vNormal;
+    void main() {
+      vUv = uv;
+      vNormal = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform float uOpacity;
+    uniform float uTime;
+    uniform vec3 uColor;
+    uniform int uLayerType; // 0=clouds, 1=precipitation, 2=temperature, 3=wind
+    uniform vec3 uSunDirection;
+
+    varying vec2 vUv;
+    varying vec3 vNormal;
+
+    // Simplex noise for procedural weather patterns
+    vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+    vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+    float snoise(vec3 v) {
+      const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+      const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+      vec3 i  = floor(v + dot(v, C.yyy));
+      vec3 x0 = v - i + dot(i, C.xxx);
+      vec3 g = step(x0.yzx, x0.xyz);
+      vec3 l = 1.0 - g;
+      vec3 i1 = min(g.xyz, l.zxy);
+      vec3 i2 = max(g.xyz, l.zxy);
+      vec3 x1 = x0 - i1 + C.xxx;
+      vec3 x2 = x0 - i2 + C.yyy;
+      vec3 x3 = x0 - D.yyy;
+      i = mod289(i);
+      vec4 p = permute(permute(permute(
+        i.z + vec4(0.0, i1.z, i2.z, 1.0))
+        + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+        + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+      float n_ = 0.142857142857;
+      vec3 ns = n_ * D.wyz - D.xzx;
+      vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+      vec4 x_ = floor(j * ns.z);
+      vec4 y_ = floor(j - 7.0 * x_);
+      vec4 x = x_ *ns.x + ns.yyyy;
+      vec4 y = y_ *ns.x + ns.yyyy;
+      vec4 h = 1.0 - abs(x) - abs(y);
+      vec4 b0 = vec4(x.xy, y.xy);
+      vec4 b1 = vec4(x.zw, y.zw);
+      vec4 s0 = floor(b0)*2.0 + 1.0;
+      vec4 s1 = floor(b1)*2.0 + 1.0;
+      vec4 sh = -step(h, vec4(0.0));
+      vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+      vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+      vec3 p0 = vec3(a0.xy, h.x);
+      vec3 p1 = vec3(a0.zw, h.y);
+      vec3 p2 = vec3(a1.xy, h.z);
+      vec3 p3 = vec3(a1.zw, h.w);
+      vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+      p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+      vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+      m = m * m;
+      return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+    }
+
+    float fbm(vec3 p) {
+      float value = 0.0;
+      float amplitude = 0.5;
+      for (int i = 0; i < 5; i++) {
+        value += amplitude * snoise(p);
+        p *= 2.0;
+        amplitude *= 0.5;
+      }
+      return value;
+    }
+
+    void main() {
+      // Convert UV to 3D position for seamless noise
+      float theta = vUv.x * 6.28318;
+      float phi = vUv.y * 3.14159;
+      vec3 pos = vec3(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta));
+
+      float pattern = 0.0;
+      vec3 color = uColor;
+
+      if (uLayerType == 0) {
+        // PRECIPITATION RADAR - realistic weather systems
+        // Very slow drift to simulate weather movement
+        vec3 drift = vec3(uTime * 0.003, 0.0, uTime * 0.002);
+
+        float latitude = asin(pos.y) / 1.5708;
+        float longitude = atan(pos.z, pos.x);
+
+        // Large-scale weather systems (low frequency for big patterns)
+        vec3 largeScale = pos * 1.8 + drift;
+        float largeSystems = snoise(largeScale);
+
+        // Mid-scale frontal bands - stretched along latitude
+        vec3 frontalPos = vec3(pos.x * 1.5, pos.y * 4.0, pos.z * 1.5) + drift * 0.5;
+        float fronts = snoise(frontalPos);
+
+        // Create distinct storm cells (few and large)
+        vec3 cellPos = pos * 2.5 + drift * 0.3;
+        float cells = snoise(cellPos);
+        cells = smoothstep(0.45, 0.7, cells); // High threshold = fewer cells
+
+        // ITCZ - narrow tropical band near equator
+        float itcz = exp(-pow(latitude * 8.0, 2.0)) * 0.6;
+        float itczNoise = snoise(vec3(longitude * 3.0 + uTime * 0.005, 0.0, 0.0));
+        itcz *= smoothstep(-0.2, 0.3, itczNoise);
+
+        // Mid-latitude storm tracks (40-60 degrees)
+        float stormTrack = exp(-pow((abs(latitude) - 0.5) * 5.0, 2.0));
+        float trackNoise = snoise(vec3(longitude * 2.0, latitude * 2.0, 0.0) + drift);
+        stormTrack *= smoothstep(0.1, 0.5, trackNoise);
+
+        // Combine: require multiple conditions for precipitation
+        float base = largeSystems * 0.3 + fronts * 0.4;
+        base = smoothstep(0.25, 0.6, base); // High threshold
+
+        // Final precipitation only where systems AND location favor it
+        pattern = base * 0.5 + cells * 0.7;
+        pattern += itcz * 0.4 + stormTrack * 0.5;
+        pattern = smoothstep(0.3, 0.8, pattern); // Cut off weak signals
+        pattern = clamp(pattern, 0.0, 1.0);
+
+        // Radar color scale: green -> yellow -> orange -> red -> magenta (severe)
+        if (pattern < 0.2) {
+          color = mix(vec3(0.0, 0.2, 0.0), vec3(0.0, 0.8, 0.0), pattern * 5.0);
+        } else if (pattern < 0.4) {
+          color = mix(vec3(0.0, 0.8, 0.0), vec3(1.0, 1.0, 0.0), (pattern - 0.2) * 5.0);
+        } else if (pattern < 0.6) {
+          color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.5, 0.0), (pattern - 0.4) * 5.0);
+        } else if (pattern < 0.8) {
+          color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.0, 0.0), (pattern - 0.6) * 5.0);
+        } else {
+          color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.8), (pattern - 0.8) * 5.0);
+        }
+      }
+      else if (uLayerType == 1) {
+        // TEMPERATURE - heat map (stationary)
+        float latitude = asin(pos.y) / 1.5708;
+        // Base temperature gradient (hot at equator, cold at poles)
+        float baseTemp = 1.0 - abs(latitude);
+        // Add some noise variation (stationary)
+        vec3 noisePos = pos * 5.0;
+        float variation = snoise(noisePos) * 0.15;
+        pattern = clamp(baseTemp + variation, 0.0, 1.0);
+
+        // Temperature color gradient: blue -> cyan -> green -> yellow -> orange -> red
+        if (pattern < 0.2) {
+          color = mix(vec3(0.0, 0.0, 0.6), vec3(0.0, 0.4, 0.8), pattern * 5.0);
+        } else if (pattern < 0.4) {
+          color = mix(vec3(0.0, 0.4, 0.8), vec3(0.0, 0.7, 0.5), (pattern - 0.2) * 5.0);
+        } else if (pattern < 0.6) {
+          color = mix(vec3(0.0, 0.7, 0.5), vec3(0.9, 0.9, 0.0), (pattern - 0.4) * 5.0);
+        } else if (pattern < 0.8) {
+          color = mix(vec3(0.9, 0.9, 0.0), vec3(1.0, 0.5, 0.0), (pattern - 0.6) * 5.0);
+        } else {
+          color = mix(vec3(1.0, 0.5, 0.0), vec3(0.8, 0.0, 0.0), (pattern - 0.8) * 5.0);
+        }
+      }
+      else if (uLayerType == 2) {
+        // WIND STREAMLINES - shows direction with flowing lines
+        float latitude = asin(pos.y) / 1.5708;
+        float longitude = atan(pos.z, pos.x);
+
+        // Global wind patterns (trade winds, westerlies, polar easterlies)
+        float windDir = 0.0;
+        float windSpeed = 0.0;
+
+        // Trade winds (equator to 30°) - blow east to west
+        float tradeWindZone = smoothstep(0.0, 0.33, abs(latitude)) * (1.0 - smoothstep(0.33, 0.4, abs(latitude)));
+
+        // Westerlies (30° to 60°) - blow west to east
+        float westerliesZone = smoothstep(0.33, 0.45, abs(latitude)) * (1.0 - smoothstep(0.6, 0.7, abs(latitude)));
+
+        // Polar easterlies (60° to 90°) - blow east to west
+        float polarZone = smoothstep(0.6, 0.75, abs(latitude));
+
+        // Create streamline effect using animated phase
+        float phase = longitude * 8.0 + uTime * 0.3;
+
+        // Add latitude-based direction change
+        if (tradeWindZone > 0.1) {
+          phase = -longitude * 8.0 + uTime * 0.25; // Reverse for trade winds
+          windSpeed = tradeWindZone;
+        }
+        if (westerliesZone > 0.1) {
+          phase = longitude * 10.0 + uTime * 0.4; // Faster westerlies
+          windSpeed = max(windSpeed, westerliesZone * 1.2);
+        }
+        if (polarZone > 0.1) {
+          phase = -longitude * 6.0 + uTime * 0.15; // Slower polar
+          windSpeed = max(windSpeed, polarZone * 0.6);
+        }
+
+        // Create streamline pattern
+        float streamline = sin(phase + latitude * 20.0) * 0.5 + 0.5;
+        streamline = pow(streamline, 3.0); // Sharpen lines
+
+        // Add jet stream bands
+        float jetStream = exp(-pow((abs(latitude) - 0.5) * 6.0, 2.0)) * 0.9;
+
+        // Combine
+        pattern = max(streamline * windSpeed, jetStream);
+        pattern = clamp(pattern, 0.0, 1.0);
+
+        // Color by wind speed: light blue -> white -> yellow (jet stream)
+        if (pattern < 0.3) {
+          color = mix(vec3(0.2, 0.4, 0.6), vec3(0.4, 0.7, 0.9), pattern / 0.3);
+        } else if (pattern < 0.6) {
+          color = mix(vec3(0.4, 0.7, 0.9), vec3(0.9, 0.9, 1.0), (pattern - 0.3) / 0.3);
+        } else {
+          color = mix(vec3(0.9, 0.9, 1.0), vec3(1.0, 0.9, 0.3), (pattern - 0.6) / 0.4);
+        }
+
+        // Make lines more visible
+        pattern = smoothstep(0.1, 0.3, pattern);
+      }
+      else if (uLayerType == 3) {
+        // PRESSURE SYSTEMS - high/low pressure areas
+        vec3 noisePos = pos * 3.0 + vec3(uTime * 0.003, 0.0, 0.0);
+        float pressure = fbm(noisePos);
+
+        // Create distinct high and low pressure centers
+        float highP = smoothstep(0.2, 0.5, pressure);
+        float lowP = smoothstep(-0.5, -0.2, pressure);
+
+        // Pressure tends to be high in subtropics, low in subpolar
+        float latitude = asin(pos.y) / 1.5708;
+        float subtropicalHigh = exp(-pow((abs(latitude) - 0.35) * 4.0, 2.0));
+        float subpolarLow = exp(-pow((abs(latitude) - 0.65) * 4.0, 2.0));
+
+        highP = highP * 0.5 + subtropicalHigh * 0.5;
+        lowP = lowP * 0.5 + subpolarLow * 0.5;
+
+        // Color: blue for low pressure, red/orange for high
+        if (lowP > highP) {
+          pattern = lowP;
+          color = mix(vec3(0.1, 0.2, 0.4), vec3(0.2, 0.5, 0.9), pattern);
+        } else {
+          pattern = highP;
+          color = mix(vec3(0.4, 0.2, 0.1), vec3(0.9, 0.5, 0.2), pattern);
+        }
+        pattern = max(highP, lowP);
+      }
+
+      // Subtle day/night shading
+      float daylight = dot(vNormal, uSunDirection) * 0.15 + 0.85;
+      color *= daylight;
+
+      float alpha = pattern * uOpacity;
+      gl_FragColor = vec4(color, alpha);
+    }
+  `,
+  uniforms: {
+    uOpacity: { value: weatherParams.opacity },
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(0xffffff) },
+    uLayerType: { value: 0 },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+  },
+  transparent: true,
+  side: THREE.FrontSide,
+  depthTest: true,
+  depthWrite: false,
+});
+
+const weatherMesh = new THREE.Mesh(weatherGeometry, weatherMaterial);
+weatherMesh.renderOrder = 1.2; // Below clouds but above surface
+weatherMesh.visible = weatherParams.enabled;
+earth.add(weatherMesh);
+
+/**
+ * Update weather layer type
+ */
+function setWeatherLayer(layerName) {
+  const layerTypes = { precipitation: 0, temperature: 1, wind: 2, pressure: 3 };
+  weatherMaterial.uniforms.uLayerType.value = layerTypes[layerName] || 0;
+  weatherParams.layer = layerName;
+}
+
+/**
+ * =============================================================================
  * LAT/LON GRID LINES
  * =============================================================================
  * Subtle grid lines showing latitude and longitude on the Earth surface.
@@ -2606,6 +2947,20 @@ gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interv
   buildGrid();
 });
 
+// Weather folder
+const weatherFolder = gui.addFolder("Weather");
+weatherFolder.close();
+weatherFolder.add(weatherParams, "enabled").name("Show Weather").onChange(() => {
+  weatherMesh.visible = weatherParams.enabled;
+});
+weatherFolder.add(weatherParams, "layer", ["precipitation", "temperature", "wind", "pressure"]).name("Layer").onChange((value) => {
+  setWeatherLayer(value);
+});
+weatherFolder.add(weatherParams, "opacity", 0.1, 1.0, 0.05).name("Opacity").onChange(() => {
+  weatherMaterial.uniforms.uOpacity.value = weatherParams.opacity;
+});
+weatherFolder.add(weatherParams, "animate").name("Animate");
+
 // Airports folder
 const airportsFolder = gui.addFolder("Airports");
 airportsFolder.close();
@@ -3062,6 +3417,11 @@ const tick = () => {
   if (rotationFactor > 0) {
     // Slow rotation that fades in smoothly
     earth.rotation.y += 0.0003 * rotationFactor;
+  }
+
+  // Update weather animation
+  if (weatherParams.enabled && weatherParams.animate) {
+    weatherMaterial.uniforms.uTime.value = elapsedTime;
   }
 
   // Update motion simulation for ships and aircraft
