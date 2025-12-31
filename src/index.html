@@ -16,6 +16,42 @@
     -->
     <canvas class="webgl"></canvas>
 
+    <!-- H3 Cell Info Popup (SpaceX style) -->
+    <div id="h3-popup" class="h3-popup hidden">
+        <div class="h3-popup-header">
+            <span class="h3-popup-title" id="h3-popup-title">CELL —</span>
+            <button class="h3-popup-close">&times;</button>
+        </div>
+        <div class="h3-popup-content">
+            <div class="h3-popup-row">
+                <span class="h3-popup-label">TOTAL UNITS</span>
+                <span class="h3-popup-value h3-popup-highlight" id="h3-total-units">0</span>
+            </div>
+            <div class="h3-popup-breakdown">
+                <div class="h3-popup-unit-row">
+                    <span class="h3-unit-dot" style="background: #14b8a6;"></span>
+                    <span class="h3-popup-label">SHIPS</span>
+                    <span class="h3-popup-value" id="h3-ship-count">0</span>
+                </div>
+                <div class="h3-popup-unit-row">
+                    <span class="h3-unit-dot" style="background: #f59e0b;"></span>
+                    <span class="h3-popup-label">AIRCRAFT</span>
+                    <span class="h3-popup-value" id="h3-aircraft-count">0</span>
+                </div>
+                <div class="h3-popup-unit-row">
+                    <span class="h3-unit-dot" style="background: #a855f7;"></span>
+                    <span class="h3-popup-label">SATELLITES</span>
+                    <span class="h3-popup-value" id="h3-satellite-count">0</span>
+                </div>
+            </div>
+            <div class="h3-popup-divider"></div>
+            <div class="h3-popup-row">
+                <span class="h3-popup-label">CENTER</span>
+                <span class="h3-popup-value" id="h3-cell-center">—</span>
+            </div>
+        </div>
+    </div>
+
     <!--
         Main Application Script
         type="module" enables ES6 module imports (import/export syntax)
