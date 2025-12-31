@@ -2107,6 +2107,11 @@ function updateTrails() {
 // Store current icon scale for dynamic rescaling based on camera distance
 let currentIconScale = 1;
 
+// User-adjustable icon scale multiplier (1 = default, max 3 = 3x larger)
+const iconScaleParams = {
+  multiplier: 1.0
+};
+
 /**
  * Update ship instances by writing directly to GPU attribute buffers
  * Much more efficient than uploading full matrices
@@ -2163,7 +2168,7 @@ function updateAircraftAttributes() {
  */
 function updateIconScale(cameraDistance) {
   const baseDistance = 13;
-  currentIconScale = cameraDistance / baseDistance;
+  currentIconScale = (cameraDistance / baseDistance) * iconScaleParams.multiplier;
 }
 
 /**
@@ -3170,6 +3175,9 @@ unitsFolder
     // Reset throttle timer when interval changes
     lastMotionUpdateTime = 0;
   });
+unitsFolder
+  .add(iconScaleParams, "multiplier", 1.0, 3.0, 0.1)
+  .name("Icon Size");
 
 // Performance stats display
 const perfStats = { fps: 0, ships: 0, aircraft: 0 };
