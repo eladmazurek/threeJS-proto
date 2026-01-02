@@ -856,6 +856,9 @@ const earthMaterial = new THREE.ShaderMaterial({
 
     // Color mode (0=normal, 1=grayscale, 2=night vision, 3=thermal, 4=hologram)
     uColorMode: { value: 0 },
+
+    // Night blend toggle (0=day only, 1=day/night blend)
+    uNightBlend: { value: 1.0 },
   },
 });
 
@@ -4047,6 +4050,15 @@ textureFolder
   .name("Color Mode")
   .onChange((value) => {
     earthMaterial.uniforms.uColorMode.value = colorModes[value];
+  });
+
+// Day/Night blend toggle
+const nightBlendParams = { enabled: true };
+textureFolder
+  .add(nightBlendParams, "enabled")
+  .name("Day/Night Blend")
+  .onChange((value) => {
+    earthMaterial.uniforms.uNightBlend.value = value ? 1.0 : 0.0;
   });
 
 // Atmosphere folder

@@ -35,6 +35,7 @@ uniform float uSpecularGlowSize;         // Size of medium glow (higher = smalle
 
 // Color mode uniforms
 uniform int uColorMode;                  // 0=normal, 1=grayscale, 2=night vision, 3=thermal, 4=hologram
+uniform float uNightBlend;               // 0=day only, 1=day/night blend
 
 // Varyings from vertex shader
 varying vec2 vUv;                        // Texture coordinates
@@ -88,7 +89,10 @@ void main()
     // ==========================================================================
 
     // Mix between night and day based on sun orientation
-    vec3 color = mix(nightColor, dayColor, dayMix);
+    // If uNightBlend is 0, just show day texture without any blending
+    vec3 color = uNightBlend > 0.5
+        ? mix(nightColor, dayColor, dayMix)  // Normal day/night blend
+        : dayColor;                           // Full day texture, no blending
 
     // ==========================================================================
     // CLOUD LAYER
