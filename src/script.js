@@ -184,6 +184,18 @@ gui.title("Controls");
       <span class="mission-value" id="met-value">00:00:00</span>
     </div>
 
+    <!-- Weather legend (bottom-right, above unit info) -->
+    <div id="weather-legend" class="hidden">
+      <div class="legend-header">
+        <span class="legend-title" id="legend-title">PRECIPITATION</span>
+      </div>
+      <div class="legend-bar" id="legend-bar"></div>
+      <div class="legend-labels" id="legend-labels">
+        <span>LOW</span>
+        <span>HIGH</span>
+      </div>
+    </div>
+
     <!-- Selected unit info panel (bottom-right) -->
     <div id="unit-info" class="hidden">
       <div class="unit-info-header">
@@ -409,7 +421,7 @@ gui.title("Controls");
     .unit-info-type.ship { color: #2dd4bf; }
     .unit-info-type.aircraft { color: #fbbf24; }
     .unit-info-type.satellite { color: #a78bfa; }
-    .unit-info-type.airport { color: #22d3ee; }
+    .unit-info-type.airport { color: #ffffff; }
 
     .unit-info-id {
       color: rgba(255, 255, 255, 0.5);
@@ -458,6 +470,86 @@ gui.title("Controls");
       font-weight: 400;
       font-variant-numeric: tabular-nums;
     }
+
+    /* Weather Legend */
+    #weather-legend {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 10px 14px;
+      pointer-events: auto;
+      min-width: 140px;
+    }
+
+    #weather-legend.hidden {
+      display: none;
+    }
+
+    .legend-header {
+      margin-bottom: 8px;
+    }
+
+    .legend-title {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+    }
+
+    .legend-bar {
+      height: 10px;
+      border-radius: 2px;
+      margin-bottom: 4px;
+    }
+
+    .legend-bar.precipitation {
+      background: linear-gradient(to right,
+        rgb(25, 90, 140),
+        rgb(0, 155, 165),
+        rgb(50, 180, 40),
+        rgb(230, 220, 25),
+        rgb(255, 115, 0),
+        rgb(205, 25, 25)
+      );
+    }
+
+    .legend-bar.wind {
+      background: linear-gradient(to right,
+        rgb(50, 100, 180),
+        rgb(75, 180, 155),
+        rgb(230, 205, 75),
+        rgb(245, 100, 155)
+      );
+    }
+
+    .legend-bar.temperature {
+      background: linear-gradient(to right,
+        rgb(0, 0, 155),
+        rgb(0, 100, 205),
+        rgb(0, 180, 130),
+        rgb(230, 230, 0),
+        rgb(255, 130, 0),
+        rgb(205, 0, 0)
+      );
+    }
+
+    .legend-bar.pressure {
+      background: linear-gradient(to right,
+        rgb(0, 100, 200),
+        rgb(100, 100, 100),
+        rgb(200, 100, 50)
+      );
+    }
+
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 8px;
+      color: rgba(255, 255, 255, 0.5);
+      letter-spacing: 0.5px;
+    }
   `;
 
   document.head.appendChild(style);
@@ -471,6 +563,56 @@ const telLon = document.getElementById("tel-lon");
 const telUnits = document.getElementById("tel-units");
 const telUtc = document.getElementById("tel-utc");
 const metValue = document.getElementById("met-value");
+
+// Weather legend elements
+const weatherLegend = document.getElementById("weather-legend");
+const legendTitle = document.getElementById("legend-title");
+const legendBar = document.getElementById("legend-bar");
+const legendLabels = document.getElementById("legend-labels");
+
+/**
+ * Update weather legend based on current layer
+ */
+function updateWeatherLegend(layerName, visible) {
+  if (!visible) {
+    weatherLegend.classList.add("hidden");
+    return;
+  }
+
+  weatherLegend.classList.remove("hidden");
+
+  // Remove all layer classes
+  legendBar.classList.remove("precipitation", "wind", "temperature", "pressure");
+
+  // Set title and gradient based on layer
+  const layerConfig = {
+    precipitation: {
+      title: "PRECIPITATION",
+      labels: ["LIGHT", "HEAVY"],
+      barClass: "precipitation"
+    },
+    wind: {
+      title: "WIND SPEED",
+      labels: ["SLOW", "JET STREAM"],
+      barClass: "wind"
+    },
+    temperature: {
+      title: "TEMPERATURE",
+      labels: ["COLD", "HOT"],
+      barClass: "temperature"
+    },
+    pressure: {
+      title: "PRESSURE",
+      labels: ["LOW", "HIGH"],
+      barClass: "pressure"
+    }
+  };
+
+  const config = layerConfig[layerName] || layerConfig.precipitation;
+  legendTitle.textContent = config.title;
+  legendBar.classList.add(config.barClass);
+  legendLabels.innerHTML = `<span>${config.labels[0]}</span><span>${config.labels[1]}</span>`;
+}
 
 // Mission start time for elapsed time calculation
 const missionStartTime = Date.now();
@@ -997,166 +1139,297 @@ const weatherMaterial = new THREE.ShaderMaterial({
       vec3 color = uColor;
 
       if (uLayerType == 0) {
-        // PRECIPITATION RADAR - realistic weather systems
-        // Very slow drift to simulate weather movement
-        vec3 drift = vec3(uTime * 0.003, 0.0, uTime * 0.002);
+        // REALISTIC PRECIPITATION with organic blob shapes
+        vec3 drift = vec3(uTime * 0.001, 0.0, uTime * 0.0008);
 
         float latitude = asin(pos.y) / 1.5708;
         float longitude = atan(pos.z, pos.x);
 
-        // Large-scale weather systems (low frequency for big patterns)
-        vec3 largeScale = pos * 1.8 + drift;
-        float largeSystems = snoise(largeScale);
+        // === DOMAIN WARPING for organic shapes ===
+        // Warp the sampling position to create irregular boundaries
+        vec3 warpPos1 = pos * 2.0 + drift * 0.5;
+        float warpX = snoise(warpPos1) * 0.15;
+        float warpY = snoise(warpPos1 + vec3(43.0, 17.0, 91.0)) * 0.15;
+        float warpZ = snoise(warpPos1 + vec3(71.0, 23.0, 37.0)) * 0.15;
+        vec3 warpedPos = pos + vec3(warpX, warpY, warpZ);
 
-        // Mid-scale frontal bands - stretched along latitude
-        vec3 frontalPos = vec3(pos.x * 1.5, pos.y * 4.0, pos.z * 1.5) + drift * 0.5;
-        float fronts = snoise(frontalPos);
+        // Second level of warping for more complexity
+        vec3 warpPos2 = warpedPos * 4.0 + drift;
+        float warp2X = snoise(warpPos2) * 0.06;
+        float warp2Y = snoise(warpPos2 + vec3(31.0, 67.0, 13.0)) * 0.06;
+        float warp2Z = snoise(warpPos2 + vec3(89.0, 41.0, 59.0)) * 0.06;
+        warpedPos = warpedPos + vec3(warp2X, warp2Y, warp2Z);
 
-        // Create distinct storm cells (few and large)
-        vec3 cellPos = pos * 2.5 + drift * 0.3;
-        float cells = snoise(cellPos);
-        cells = smoothstep(0.45, 0.7, cells); // High threshold = fewer cells
+        // === CLIMATE ZONES ===
+        float itcz = exp(-pow(latitude * 10.0, 2.0));
+        float midLat = exp(-pow((abs(latitude) - 0.45) * 5.0, 2.0));
+        float subtropicalDry = exp(-pow((abs(latitude) - 0.25) * 5.0, 2.0));
+        float polarDry = smoothstep(0.7, 0.9, abs(latitude));
 
-        // ITCZ - narrow tropical band near equator
-        float itcz = exp(-pow(latitude * 8.0, 2.0)) * 0.6;
-        float itczNoise = snoise(vec3(longitude * 3.0 + uTime * 0.005, 0.0, 0.0));
-        itcz *= smoothstep(-0.2, 0.3, itczNoise);
+        float climateMask = itcz * 1.0 + midLat * 0.85;
+        climateMask = climateMask * (1.0 - subtropicalDry * 0.4) * (1.0 - polarDry * 0.5);
+        climateMask = clamp(climateMask, 0.08, 1.0);
 
-        // Mid-latitude storm tracks (40-60 degrees)
-        float stormTrack = exp(-pow((abs(latitude) - 0.5) * 5.0, 2.0));
-        float trackNoise = snoise(vec3(longitude * 2.0, latitude * 2.0, 0.0) + drift);
-        stormTrack *= smoothstep(0.1, 0.5, trackNoise);
+        // === MULTI-OCTAVE NOISE for natural variation ===
+        // Large weather systems
+        float n1 = snoise(warpedPos * 1.5 + drift) * 0.5;
+        float n2 = snoise(warpedPos * 3.0 + drift * 1.3) * 0.3;
+        float n3 = snoise(warpedPos * 6.0 + drift * 1.6) * 0.15;
+        float n4 = snoise(warpedPos * 12.0 + drift * 2.0) * 0.05;
 
-        // Combine: require multiple conditions for precipitation
-        float base = largeSystems * 0.3 + fronts * 0.4;
-        base = smoothstep(0.25, 0.6, base); // High threshold
+        float combinedNoise = n1 + n2 + n3 + n4; // Range roughly -1 to 1
 
-        // Final precipitation only where systems AND location favor it
-        pattern = base * 0.5 + cells * 0.7;
-        pattern += itcz * 0.4 + stormTrack * 0.5;
-        pattern = smoothstep(0.3, 0.8, pattern); // Cut off weak signals
+        // Elongated frontal systems (stretch in one direction)
+        vec3 stretchedPos = vec3(warpedPos.x * 0.7, warpedPos.y * 1.8, warpedPos.z * 0.7);
+        float frontalNoise = snoise(stretchedPos * 2.0 + drift * 0.8) * 0.4;
+
+        // Combine and apply climate mask
+        float rawPrecip = (combinedNoise + frontalNoise + 0.3) * climateMask;
+
+        // Soft threshold with gradual falloff
+        pattern = smoothstep(0.1, 0.55, rawPrecip);
+
+        // Light compression - keep gradient range
+        pattern = pow(pattern, 1.4);
+
+        // === INTENSITY VARIATION within storms ===
+        // Core intensity based on fine detail noise
+        vec3 corePos = warpedPos * 8.0 + drift * 2.0;
+        float coreDetail = snoise(corePos) * 0.5 + 0.5;
+
+        // Boost centers where base pattern is already strong
+        float centerBoost = coreDetail * pattern * pattern * 0.5;
+        pattern = pattern + centerBoost;
+
+        // Rare intense cores (very localized)
+        float intenseCore = snoise(warpedPos * 15.0 + drift * 3.0);
+        intenseCore = smoothstep(0.6, 0.9, intenseCore) * step(0.3, pattern);
+        pattern = pattern + intenseCore * 0.25;
+
         pattern = clamp(pattern, 0.0, 1.0);
 
-        // Radar color scale: green -> yellow -> orange -> red -> magenta (severe)
+        // === COLOR SCALE with smooth gradients ===
         if (pattern < 0.2) {
-          color = mix(vec3(0.0, 0.2, 0.0), vec3(0.0, 0.8, 0.0), pattern * 5.0);
+          // Blue to teal (light rain)
+          color = mix(vec3(0.1, 0.35, 0.55), vec3(0.0, 0.6, 0.65), pattern / 0.2);
         } else if (pattern < 0.4) {
-          color = mix(vec3(0.0, 0.8, 0.0), vec3(1.0, 1.0, 0.0), (pattern - 0.2) * 5.0);
+          // Teal to green
+          color = mix(vec3(0.0, 0.6, 0.65), vec3(0.2, 0.7, 0.15), (pattern - 0.2) / 0.2);
         } else if (pattern < 0.6) {
-          color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.5, 0.0), (pattern - 0.4) * 5.0);
+          // Green to yellow
+          color = mix(vec3(0.2, 0.7, 0.15), vec3(0.9, 0.85, 0.1), (pattern - 0.4) / 0.2);
         } else if (pattern < 0.8) {
-          color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.0, 0.0), (pattern - 0.6) * 5.0);
+          // Yellow to orange
+          color = mix(vec3(0.9, 0.85, 0.1), vec3(1.0, 0.45, 0.0), (pattern - 0.6) / 0.2);
         } else {
-          color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.8), (pattern - 0.8) * 5.0);
+          // Orange to red (intense)
+          color = mix(vec3(1.0, 0.45, 0.0), vec3(0.8, 0.1, 0.1), (pattern - 0.8) / 0.2);
         }
       }
       else if (uLayerType == 1) {
-        // TEMPERATURE - heat map (stationary)
-        float latitude = asin(pos.y) / 1.5708;
-        // Base temperature gradient (hot at equator, cold at poles)
-        float baseTemp = 1.0 - abs(latitude);
-        // Add some noise variation (stationary)
-        vec3 noisePos = pos * 5.0;
-        float variation = snoise(noisePos) * 0.15;
-        pattern = clamp(baseTemp + variation, 0.0, 1.0);
+        // TEMPERATURE MAP - organic swirling patterns
+        float latitude = asin(pos.y) / 1.5708; // -1 to 1
+        float absLat = abs(latitude);
 
-        // Temperature color gradient: blue -> cyan -> green -> yellow -> orange -> red
-        if (pattern < 0.2) {
-          color = mix(vec3(0.0, 0.0, 0.6), vec3(0.0, 0.4, 0.8), pattern * 5.0);
-        } else if (pattern < 0.4) {
-          color = mix(vec3(0.0, 0.4, 0.8), vec3(0.0, 0.7, 0.5), (pattern - 0.2) * 5.0);
+        // === DOMAIN WARPING for organic shapes ===
+        vec3 warpPos = pos * 2.0;
+        float warpX = snoise(warpPos + vec3(0.0, 50.0, 0.0)) * 0.15;
+        float warpY = snoise(warpPos + vec3(50.0, 0.0, 0.0)) * 0.15;
+        float warpZ = snoise(warpPos + vec3(0.0, 0.0, 50.0)) * 0.15;
+        vec3 warpedPos = pos + vec3(warpX, warpY, warpZ);
+
+        // Second level warp for more complexity
+        vec3 warp2Pos = warpedPos * 3.0;
+        float warp2 = snoise(warp2Pos) * 0.08;
+        warpedPos += vec3(warp2);
+
+        // === BASE TEMPERATURE from warped latitude ===
+        float warpedLat = asin(clamp(warpedPos.y / length(warpedPos), -1.0, 1.0)) / 1.5708;
+        float warpedAbsLat = abs(warpedLat);
+
+        // Temperature: poles cold, equator warm
+        float baseTemp = 1.0 - pow(warpedAbsLat, 1.5);
+
+        // === SWIRLING COLD PATTERNS in polar regions ===
+        float polarSwirl = snoise(warpedPos * 4.0) * 0.5 + 0.5;
+        float polarMask = smoothstep(0.5, 0.8, absLat);
+        baseTemp -= polarSwirl * polarMask * 0.3;
+
+        // === VARIATION ===
+        float variation = snoise(warpedPos * 5.0) * 0.1;
+        baseTemp += variation * (1.0 - absLat * 0.5);
+
+        pattern = clamp(baseTemp, 0.0, 1.0);
+
+        // === COLOR: Purple (coldest) -> Blue -> Cyan -> Green -> Yellow -> Orange ===
+        if (pattern < 0.15) {
+          // Coldest: white to purple/magenta
+          color = mix(vec3(0.95, 0.95, 1.0), vec3(0.6, 0.2, 0.6), pattern / 0.15);
+        } else if (pattern < 0.3) {
+          // Very cold: purple to blue
+          color = mix(vec3(0.6, 0.2, 0.6), vec3(0.3, 0.4, 0.8), (pattern - 0.15) / 0.15);
+        } else if (pattern < 0.45) {
+          // Cold: blue to cyan
+          color = mix(vec3(0.3, 0.4, 0.8), vec3(0.3, 0.7, 0.75), (pattern - 0.3) / 0.15);
         } else if (pattern < 0.6) {
-          color = mix(vec3(0.0, 0.7, 0.5), vec3(0.9, 0.9, 0.0), (pattern - 0.4) * 5.0);
-        } else if (pattern < 0.8) {
-          color = mix(vec3(0.9, 0.9, 0.0), vec3(1.0, 0.5, 0.0), (pattern - 0.6) * 5.0);
+          // Cool: cyan to green
+          color = mix(vec3(0.3, 0.7, 0.75), vec3(0.45, 0.7, 0.3), (pattern - 0.45) / 0.15);
+        } else if (pattern < 0.75) {
+          // Mild: green to yellow-green
+          color = mix(vec3(0.45, 0.7, 0.3), vec3(0.75, 0.75, 0.25), (pattern - 0.6) / 0.15);
+        } else if (pattern < 0.88) {
+          // Warm: yellow to orange
+          color = mix(vec3(0.75, 0.75, 0.25), vec3(0.9, 0.55, 0.2), (pattern - 0.75) / 0.13);
         } else {
-          color = mix(vec3(1.0, 0.5, 0.0), vec3(0.8, 0.0, 0.0), (pattern - 0.8) * 5.0);
+          // Hot: orange to red-orange
+          color = mix(vec3(0.9, 0.55, 0.2), vec3(0.85, 0.35, 0.15), (pattern - 0.88) / 0.12);
         }
       }
       else if (uLayerType == 2) {
-        // WIND STREAMLINES - shows direction with flowing lines
+        // WIND STREAMLINES - flowing curved lines
         float latitude = asin(pos.y) / 1.5708;
         float longitude = atan(pos.z, pos.x);
 
-        // Global wind patterns (trade winds, westerlies, polar easterlies)
-        float windDir = 0.0;
-        float windSpeed = 0.0;
+        // === WIND VECTOR FIELD ===
+        // Create a smooth, flowing vector field using curl noise
+        vec3 fieldPos = pos * 3.0;
 
-        // Trade winds (equator to 30°) - blow east to west
-        float tradeWindZone = smoothstep(0.0, 0.33, abs(latitude)) * (1.0 - smoothstep(0.33, 0.4, abs(latitude)));
+        // Multi-scale flow field
+        float fx1 = snoise(fieldPos * 0.5 + vec3(17.0, 0.0, 0.0));
+        float fy1 = snoise(fieldPos * 0.5 + vec3(0.0, 31.0, 0.0));
+        float fx2 = snoise(fieldPos * 1.5 + vec3(43.0, 0.0, 0.0)) * 0.4;
+        float fy2 = snoise(fieldPos * 1.5 + vec3(0.0, 67.0, 0.0)) * 0.4;
 
-        // Westerlies (30° to 60°) - blow west to east
-        float westerliesZone = smoothstep(0.33, 0.45, abs(latitude)) * (1.0 - smoothstep(0.6, 0.7, abs(latitude)));
+        vec2 flowField = vec2(fx1 + fx2, fy1 + fy2);
 
-        // Polar easterlies (60° to 90°) - blow east to west
-        float polarZone = smoothstep(0.6, 0.75, abs(latitude));
+        // === ADD GLOBAL WIND PATTERNS ===
+        // Zonal flow (east-west based on latitude)
+        float zonalFlow = 1.0; // Default westerlies
+        if (abs(latitude) < 0.3) zonalFlow = -0.8; // Trade winds
+        if (abs(latitude) > 0.65) zonalFlow = -0.5; // Polar easterlies
 
-        // Create streamline effect using animated phase
-        float phase = longitude * 8.0 + uTime * 0.3;
+        flowField.x += zonalFlow * 0.6;
 
-        // Add latitude-based direction change
-        if (tradeWindZone > 0.1) {
-          phase = -longitude * 8.0 + uTime * 0.25; // Reverse for trade winds
-          windSpeed = tradeWindZone;
+        // === WIND SPEED ===
+        float jetMeander = snoise(vec3(longitude * 2.0, 0.0, uTime * 0.01)) * 0.12;
+        float jetStream = exp(-pow((abs(latitude) - 0.4 + jetMeander) * 5.0, 2.0));
+        float tradeWinds = smoothstep(0.08, 0.18, abs(latitude)) * (1.0 - smoothstep(0.25, 0.35, abs(latitude))) * 0.4;
+        float windSpeed = max(jetStream, tradeWinds);
+        windSpeed = max(windSpeed, 0.15); // Minimum visibility
+
+        // === ADVECT POSITION ALONG FLOW ===
+        // Trace back along the flow field to create streaks
+        vec2 uv = vec2(longitude, latitude);
+        float time = uTime * 0.5;
+
+        // Advect UV coordinates backwards in time
+        vec2 advectedUV = uv;
+        for (int i = 0; i < 3; i++) {
+          vec3 samplePos = vec3(cos(advectedUV.x) * cos(advectedUV.y * 1.57),
+                                sin(advectedUV.y * 1.57),
+                                sin(advectedUV.x) * cos(advectedUV.y * 1.57)) * 3.0;
+          float sfx = snoise(samplePos * 0.5 + vec3(17.0, 0.0, 0.0));
+          float sfy = snoise(samplePos * 0.5 + vec3(0.0, 31.0, 0.0));
+          advectedUV -= vec2(sfx + zonalFlow * 0.6, sfy) * 0.02;
         }
-        if (westerliesZone > 0.1) {
-          phase = longitude * 10.0 + uTime * 0.4; // Faster westerlies
-          windSpeed = max(windSpeed, westerliesZone * 1.2);
-        }
-        if (polarZone > 0.1) {
-          phase = -longitude * 6.0 + uTime * 0.15; // Slower polar
-          windSpeed = max(windSpeed, polarZone * 0.6);
-        }
 
-        // Create streamline pattern
-        float streamline = sin(phase + latitude * 20.0) * 0.5 + 0.5;
-        streamline = pow(streamline, 3.0); // Sharpen lines
+        // === CREATE STREAK PATTERN ===
+        // Noise-based line pattern that follows the flow
+        float streakScale = 80.0;
+        vec2 streakUV = advectedUV * streakScale + time * flowField * 2.0;
 
-        // Add jet stream bands
-        float jetStream = exp(-pow((abs(latitude) - 0.5) * 6.0, 2.0)) * 0.9;
+        // Create thin curved lines
+        float lineNoise = snoise(vec3(streakUV.x * 0.3, streakUV.y * 2.0, 0.0));
+        float lines = sin(streakUV.y + lineNoise * 3.0 + flowField.x * 5.0);
+        lines = smoothstep(0.92, 0.98, abs(lines)); // Thin lines
 
-        // Combine
-        pattern = max(streamline * windSpeed, jetStream);
-        pattern = clamp(pattern, 0.0, 1.0);
+        // Animated dashes along the lines
+        float dashNoise = snoise(vec3(streakUV * 0.5, time * 0.3));
+        float dashes = sin(streakUV.x * 2.0 + time * 3.0 + dashNoise * 2.0);
+        dashes = smoothstep(0.3, 0.6, dashes);
 
-        // Color by wind speed: light blue -> white -> yellow (jet stream)
-        if (pattern < 0.3) {
-          color = mix(vec3(0.2, 0.4, 0.6), vec3(0.4, 0.7, 0.9), pattern / 0.3);
-        } else if (pattern < 0.6) {
-          color = mix(vec3(0.4, 0.7, 0.9), vec3(0.9, 0.9, 1.0), (pattern - 0.3) / 0.3);
+        pattern = lines * dashes * (0.5 + windSpeed * 0.8);
+
+        // === COLOR by wind speed ===
+        vec3 slowColor = vec3(0.3, 0.5, 0.75);
+        vec3 medColor = vec3(0.5, 0.75, 0.6);
+        vec3 fastColor = vec3(0.9, 0.8, 0.35);
+        vec3 jetColor = vec3(0.95, 0.4, 0.6);
+
+        if (windSpeed < 0.3) {
+          color = mix(slowColor, medColor, windSpeed / 0.3);
+        } else if (windSpeed < 0.6) {
+          color = mix(medColor, fastColor, (windSpeed - 0.3) / 0.3);
         } else {
-          color = mix(vec3(0.9, 0.9, 1.0), vec3(1.0, 0.9, 0.3), (pattern - 0.6) / 0.4);
+          color = mix(fastColor, jetColor, clamp((windSpeed - 0.6) / 0.4, 0.0, 1.0));
         }
 
-        // Make lines more visible
-        pattern = smoothstep(0.1, 0.3, pattern);
+        pattern = clamp(pattern, 0.0, 1.0);
       }
       else if (uLayerType == 3) {
-        // PRESSURE SYSTEMS - high/low pressure areas
-        vec3 noisePos = pos * 3.0 + vec3(uTime * 0.003, 0.0, 0.0);
-        float pressure = fbm(noisePos);
-
-        // Create distinct high and low pressure centers
-        float highP = smoothstep(0.2, 0.5, pressure);
-        float lowP = smoothstep(-0.5, -0.2, pressure);
-
-        // Pressure tends to be high in subtropics, low in subpolar
+        // PRESSURE MAP - organic blobs, yellow base with blue lows and red highs
         float latitude = asin(pos.y) / 1.5708;
-        float subtropicalHigh = exp(-pow((abs(latitude) - 0.35) * 4.0, 2.0));
-        float subpolarLow = exp(-pow((abs(latitude) - 0.65) * 4.0, 2.0));
+        float absLat = abs(latitude);
 
-        highP = highP * 0.5 + subtropicalHigh * 0.5;
-        lowP = lowP * 0.5 + subpolarLow * 0.5;
+        // === DOMAIN WARPING for organic shapes ===
+        vec3 warpPos = pos * 1.5;
+        float warpX = snoise(warpPos + vec3(17.0, 0.0, 0.0)) * 0.2;
+        float warpY = snoise(warpPos + vec3(0.0, 31.0, 0.0)) * 0.2;
+        float warpZ = snoise(warpPos + vec3(0.0, 0.0, 43.0)) * 0.2;
+        vec3 warpedPos = pos + vec3(warpX, warpY, warpZ);
 
-        // Color: blue for low pressure, red/orange for high
-        if (lowP > highP) {
-          pattern = lowP;
-          color = mix(vec3(0.1, 0.2, 0.4), vec3(0.2, 0.5, 0.9), pattern);
+        // === BASE PRESSURE FIELD ===
+        // Multi-octave noise for pressure variation
+        float p1 = snoise(warpedPos * 2.0) * 0.5;
+        float p2 = snoise(warpedPos * 4.0) * 0.3;
+        float p3 = snoise(warpedPos * 8.0) * 0.15;
+        float pressureField = p1 + p2 + p3;
+
+        // === LOW PRESSURE CENTERS (blue blobs) ===
+        // Create distinct low pressure centers
+        float lowNoise = snoise(warpedPos * 2.5 + vec3(100.0, 0.0, 0.0));
+        float lowCenters = smoothstep(0.4, 0.7, lowNoise);
+
+        // Lows more common in mid-latitudes and subpolar
+        float lowZone = smoothstep(0.2, 0.5, absLat) * (1.0 - smoothstep(0.75, 0.9, absLat));
+        lowCenters *= (0.5 + lowZone * 0.8);
+
+        // === HIGH PRESSURE (orange/red) ===
+        // High pressure in subtropics and polar regions
+        float highNoise = snoise(warpedPos * 2.0 + vec3(0.0, 100.0, 0.0));
+        float highCenters = smoothstep(0.35, 0.65, highNoise);
+
+        // Highs strong in polar and subtropical zones
+        float polarHigh = smoothstep(0.6, 0.85, absLat);
+        float subtropicalHigh = exp(-pow((absLat - 0.3) * 4.0, 2.0));
+        highCenters *= (polarHigh * 0.9 + subtropicalHigh * 0.6 + 0.2);
+
+        // === COMBINE INTO PRESSURE VALUE ===
+        // 0.0 = low pressure (blue), 0.5 = normal (yellow), 1.0 = high pressure (red)
+        float pressure = 0.5 + pressureField * 0.2;
+        pressure -= lowCenters * 0.4;
+        pressure += highCenters * 0.35;
+        pressure = clamp(pressure, 0.0, 1.0);
+
+        pattern = 1.0; // Full opacity for pressure map
+
+        // === COLOR: Blue (low) -> Green -> Yellow (normal) -> Orange -> Red (high) ===
+        if (pressure < 0.25) {
+          // Low pressure: deep blue
+          color = mix(vec3(0.1, 0.2, 0.6), vec3(0.2, 0.4, 0.8), pressure / 0.25);
+        } else if (pressure < 0.4) {
+          // Low-normal: blue to cyan/green
+          color = mix(vec3(0.2, 0.4, 0.8), vec3(0.3, 0.7, 0.5), (pressure - 0.25) / 0.15);
+        } else if (pressure < 0.6) {
+          // Normal: green to yellow
+          color = mix(vec3(0.3, 0.7, 0.5), vec3(0.85, 0.85, 0.3), (pressure - 0.4) / 0.2);
+        } else if (pressure < 0.75) {
+          // High-normal: yellow to orange
+          color = mix(vec3(0.85, 0.85, 0.3), vec3(0.9, 0.55, 0.2), (pressure - 0.6) / 0.15);
         } else {
-          pattern = highP;
-          color = mix(vec3(0.4, 0.2, 0.1), vec3(0.9, 0.5, 0.2), pattern);
+          // High pressure: orange to red
+          color = mix(vec3(0.9, 0.55, 0.2), vec3(0.8, 0.25, 0.15), (pressure - 0.75) / 0.25);
         }
-        pattern = max(highP, lowP);
       }
 
       // Subtle day/night shading
@@ -2410,7 +2683,7 @@ function updateSelectionRing() {
     ship: 0x00ffff,     // Teal
     aircraft: 0xffa500, // Amber
     satellite: 0xaa88ff, // Violet
-    airport: 0x22d3ee   // Cyan for airports
+    airport: 0xffffff   // White for airports
   };
   selectionRingMaterial.uniforms.uColor.value.setHex(colors[type] || 0xffffff);
 
@@ -3778,9 +4051,11 @@ const weatherFolder = gui.addFolder("Weather");
 weatherFolder.close();
 weatherFolder.add(weatherParams, "enabled").name("Show Weather").onChange(() => {
   weatherMesh.visible = weatherParams.enabled;
+  updateWeatherLegend(weatherParams.layer, weatherParams.enabled);
 });
 weatherFolder.add(weatherParams, "layer", ["precipitation", "temperature", "wind", "pressure"]).name("Layer").onChange((value) => {
   setWeatherLayer(value);
+  updateWeatherLegend(value, weatherParams.enabled);
 });
 weatherFolder.add(weatherParams, "opacity", 0.1, 1.0, 0.05).name("Opacity").onChange(() => {
   weatherMaterial.uniforms.uOpacity.value = weatherParams.opacity;
@@ -4229,55 +4504,61 @@ function onCanvasClick(event) {
   let closestUnit = null;
   let closestDist = clickRadius;
 
-  // Check ships
-  for (let i = 0; i < shipSimState.length; i++) {
-    const unit = shipSimState[i];
-    const worldPos = latLonTo3D(unit.lat, unit.lon, SHIP_ALTITUDE);
+  // Check ships (if visible)
+  if (unitCountParams.showShips) {
+    for (let i = 0; i < shipSimState.length; i++) {
+      const unit = shipSimState[i];
+      const worldPos = latLonTo3D(unit.lat, unit.lon, SHIP_ALTITUDE);
 
-    // Transform by earth's rotation
-    worldPos.applyMatrix4(earth.matrixWorld);
+      // Transform by earth's rotation
+      worldPos.applyMatrix4(earth.matrixWorld);
 
-    const screen = projectToScreen(worldPos);
+      const screen = projectToScreen(worldPos);
 
-    // Skip if behind camera
-    if (screen.z > 1) continue;
+      // Skip if behind camera
+      if (screen.z > 1) continue;
 
-    const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
-    if (dist < closestDist) {
-      closestDist = dist;
-      closestUnit = { type: "ship", index: i };
+      const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestUnit = { type: "ship", index: i };
+      }
     }
   }
 
-  // Check aircraft
-  for (let i = 0; i < aircraftSimState.length; i++) {
-    const unit = aircraftSimState[i];
-    const worldPos = latLonTo3D(unit.lat, unit.lon, AIRCRAFT_ALTITUDE);
-    worldPos.applyMatrix4(earth.matrixWorld);
+  // Check aircraft (if visible)
+  if (unitCountParams.showAircraft) {
+    for (let i = 0; i < aircraftSimState.length; i++) {
+      const unit = aircraftSimState[i];
+      const worldPos = latLonTo3D(unit.lat, unit.lon, AIRCRAFT_ALTITUDE);
+      worldPos.applyMatrix4(earth.matrixWorld);
 
-    const screen = projectToScreen(worldPos);
-    if (screen.z > 1) continue;
+      const screen = projectToScreen(worldPos);
+      if (screen.z > 1) continue;
 
-    const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
-    if (dist < closestDist) {
-      closestDist = dist;
-      closestUnit = { type: "aircraft", index: i };
+      const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestUnit = { type: "aircraft", index: i };
+      }
     }
   }
 
-  // Check satellites
-  for (let i = 0; i < satelliteSimState.length; i++) {
-    const unit = satelliteSimState[i];
-    const worldPos = latLonTo3D(unit.lat, unit.lon, unit.altitude);
-    worldPos.applyMatrix4(earth.matrixWorld);
+  // Check satellites (if visible)
+  if (unitCountParams.showSatellites) {
+    for (let i = 0; i < satelliteSimState.length; i++) {
+      const unit = satelliteSimState[i];
+      const worldPos = latLonTo3D(unit.lat, unit.lon, unit.altitude);
+      worldPos.applyMatrix4(earth.matrixWorld);
 
-    const screen = projectToScreen(worldPos);
-    if (screen.z > 1) continue;
+      const screen = projectToScreen(worldPos);
+      if (screen.z > 1) continue;
 
-    const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
-    if (dist < closestDist) {
-      closestDist = dist;
-      closestUnit = { type: "satellite", index: i };
+      const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestUnit = { type: "satellite", index: i };
+      }
     }
   }
 
