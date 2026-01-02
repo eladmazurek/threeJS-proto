@@ -1701,6 +1701,16 @@ const h3LineMaterial = new THREE.LineBasicMaterial({
   opacity: 0.25,
 });
 
+// H3 Cell Selection Highlight
+let h3HighlightMesh = null;
+let h3HighlightGeometry = null;
+const h3HighlightMaterial = new THREE.LineBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: 1.0,
+  depthTest: false, // Always render on top to avoid z-fighting
+});
+
 // Color gradient for density (blue -> cyan -> green -> yellow -> red)
 // Empty cells get a dim base color
 const EMPTY_CELL_COLOR = new THREE.Color(0x2a3a5e); // Dark blue-gray (visible)
@@ -1722,23 +1732,6 @@ function getDensityColor(density, maxDensity) {
     return new THREE.Color(0x22c55e).lerp(new THREE.Color(0xeab308), (t - 0.5) * 4);
   } else {
     return new THREE.Color(0xeab308).lerp(new THREE.Color(0xef4444), (t - 0.75) * 4);
-  }
-}
-
-/**
- * Get all H3 cells in visible area using gridDisk around center
- */
-function getVisibleH3Cells(resolution, centerLat, centerLon, radiusDegrees) {
-  try {
-    const centerCell = h3.latLngToCell(centerLat, centerLon, resolution);
-    // Estimate k (ring size) based on radius and resolution
-    // H3 cell edge length varies by resolution
-    const edgeLengthKm = [1107, 418, 158, 60, 22, 8, 3, 1.2, 0.46, 0.17][resolution] || 1;
-    const radiusKm = radiusDegrees * 111; // Rough conversion
-    const k = Math.min(Math.ceil(radiusKm / edgeLengthKm), 50); // Cap at 50 rings
-    return h3.gridDisk(centerCell, k);
-  } catch (e) {
-    return [];
   }
 }
 
@@ -1793,6 +1786,58 @@ function cellTo3DPoints(cellIndex) {
   }
 
   return points;
+}
+
+/**
+ * Update H3 cell selection highlight
+ * Creates a thick white border around the selected cell
+ */
+function updateH3CellHighlight(cellIndex) {
+  if (!cellIndex) {
+    // Hide highlight if no cell selected
+    if (h3HighlightMesh) {
+      h3HighlightMesh.visible = false;
+    }
+    return;
+  }
+
+  try {
+    const points = cellTo3DPoints(cellIndex);
+    if (!points || points.length < 3) return;
+
+    // Create multiple line layers at different altitudes for thickness effect
+    const linePositions = [];
+    const altitudeOffsets = [0.008, 0.010, 0.012]; // Multiple layers for visibility
+
+    for (const altitudeOffset of altitudeOffsets) {
+      for (let i = 0; i < points.length; i++) {
+        const p1 = points[i].clone().normalize().multiplyScalar(EARTH_RADIUS + altitudeOffset);
+        const p2 = points[(i + 1) % points.length].clone().normalize().multiplyScalar(EARTH_RADIUS + altitudeOffset);
+        linePositions.push(p1.x, p1.y, p1.z);
+        linePositions.push(p2.x, p2.y, p2.z);
+      }
+    }
+
+    // Update or create geometry
+    if (!h3HighlightGeometry) {
+      h3HighlightGeometry = new THREE.BufferGeometry();
+    }
+    h3HighlightGeometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(linePositions, 3)
+    );
+
+    // Create or update mesh
+    if (!h3HighlightMesh) {
+      h3HighlightMesh = new THREE.LineSegments(h3HighlightGeometry, h3HighlightMaterial);
+      h3HighlightMesh.renderOrder = 10; // Render on top
+      earth.add(h3HighlightMesh);
+    }
+
+    h3HighlightMesh.visible = true;
+  } catch (e) {
+    console.warn('Error updating H3 highlight:', e);
+  }
 }
 
 /**
@@ -1931,6 +1976,148 @@ function buildH3Geometry(allCells, densityMap, maxDensity) {
   return { vertexCount: posIdx / 3, lineVertexCount: lineIdx / 3 };
 }
 
+// Chunked geometry building state
+let h3BuildState = null;
+const H3_CELLS_PER_CHUNK = 200; // Process 200 cells per frame to maintain 60fps
+
+/**
+ * Start chunked H3 geometry building (non-blocking)
+ */
+function startChunkedH3Build(allCells, densityMap, maxDensity) {
+  h3BuildState = {
+    allCells,
+    densityMap,
+    maxDensity,
+    cellIndex: 0,
+    posIdx: 0,
+    colorIdx: 0,
+    lineIdx: 0,
+    cellCount: Math.min(allCells.length, H3_MAX_CELLS)
+  };
+}
+
+/**
+ * Process a chunk of H3 cells (called each frame)
+ * Returns true when complete
+ */
+function processH3BuildChunk() {
+  if (!h3BuildState) return true;
+
+  const { allCells, densityMap, maxDensity, cellCount } = h3BuildState;
+  let { cellIndex, posIdx, colorIdx, lineIdx } = h3BuildState;
+
+  const endIndex = Math.min(cellIndex + H3_CELLS_PER_CHUNK, cellCount);
+
+  for (let c = cellIndex; c < endIndex; c++) {
+    const cell = allCells[c];
+    const density = densityMap.get(cell) || 0;
+    const points = cellTo3DPoints(cell);
+    const color = getDensityColor(density, maxDensity);
+
+    // Calculate center for fan triangulation
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < points.length; i++) {
+      cx += points[i].x;
+      cy += points[i].y;
+      cz += points[i].z;
+    }
+    cx /= points.length;
+    cy /= points.length;
+    cz /= points.length;
+
+    // Normalize center to sphere surface
+    const centerLen = Math.sqrt(cx * cx + cy * cy + cz * cz);
+    if (centerLen > 0) {
+      const targetRadius = points[0] ? Math.sqrt(points[0].x ** 2 + points[0].y ** 2 + points[0].z ** 2) : 1;
+      cx = (cx / centerLen) * targetRadius;
+      cy = (cy / centerLen) * targetRadius;
+      cz = (cz / centerLen) * targetRadius;
+    }
+
+    // Create triangle fan from center to each edge
+    for (let i = 0; i < points.length; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % points.length];
+
+      h3PositionBuffer[posIdx++] = cx;
+      h3PositionBuffer[posIdx++] = cy;
+      h3PositionBuffer[posIdx++] = cz;
+      h3PositionBuffer[posIdx++] = p1.x;
+      h3PositionBuffer[posIdx++] = p1.y;
+      h3PositionBuffer[posIdx++] = p1.z;
+      h3PositionBuffer[posIdx++] = p2.x;
+      h3PositionBuffer[posIdx++] = p2.y;
+      h3PositionBuffer[posIdx++] = p2.z;
+
+      h3ColorBuffer[colorIdx++] = color.r;
+      h3ColorBuffer[colorIdx++] = color.g;
+      h3ColorBuffer[colorIdx++] = color.b;
+      h3ColorBuffer[colorIdx++] = color.r;
+      h3ColorBuffer[colorIdx++] = color.g;
+      h3ColorBuffer[colorIdx++] = color.b;
+      h3ColorBuffer[colorIdx++] = color.r;
+      h3ColorBuffer[colorIdx++] = color.g;
+      h3ColorBuffer[colorIdx++] = color.b;
+
+      h3LineBuffer[lineIdx++] = p1.x;
+      h3LineBuffer[lineIdx++] = p1.y;
+      h3LineBuffer[lineIdx++] = p1.z;
+      h3LineBuffer[lineIdx++] = p2.x;
+      h3LineBuffer[lineIdx++] = p2.y;
+      h3LineBuffer[lineIdx++] = p2.z;
+    }
+  }
+
+  // Save progress
+  h3BuildState.cellIndex = endIndex;
+  h3BuildState.posIdx = posIdx;
+  h3BuildState.colorIdx = colorIdx;
+  h3BuildState.lineIdx = lineIdx;
+
+  // Check if complete
+  if (endIndex >= cellCount) {
+    // Finalize geometry - only update GPU buffers once when complete
+    if (!h3Geometry) {
+      h3Geometry = new THREE.BufferGeometry();
+      h3Geometry.setAttribute('position', new THREE.BufferAttribute(h3PositionBuffer, 3));
+      h3Geometry.setAttribute('color', new THREE.BufferAttribute(h3ColorBuffer, 3));
+    }
+    h3Geometry.setDrawRange(0, posIdx / 3);
+    h3Geometry.attributes.position.needsUpdate = true;
+    h3Geometry.attributes.color.needsUpdate = true;
+
+    if (!h3LineGeometry) {
+      h3LineGeometry = new THREE.BufferGeometry();
+      h3LineGeometry.setAttribute('position', new THREE.BufferAttribute(h3LineBuffer, 3));
+    }
+    h3LineGeometry.setDrawRange(0, lineIdx / 3);
+    h3LineGeometry.attributes.position.needsUpdate = true;
+
+    if (!h3Mesh) {
+      h3Mesh = new THREE.Mesh(h3Geometry, h3Material);
+      h3Mesh.renderOrder = 4;
+      earth.add(h3Mesh);
+    }
+    h3Mesh.visible = true;
+
+    if (!h3LineMesh) {
+      h3LineMesh = new THREE.LineSegments(h3LineGeometry, h3LineMaterial);
+      h3LineMesh.renderOrder = 5;
+      earth.add(h3LineMesh);
+    }
+    h3LineMesh.visible = true;
+
+    h3Material.opacity = h3Params.opacity * 0.85;
+    h3LineMaterial.opacity = h3Params.opacity * 0.4;
+
+    h3BuildState = null;
+    return true;
+  }
+
+  // Don't update geometry during build - wait until complete to avoid flicker
+  return false;
+}
+
 // State for pending H3 worker update
 let pendingH3Cells = null;
 let pendingH3CameraDistance = 0;
@@ -1985,17 +2172,17 @@ function requestH3Update() {
 }
 
 /**
- * Apply density results from worker and update geometry
+ * Apply density results from worker and start chunked geometry build
  */
 function applyH3DensityResult(data) {
-  const { densityEntries, cellCountEntries } = data;
+  const { densityEntries, cellCountEntries, allCells } = data;
 
   // Rebuild Maps from arrays
   const densityMap = new Map(densityEntries);
   currentH3CellCounts = new Map(cellCountEntries);
 
-  // Use cached cells from when update was requested
-  const allCells = pendingH3Cells;
+  // Use cells from worker
+  pendingH3Cells = allCells;
   if (!allCells || allCells.length === 0) {
     if (h3Mesh) h3Mesh.visible = false;
     if (h3LineMesh) h3LineMesh.visible = false;
@@ -2004,46 +2191,8 @@ function applyH3DensityResult(data) {
 
   const maxDensity = densityMap.size > 0 ? Math.max(...Array.from(densityMap.values()), 1) : 1;
 
-  // Build geometry into pre-allocated buffers
-  const { vertexCount, lineVertexCount } = buildH3Geometry(allCells, densityMap, maxDensity);
-
-  // Create fill geometry once, then just update buffers
-  if (!h3Geometry) {
-    h3Geometry = new THREE.BufferGeometry();
-    h3Geometry.setAttribute('position', new THREE.BufferAttribute(h3PositionBuffer, 3));
-    h3Geometry.setAttribute('color', new THREE.BufferAttribute(h3ColorBuffer, 3));
-  }
-  h3Geometry.setDrawRange(0, vertexCount);
-  h3Geometry.attributes.position.needsUpdate = true;
-  h3Geometry.attributes.color.needsUpdate = true;
-
-  // Create line geometry once, then just update buffers
-  if (!h3LineGeometry) {
-    h3LineGeometry = new THREE.BufferGeometry();
-    h3LineGeometry.setAttribute('position', new THREE.BufferAttribute(h3LineBuffer, 3));
-  }
-  h3LineGeometry.setDrawRange(0, lineVertexCount);
-  h3LineGeometry.attributes.position.needsUpdate = true;
-
-  // Create fill mesh once
-  if (!h3Mesh) {
-    h3Mesh = new THREE.Mesh(h3Geometry, h3Material);
-    h3Mesh.renderOrder = 4;
-    earth.add(h3Mesh);
-  }
-  h3Mesh.visible = true;
-
-  // Create line mesh once
-  if (!h3LineMesh) {
-    h3LineMesh = new THREE.LineSegments(h3LineGeometry, h3LineMaterial);
-    h3LineMesh.renderOrder = 5;
-    earth.add(h3LineMesh);
-  }
-  h3LineMesh.visible = true;
-
-  // Update material opacity
-  h3Material.opacity = h3Params.opacity * 0.85;
-  h3LineMaterial.opacity = h3Params.opacity * 0.4;
+  // Start chunked geometry building (processed in tick loop)
+  startChunkedH3Build(allCells, densityMap, maxDensity);
 }
 
 /**
@@ -2053,6 +2202,7 @@ function updateH3Grid(cameraDistance, elapsedTime) {
   if (!h3Params.enabled) {
     if (h3Mesh) h3Mesh.visible = false;
     if (h3LineMesh) h3LineMesh.visible = false;
+    if (h3HighlightMesh) h3HighlightMesh.visible = false;
     return;
   }
 
@@ -2093,20 +2243,7 @@ function updateH3Grid(cameraDistance, elapsedTime) {
   currentH3Resolution = resolution; // Track for popup clicks
   pendingH3CameraDistance = cameraDistance;
 
-  // Calculate visible radius based on zoom
-  const visibleRadius = Math.min(90, cameraDistance * 12);
-
-  // Get ALL H3 cells in visible area (main thread - fast enough)
-  const allCells = getVisibleH3Cells(resolution, center.lat, center.lon, visibleRadius);
-  pendingH3Cells = allCells;
-
-  if (allCells.length === 0) {
-    if (h3Mesh) h3Mesh.visible = false;
-    if (h3LineMesh) h3LineMesh.visible = false;
-    return;
-  }
-
-  // Request density calculation from worker (non-blocking)
+  // Request H3 update from worker (all expensive work happens in worker)
   requestH3Update();
 }
 
@@ -2183,7 +2320,7 @@ function updateH3PopupCounts(cellIndex) {
 }
 
 /**
- * Show H3 cell popup at screen position
+ * Show H3 cell popup at bottom right (next to unit info card)
  */
 function showH3Popup(cellIndex, lat, lon, clientX, clientY) {
   currentH3SelectedCell = cellIndex; // Track for live updates
@@ -2197,20 +2334,10 @@ function showH3Popup(cellIndex, lat, lon, clientX, clientY) {
   document.getElementById('h3-cell-center').textContent =
     `${cellCenter[0].toFixed(2)}°, ${cellCenter[1].toFixed(2)}°`;
 
-  // Position popup near click (with offset and bounds checking)
-  const popupWidth = 220;
-  const popupHeight = 280;
-  let x = clientX + 15;
-  let y = clientY + 15;
+  // Update the highlight on the globe
+  updateH3CellHighlight(cellIndex);
 
-  // Keep popup on screen
-  if (x + popupWidth > window.innerWidth) x = clientX - popupWidth - 15;
-  if (y + popupHeight > window.innerHeight) y = clientY - popupHeight - 15;
-  if (x < 0) x = 10;
-  if (y < 0) y = 10;
-
-  h3Popup.style.left = x + 'px';
-  h3Popup.style.top = y + 'px';
+  // Fixed position at bottom right (CSS handles positioning)
   h3Popup.classList.remove('hidden');
 }
 
@@ -2220,6 +2347,7 @@ function showH3Popup(cellIndex, lat, lon, clientX, clientY) {
 function hideH3Popup() {
   h3Popup.classList.add('hidden');
   currentH3SelectedCell = null;
+  updateH3CellHighlight(null); // Hide the highlight
 }
 
 /**
@@ -4030,9 +4158,10 @@ h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
     satelliteMesh.visible = unitCountParams.showSatellites;
     shipTrailMesh.visible = unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
     aircraftTrailMesh.visible = unitCountParams.showAircraft && trailParams.enabled && trailParams.aircraftTrails;
-    // Hide H3 meshes and popup
+    // Hide H3 meshes, highlight, and popup
     if (h3Mesh) h3Mesh.visible = false;
     if (h3LineMesh) h3LineMesh.visible = false;
+    if (h3HighlightMesh) h3HighlightMesh.visible = false;
     hideH3Popup();
   }
 });
@@ -4495,6 +4624,9 @@ function onCanvasClick(event) {
   // Ignore if clicking on GUI or overlay elements
   if (event.target.closest(".lil-gui") || event.target.closest("#unit-info")) return;
 
+  // Skip unit/airport selection when H3 grid is active (H3 has its own click handler)
+  if (h3Params.enabled) return;
+
   const rect = canvas.getBoundingClientRect();
   const clickX = event.clientX - rect.left;
   const clickY = event.clientY - rect.top;
@@ -4671,8 +4803,17 @@ const tick = () => {
   // Update H3 grid if enabled
   updateH3Grid(cameraDistance, elapsedTime);
 
+  // Process chunked H3 geometry building (non-blocking)
+  processH3BuildChunk();
+
   // Update H3 popup if visible (lightweight check for unit movement)
   updateH3PopupPeriodic(elapsedTime);
+
+  // Animate H3 cell highlight (pulsating effect)
+  if (h3HighlightMesh && h3HighlightMesh.visible) {
+    const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 4); // Pulsate 4 times per second
+    h3HighlightMaterial.opacity = 0.6 + 0.4 * pulse; // Range: 0.6 to 1.0
+  }
 
   // Update selected unit info panel and selection highlight
   updateSelectedUnitInfo();

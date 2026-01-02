@@ -17,6 +17,22 @@ function isLonInRange(lon, minLon, maxLon) {
 }
 
 /**
+ * Get all H3 cells in visible area using gridDisk around center
+ */
+function getVisibleH3Cells(resolution, centerLat, centerLon, radiusDegrees) {
+  try {
+    const centerCell = h3.latLngToCell(centerLat, centerLon, resolution);
+    // H3 cell edge length varies by resolution
+    const edgeLengthKm = [1107, 418, 158, 60, 22, 8, 3, 1.2, 0.46, 0.17][resolution] || 1;
+    const radiusKm = radiusDegrees * 111; // Rough conversion
+    const k = Math.min(Math.ceil(radiusKm / edgeLengthKm), 50); // Cap at 50 rings
+    return h3.gridDisk(centerCell, k);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
  * Calculate H3 density from unit positions
  */
 function calculateDensity(data) {
@@ -31,6 +47,9 @@ function calculateDensity(data) {
     viewCenter,
     visibleRadius
   } = data;
+
+  // Get visible cells (expensive operation, now in worker)
+  const allCells = getVisibleH3Cells(resolution, viewCenter.lat, viewCenter.lon, visibleRadius);
 
   const densityMap = new Map();
   const cellCounts = new Map();
@@ -107,7 +126,7 @@ function calculateDensity(data) {
   const densityEntries = Array.from(densityMap.entries());
   const cellCountEntries = Array.from(cellCounts.entries());
 
-  return { densityEntries, cellCountEntries };
+  return { densityEntries, cellCountEntries, allCells };
 }
 
 // Handle messages from main thread

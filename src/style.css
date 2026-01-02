@@ -31,9 +31,11 @@ body {
     outline: none;
 }
 
-/* H3 Cell Popup - SpaceX Style */
+/* H3 Cell Popup - SpaceX Style - Fixed bottom right */
 .h3-popup {
     position: fixed;
+    bottom: 20px;
+    right: 240px; /* Offset to sit next to the unit info card */
     z-index: 1000;
     background: rgba(10, 12, 16, 0.95);
     border: 1px solid rgba(255, 255, 255, 0.1);
