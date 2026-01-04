@@ -226,6 +226,26 @@ gui.title("Controls");
         </div>
       </div>
     </div>
+
+    <!-- Drone video feed panel -->
+    <div id="drone-feed" class="hidden">
+      <div class="drone-feed-header">
+        <span class="drone-feed-title">LIVE FEED</span>
+        <span class="drone-feed-status">● REC</span>
+      </div>
+      <div class="drone-feed-video">
+        <video id="drone-video" autoplay loop muted playsinline>
+          <source src="./earth/UAV_recon_low.mp4" type="video/mp4">
+        </video>
+        <div class="drone-feed-overlay">
+          <div class="drone-feed-coords" id="drone-feed-coords">TGT: 00.0000° 00.0000°</div>
+        </div>
+      </div>
+      <div class="drone-feed-footer">
+        <span class="drone-feed-mode">IR/EO</span>
+        <span class="drone-feed-zoom">4.0x</span>
+      </div>
+    </div>
   `;
 
   // Inject styles for overlays
@@ -421,6 +441,7 @@ gui.title("Controls");
     .unit-info-type.ship { color: #2dd4bf; }
     .unit-info-type.aircraft { color: #fbbf24; }
     .unit-info-type.satellite { color: #a78bfa; }
+    .unit-info-type.drone { color: #84cc16; }
     .unit-info-type.airport { color: #ffffff; }
 
     .unit-info-id {
@@ -469,6 +490,100 @@ gui.title("Controls");
       font-size: 11px;
       font-weight: 400;
       font-variant-numeric: tabular-nums;
+    }
+
+    /* Drone Video Feed Panel */
+    #drone-feed {
+      position: absolute;
+      bottom: 20px;
+      right: 220px;
+      background: rgba(0, 0, 0, 0.9);
+      border: 1px solid rgba(132, 204, 22, 0.5);
+      border-radius: 4px;
+      width: 280px;
+      pointer-events: auto;
+      box-shadow: 0 0 20px rgba(132, 204, 22, 0.2);
+    }
+
+    #drone-feed.hidden {
+      display: none;
+    }
+
+    .drone-feed-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(132, 204, 22, 0.3);
+      background: rgba(132, 204, 22, 0.1);
+    }
+
+    .drone-feed-title {
+      color: #84cc16;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+    }
+
+    .drone-feed-status {
+      color: #ef4444;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0.3; }
+    }
+
+    .drone-feed-video {
+      position: relative;
+      width: 100%;
+      height: 160px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .drone-feed-video video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: saturate(0.7) contrast(1.1);
+    }
+
+    .drone-feed-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+    }
+
+    .drone-feed-coords {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      color: #84cc16;
+      font-size: 9px;
+      letter-spacing: 0.5px;
+      text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+    }
+
+    .drone-feed-footer {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-top: 1px solid rgba(132, 204, 22, 0.3);
+    }
+
+    .drone-feed-mode,
+    .drone-feed-zoom {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 9px;
+      letter-spacing: 1px;
     }
 
     /* Weather Legend */
@@ -651,6 +766,7 @@ function updateTelemetry(cameraDistance, cameraPosition) {
   if (unitCountParams.showShips) totalUnits += shipSimState.length;
   if (unitCountParams.showAircraft) totalUnits += aircraftSimState.length;
   if (unitCountParams.showSatellites) totalUnits += satelliteSimState.length;
+  if (unitCountParams.showDrones) totalUnits += droneSimState.length;
   telUnits.textContent = totalUnits.toLocaleString();
 
   // UTC time
@@ -2430,6 +2546,13 @@ const SATELLITE_ALTITUDE_MEO = { min: 0.15, max: 0.25 };  // Medium Earth Orbit
 const SATELLITE_ALTITUDE_GEO = { min: 0.35, max: 0.40 };  // Geostationary
 const MAX_SATELLITES = 5000;
 
+// Drone/UAV constants
+const MAX_DRONES = 100;
+// Altitude range: 25,000-60,000 ft (7.6-18.3 km) converted to scene units
+const DRONE_ALTITUDE_MIN = 0.0024; // ~25,000 ft
+const DRONE_ALTITUDE_MAX = 0.0058; // ~60,000 ft
+const DRONE_PATROL_RADIUS = 0.08; // Radius of circular patrol pattern (in Earth radii)
+
 // Note: Matrix pooling removed - GPU now handles orientation calculations
 
 /**
@@ -2705,6 +2828,220 @@ satelliteMesh.renderOrder = 3; // Render above aircraft (highest altitude)
 earth.add(satelliteMesh);
 
 // -----------------------------------------------------------------------------
+// Drone/UAV Symbol Geometry (MQ-9 Reaper style - long fuselage with V-tail)
+// -----------------------------------------------------------------------------
+const droneShape = new THREE.Shape();
+// Long slender fuselage
+droneShape.moveTo(0, 0.03); // Nose
+droneShape.lineTo(0.003, 0.02);
+droneShape.lineTo(0.003, 0.005);
+// Long straight wings
+droneShape.lineTo(0.025, 0.003);
+droneShape.lineTo(0.025, 0.0);
+droneShape.lineTo(0.003, -0.002);
+// Fuselage continues
+droneShape.lineTo(0.003, -0.02);
+// V-tail
+droneShape.lineTo(0.008, -0.03);
+droneShape.lineTo(0.003, -0.025);
+droneShape.lineTo(0, -0.028);
+droneShape.lineTo(-0.003, -0.025);
+droneShape.lineTo(-0.008, -0.03);
+droneShape.lineTo(-0.003, -0.02);
+// Left side
+droneShape.lineTo(-0.003, -0.002);
+droneShape.lineTo(-0.025, 0.0);
+droneShape.lineTo(-0.025, 0.003);
+droneShape.lineTo(-0.003, 0.005);
+droneShape.lineTo(-0.003, 0.02);
+droneShape.closePath();
+
+const droneBaseGeometry = new THREE.ShapeGeometry(droneShape);
+droneBaseGeometry.rotateX(-Math.PI / 2);
+droneBaseGeometry.computeVertexNormals();
+
+const droneGeometry = createTrackingGeometry(droneBaseGeometry, MAX_DRONES);
+
+// Military gray-green color for drones
+// Uses satellite vertex shader for per-instance altitude support
+const droneMaterial = new THREE.ShaderMaterial({
+  vertexShader: satelliteVertexShader,
+  fragmentShader: glassFragmentShader,
+  uniforms: {
+    uEarthRadius: { value: EARTH_RADIUS },
+    uBaseAltitude: { value: 1.0 }, // Not used, altitude comes from attribute
+    uColor: { value: new THREE.Color(0x84cc16) }, // Lime green (military/tactical)
+    uOpacity: { value: 0.95 },
+    uSunDirection: { value: new THREE.Vector3(earthParameters.sunDirectionX, earthParameters.sunDirectionY, earthParameters.sunDirectionZ).normalize() },
+    uFresnelPower: { value: 2.0 },
+    uSpecularPower: { value: 32.0 },
+    uGlowColor: { value: new THREE.Color(0xbef264) }, // Lighter lime glow
+    uIOR: { value: 1.5 },
+    uThickness: { value: 1.0 },
+    uReflectivity: { value: 0.3 },
+  },
+  transparent: true,
+  side: THREE.DoubleSide,
+  depthTest: true,
+  depthWrite: false,
+  blending: THREE.NormalBlending,
+});
+
+const droneMesh = new THREE.Mesh(droneGeometry, droneMaterial);
+droneMesh.frustumCulled = false;
+droneMesh.renderOrder = 2; // Same level as aircraft
+earth.add(droneMesh);
+
+// -----------------------------------------------------------------------------
+// Drone Patrol Circle Visualization
+// -----------------------------------------------------------------------------
+const PATROL_CIRCLE_SEGMENTS = 64;
+
+const patrolCircleMaterial = new THREE.LineBasicMaterial({
+  color: 0x84cc16, // Lime green to match drone
+  transparent: true,
+  opacity: 0.7,
+  depthTest: true,
+  depthWrite: false,
+});
+
+const patrolCircleGeometry = new THREE.BufferGeometry();
+const patrolCirclePositions = new Float32Array(PATROL_CIRCLE_SEGMENTS * 3);
+patrolCircleGeometry.setAttribute('position', new THREE.BufferAttribute(patrolCirclePositions, 3));
+
+const patrolCircle = new THREE.LineLoop(patrolCircleGeometry, patrolCircleMaterial);
+patrolCircle.visible = false;
+patrolCircle.renderOrder = 5;
+earth.add(patrolCircle);
+
+// Observation line (from drone to ground target)
+const observationLineMaterial = new THREE.LineDashedMaterial({
+  color: 0xff4444, // Red for target lock
+  transparent: true,
+  opacity: 0.8,
+  dashSize: 0.01,
+  gapSize: 0.005,
+  depthTest: false, // Always visible, even through Earth
+  depthWrite: false,
+});
+
+const observationLineGeometry = new THREE.BufferGeometry();
+const observationLinePositions = new Float32Array(6); // 2 points
+observationLineGeometry.setAttribute('position', new THREE.BufferAttribute(observationLinePositions, 3));
+
+const observationLine = new THREE.Line(observationLineGeometry, observationLineMaterial);
+observationLine.visible = false;
+observationLine.renderOrder = 5;
+earth.add(observationLine);
+
+// Ground target marker (small pulsing diamond on ground)
+const targetMarkerGeometry = new THREE.RingGeometry(0.008, 0.012, 4);
+targetMarkerGeometry.rotateX(-Math.PI / 2);
+targetMarkerGeometry.rotateZ(Math.PI / 4); // Rotate to diamond orientation
+
+const targetMarkerMaterial = new THREE.MeshBasicMaterial({
+  color: 0xff4444,
+  transparent: true,
+  opacity: 0.9,
+  side: THREE.DoubleSide,
+  depthTest: false, // Always visible
+  depthWrite: false,
+});
+
+const targetMarker = new THREE.Mesh(targetMarkerGeometry, targetMarkerMaterial);
+targetMarker.visible = false;
+targetMarker.renderOrder = 6;
+earth.add(targetMarker);
+
+/**
+ * Update drone patrol circle visualization
+ */
+function updatePatrolCircle(drone) {
+  if (!drone) {
+    patrolCircle.visible = false;
+    observationLine.visible = false;
+    targetMarker.visible = false;
+    return;
+  }
+
+  const positions = patrolCircleGeometry.attributes.position.array;
+  const centerLat = drone.patrolCenterLat;
+  const centerLon = drone.patrolCenterLon;
+  const radius = drone.patrolRadius;
+
+  // Generate circle points around patrol center
+  for (let i = 0; i < PATROL_CIRCLE_SEGMENTS; i++) {
+    const angle = (i / PATROL_CIRCLE_SEGMENTS) * Math.PI * 2;
+
+    // Offset in lat/lon (approximate for small circles)
+    const latOffset = Math.sin(angle) * radius * (180 / Math.PI) / EARTH_RADIUS;
+    const lonOffset = Math.cos(angle) * radius * (180 / Math.PI) / EARTH_RADIUS / Math.cos(centerLat * Math.PI / 180);
+
+    const lat = centerLat + latOffset;
+    const lon = centerLon + lonOffset;
+
+    // Convert to 3D
+    const phi = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+    const r = EARTH_RADIUS + drone.altitude;
+
+    positions[i * 3] = -r * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = r * Math.cos(phi);
+    positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+  }
+
+  patrolCircleGeometry.attributes.position.needsUpdate = true;
+  patrolCircle.visible = true;
+
+  // Update observation line (from drone to target)
+  updateObservationLine(drone);
+}
+
+/**
+ * Update observation line from drone to ground target
+ */
+function updateObservationLine(drone) {
+  if (!drone) return;
+
+  const positions = observationLineGeometry.attributes.position.array;
+
+  // Drone position
+  const dronePhi = (90 - drone.lat) * (Math.PI / 180);
+  const droneTheta = (drone.lon + 180) * (Math.PI / 180);
+  const droneR = EARTH_RADIUS + drone.altitude;
+
+  positions[0] = -droneR * Math.sin(dronePhi) * Math.cos(droneTheta);
+  positions[1] = droneR * Math.cos(dronePhi);
+  positions[2] = droneR * Math.sin(dronePhi) * Math.sin(droneTheta);
+
+  // Target position (on ground at patrol center)
+  const targetLat = drone.targetLat;
+  const targetLon = drone.targetLon;
+  const targetPhi = (90 - targetLat) * (Math.PI / 180);
+  const targetTheta = (targetLon + 180) * (Math.PI / 180);
+  const targetR = EARTH_RADIUS + 0.001; // Just above surface
+
+  positions[3] = -targetR * Math.sin(targetPhi) * Math.cos(targetTheta);
+  positions[4] = targetR * Math.cos(targetPhi);
+  positions[5] = targetR * Math.sin(targetPhi) * Math.sin(targetTheta);
+
+  observationLineGeometry.attributes.position.needsUpdate = true;
+  observationLine.computeLineDistances(); // Required for dashed lines
+  observationLine.visible = true;
+
+  // Update target marker position
+  targetMarker.position.set(positions[3], positions[4], positions[5]);
+
+  // Orient marker to face outward from Earth
+  const surfaceNormal = targetMarker.position.clone().normalize();
+  const up = new THREE.Vector3(0, 1, 0);
+  const quat = new THREE.Quaternion().setFromUnitVectors(up, surfaceNormal);
+  targetMarker.quaternion.copy(quat);
+
+  targetMarker.visible = true;
+}
+
+// -----------------------------------------------------------------------------
 // Selection Highlight Ring - Shows which unit is selected
 // -----------------------------------------------------------------------------
 
@@ -2843,6 +3180,12 @@ function updateSelectionRing() {
     lat = unitData.lat;
     lon = unitData.lon;
     altitude = unitData.altitude;
+  } else if (type === "drone") {
+    const unitData = droneSimState[index];
+    if (!unitData) { selectionRing.visible = false; return; }
+    lat = unitData.lat;
+    lon = unitData.lon;
+    altitude = unitData.altitude;
   } else if (type === "airport") {
     const airport = AIRPORTS[index];
     if (!airport) { selectionRing.visible = false; return; }
@@ -2878,6 +3221,7 @@ function updateSelectionRing() {
     ship: 0x00ffff,     // Teal
     aircraft: 0xffa500, // Amber
     satellite: 0xaa88ff, // Violet
+    drone: 0x84cc16,    // Lime green
     airport: 0xffffff   // White for airports
   };
   selectionRingMaterial.uniforms.uColor.value.setHex(colors[type] || 0xffffff);
@@ -3332,6 +3676,85 @@ function updateSatelliteAttributes() {
   satelliteGeometry.instanceCount = count;
 }
 
+/**
+ * Update drone instances by writing directly to GPU attribute buffers
+ */
+function updateDroneAttributes() {
+  const data = droneGeometry.userData;
+  const count = Math.min(droneSimState.length, MAX_DRONES);
+
+  for (let i = 0; i < count; i++) {
+    const drone = droneSimState[i];
+    data.latArray[i] = drone.lat;
+    data.lonArray[i] = drone.lon;
+    data.headingArray[i] = drone.heading;
+    // Encode scale and altitude like satellites do:
+    // Integer part: display scale * 10 (includes camera scaling)
+    // Fractional part: altitude / 0.5 (normalized to 0-1 range)
+    const scaledDisplay = drone.scale * currentIconScale;
+    const normalizedAlt = drone.altitude / 0.5;
+    data.scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
+  }
+
+  data.latAttr.needsUpdate = true;
+  data.lonAttr.needsUpdate = true;
+  data.headingAttr.needsUpdate = true;
+  data.scaleAttr.needsUpdate = true;
+
+  droneGeometry.instanceCount = count;
+}
+
+/**
+ * Initialize drone state with patrol pattern
+ */
+function initDroneState(patrolCenterLat, patrolCenterLon, patrolRadius, targetLat, targetLon) {
+  // Random altitude in realistic UAV range (25,000-60,000 ft)
+  const altitude = DRONE_ALTITUDE_MIN + Math.random() * (DRONE_ALTITUDE_MAX - DRONE_ALTITUDE_MIN);
+
+  return {
+    // Patrol pattern
+    patrolCenterLat,
+    patrolCenterLon,
+    patrolRadius,
+    phase: Math.random() * 360, // Starting position in orbit
+    altitude, // Per-drone altitude
+
+    // Ground target (what the drone is observing)
+    targetLat,
+    targetLon,
+
+    // Current position (computed from patrol)
+    lat: patrolCenterLat,
+    lon: patrolCenterLon,
+    heading: 0,
+    scale: 0.8 + Math.random() * 0.4, // Same as aircraft
+  };
+}
+
+/**
+ * Update drone position along circular patrol path
+ */
+function updateDroneMotion(drone, deltaTime, speedMultiplier) {
+  // Orbit rate: complete a circle in droneOrbitPeriod seconds
+  const phaseRate = (360 / motionParams.droneOrbitPeriod) * speedMultiplier;
+  drone.phase = (drone.phase + phaseRate * deltaTime) % 360;
+
+  const phaseRad = drone.phase * (Math.PI / 180);
+
+  // Compute position on patrol circle
+  const latOffset = Math.sin(phaseRad) * drone.patrolRadius * (180 / Math.PI) / EARTH_RADIUS;
+  const lonOffset = Math.cos(phaseRad) * drone.patrolRadius * (180 / Math.PI) / EARTH_RADIUS /
+    Math.cos(drone.patrolCenterLat * Math.PI / 180);
+
+  drone.lat = drone.patrolCenterLat + latOffset;
+  drone.lon = drone.patrolCenterLon + lonOffset;
+
+  // Heading is tangent to circle, pointing in direction of motion
+  // Velocity direction: d(lat)/dt ~ cos(phase), d(lon)/dt ~ -sin(phase)
+  // Heading: 0=North, 90=East, 180=South, 270=West
+  drone.heading = (360 - drone.phase) % 360;
+}
+
 // -----------------------------------------------------------------------------
 // Motion Simulation System
 // -----------------------------------------------------------------------------
@@ -3342,12 +3765,14 @@ const motionParams = {
   shipSpeed: 10.0,
   aircraftSpeed: 10.0,
   satelliteSpeed: 10.0,
+  droneSpeed: 5.0,
 
   // Base values (internal, not exposed to GUI)
   shipBaseSpeed: 0.002,      // degrees per second at multiplier 1
   shipBaseTurnRate: 15,      // degrees per second at multiplier 1
   aircraftBaseSpeed: 0.02,   // degrees per second at multiplier 1
   aircraftBaseTurnRate: 45,  // degrees per second at multiplier 1
+  droneOrbitPeriod: 120,     // seconds to complete one patrol orbit
 
   // How often units change course (seconds)
   courseChangeInterval: 10,
@@ -3364,6 +3789,7 @@ let lastMotionUpdateTime = 0;
 let shipSimState = [];
 let aircraftSimState = [];
 let satelliteSimState = [];
+let droneSimState = [];
 let lastSimTime = 0;
 
 /**
@@ -3578,11 +4004,18 @@ function updateMotionSimulation(currentTime) {
     updateSatelliteMotion(satelliteSimState[i], physicsDelta, satSpeedMultiplier);
   }
 
+  // Update drone motion (circular patrol patterns)
+  const droneSpeedMultiplier = motionParams.droneSpeed;
+  for (let i = 0; i < droneSimState.length; i++) {
+    updateDroneMotion(droneSimState[i], physicsDelta, droneSpeedMultiplier);
+  }
+
   // Upload updated attributes to GPU (much smaller than full matrices)
   // GPU vertex shader will compute position and orientation
   updateShipAttributes();
   updateAircraftAttributes();
   updateSatelliteAttributes();
+  updateDroneAttributes();
 }
 
 // -----------------------------------------------------------------------------
@@ -3594,11 +4027,13 @@ const unitCountParams = {
   shipCount: 200,
   aircraftCount: 300,
   satelliteCount: 4000,
+  droneCount: 5, // Small number of tactical drones
   totalCount: 500, // Combined slider for easy testing
   realisticRoutes: false, // Toggle between global spread and realistic traffic patterns
   showShips: true,
   showAircraft: true,
   showSatellites: true,
+  showDrones: true,
 };
 
 // Realistic shipping lanes with concentration weights
@@ -3773,6 +4208,60 @@ function generateSatelliteData(count = unitCountParams.satelliteCount) {
 }
 
 /**
+ * Generate drone/UAV patrol patterns over the Middle East
+ */
+function generateDroneData(count = unitCountParams.droneCount) {
+  droneSimState = [];
+
+  // Middle East patrol zones with targets
+  const PATROL_ZONES = [
+    // Syria/Iraq border region
+    { centerLat: 34.5, centerLon: 40.5, targetLat: 34.3, targetLon: 40.2, name: "Syria-Iraq Border" },
+    // Eastern Syria
+    { centerLat: 35.2, centerLon: 38.8, targetLat: 35.0, targetLon: 39.0, name: "Eastern Syria" },
+    // Northern Iraq
+    { centerLat: 36.2, centerLon: 43.1, targetLat: 36.4, targetLon: 43.3, name: "Northern Iraq" },
+    // Yemen coast
+    { centerLat: 15.3, centerLon: 44.2, targetLat: 15.0, targetLon: 44.0, name: "Yemen" },
+    // Persian Gulf
+    { centerLat: 26.5, centerLon: 52.0, targetLat: 26.2, targetLon: 51.8, name: "Persian Gulf" },
+    // Afghanistan (Helmand)
+    { centerLat: 31.5, centerLon: 64.0, targetLat: 31.3, targetLon: 64.2, name: "Helmand" },
+    // Libya coast
+    { centerLat: 32.5, centerLon: 15.0, targetLat: 32.2, targetLon: 14.8, name: "Libya" },
+    // Horn of Africa
+    { centerLat: 11.5, centerLon: 43.0, targetLat: 11.2, targetLon: 42.8, name: "Horn of Africa" },
+  ];
+
+  const numZones = PATROL_ZONES.length;
+
+  for (let i = 0; i < count; i++) {
+    const zone = PATROL_ZONES[i % numZones];
+    // Add slight variation to each drone's patrol
+    const offsetLat = (Math.random() - 0.5) * 2;
+    const offsetLon = (Math.random() - 0.5) * 2;
+
+    droneSimState.push(initDroneState(
+      zone.centerLat + offsetLat,
+      zone.centerLon + offsetLon,
+      DRONE_PATROL_RADIUS,
+      zone.targetLat + offsetLat * 0.5,
+      zone.targetLon + offsetLon * 0.5
+    ));
+  }
+
+  // Initialize positions
+  for (const drone of droneSimState) {
+    updateDroneMotion(drone, 0, 1);
+  }
+
+  // Update GPU buffers
+  updateDroneAttributes();
+
+  console.log(`Generated ${droneSimState.length} drones over Middle East patrol zones`);
+}
+
+/**
  * Update unit counts (called from GUI)
  */
 function updateUnitCounts() {
@@ -3785,6 +4274,7 @@ function updateUnitCounts() {
 
 // Initialize demo data
 generateDemoData();
+generateDroneData();
 
 // Build the lat/lon grid (now that latLonToPosition is defined)
 buildGrid();
@@ -4225,6 +4715,7 @@ h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
     shipMesh.visible = false;
     aircraftMesh.visible = false;
     satelliteMesh.visible = false;
+    droneMesh.visible = false;
     shipTrailMesh.visible = false;
     aircraftTrailMesh.visible = false;
   } else {
@@ -4232,6 +4723,7 @@ h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
     shipMesh.visible = unitCountParams.showShips;
     aircraftMesh.visible = unitCountParams.showAircraft;
     satelliteMesh.visible = unitCountParams.showSatellites;
+    droneMesh.visible = unitCountParams.showDrones;
     shipTrailMesh.visible = unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
     aircraftTrailMesh.visible = unitCountParams.showAircraft && trailParams.enabled && trailParams.aircraftTrails;
     // Hide H3 meshes, highlight, and popup
@@ -4392,6 +4884,12 @@ unitsFolder
     lastH3Resolution = -1; // Force H3 rebuild
     refreshH3PopupIfVisible();
   });
+unitsFolder
+  .add(unitCountParams, "showDrones")
+  .name("Drones/UAV")
+  .onChange((value) => {
+    droneMesh.visible = value && !h3Params.enabled;
+  });
 
 // Performance stats display
 const perfStats = { fps: 0, ships: 0, aircraft: 0 };
@@ -4508,6 +5006,11 @@ const unitAltEl = document.getElementById("unit-alt");
 const unitCloseBtn = document.getElementById("unit-close");
 const unitLabel1 = document.getElementById("unit-label-1");
 const unitLabel2 = document.getElementById("unit-label-2");
+
+// Drone video feed panel elements
+const droneFeedPanel = document.getElementById("drone-feed");
+const droneFeedCoords = document.getElementById("drone-feed-coords");
+const droneVideo = document.getElementById("drone-video");
 const unitLabel3 = document.getElementById("unit-label-3");
 const unitLabel4 = document.getElementById("unit-label-4");
 const unitLabel5 = document.getElementById("unit-label-5");
@@ -4523,8 +5026,13 @@ unitCloseBtn?.addEventListener("click", () => {
 function deselectUnit() {
   selectedUnit = null;
   unitInfoPanel?.classList.add("hidden");
+  droneFeedPanel?.classList.add("hidden");
+  if (droneVideo) droneVideo.pause();
   selectionRing.visible = false;
   orbitLine.visible = false;
+  patrolCircle.visible = false;
+  observationLine.visible = false;
+  targetMarker.visible = false;
 }
 
 /**
@@ -4547,6 +5055,10 @@ function selectUnit(type, index) {
     unitData = satelliteSimState[index];
     typeLabel = "SATELLITE";
     typeClass = "satellite";
+  } else if (type === "drone") {
+    unitData = droneSimState[index];
+    typeLabel = "DRONE/UAV";
+    typeClass = "drone";
   } else if (type === "airport") {
     const airport = AIRPORTS[index];
     if (!airport) return;
@@ -4577,11 +5089,30 @@ function selectUnit(type, index) {
   // Update values (will be refreshed each frame)
   updateSelectedUnitInfo();
 
-  // Show orbit line for satellites
+  // Show orbit line for satellites, patrol circle for drones
   if (type === "satellite") {
     updateOrbitLine(unitData);
+    updatePatrolCircle(null); // Hide drone visuals
+    droneFeedPanel?.classList.add("hidden");
+    if (droneVideo) droneVideo.pause();
+  } else if (type === "drone") {
+    updatePatrolCircle(unitData);
+    orbitLine.visible = false;
+    // Show drone video feed
+    droneFeedPanel?.classList.remove("hidden");
+    if (droneVideo) {
+      droneVideo.currentTime = Math.random() * 10; // Start at random position
+      droneVideo.play();
+    }
+    // Update target coordinates display
+    if (droneFeedCoords) {
+      droneFeedCoords.textContent = `TGT: ${unitData.targetLat.toFixed(4)}° ${unitData.targetLon.toFixed(4)}°`;
+    }
   } else {
     orbitLine.visible = false;
+    updatePatrolCircle(null);
+    droneFeedPanel?.classList.add("hidden");
+    if (droneVideo) droneVideo.pause();
   }
 }
 
@@ -4653,6 +5184,28 @@ function updateSelectedUnitInfo() {
     unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
     unitSpdEl.textContent = speed;
     unitAltEl.textContent = altitude;
+  } else if (type === "drone") {
+    unitData = droneSimState[index];
+    if (!unitData) { deselectUnit(); return; }
+    const altFeet = Math.round(unitData.altitude * 6371 / EARTH_RADIUS * 3281); // Convert to feet
+    altitude = `${altFeet.toLocaleString()} ft`;
+    speed = `120 kts`; // Typical MQ-9 Reaper cruise speed
+
+    // Set drone-specific labels
+    unitLabel1.textContent = "LAT";
+    unitLabel2.textContent = "LON";
+    unitLabel3.textContent = "HDG";
+    unitLabel4.textContent = "SPD";
+    unitLabel5.textContent = "ALT";
+
+    unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
+    unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
+    unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
+    unitSpdEl.textContent = speed;
+    unitAltEl.textContent = altitude;
+
+    // Update observation line dynamically as drone moves
+    updateObservationLine(unitData);
   } else if (type === "airport") {
     const airport = AIRPORTS[index];
     if (!airport) { deselectUnit(); return; }
@@ -4774,6 +5327,24 @@ function onCanvasClick(event) {
       if (dist < closestDist) {
         closestDist = dist;
         closestUnit = { type: "satellite", index: i };
+      }
+    }
+  }
+
+  // Check drones (if visible)
+  if (unitCountParams.showDrones) {
+    for (let i = 0; i < droneSimState.length; i++) {
+      const unit = droneSimState[i];
+      const worldPos = latLonTo3D(unit.lat, unit.lon, unit.altitude);
+      worldPos.applyMatrix4(earth.matrixWorld);
+
+      const screen = projectToScreen(worldPos);
+      if (screen.z > 1) continue;
+
+      const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestUnit = { type: "drone", index: i };
       }
     }
   }
