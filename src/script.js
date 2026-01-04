@@ -111,8 +111,13 @@ gui.title("Controls");
 
     /* Select dropdowns */
     .lil-gui select {
-      background: rgba(255, 255, 255, 0.05) !important;
+      background: #1a1a1a !important;
       border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      color: #ffffff !important;
+    }
+
+    .lil-gui select option {
+      background: #1a1a1a !important;
       color: #ffffff !important;
     }
 
