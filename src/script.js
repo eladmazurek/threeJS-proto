@@ -5278,6 +5278,19 @@ function onCanvasClick(event) {
   let closestUnit = null;
   let closestDist = clickRadius;
 
+  // Helper to check if unit is on visible side of globe (not occluded by Earth)
+  const cameraWorldPos = camera.position.clone();
+  const earthWorldPos = earth.position.clone().applyMatrix4(earth.parent?.matrixWorld || new THREE.Matrix4());
+
+  function isOnVisibleSide(unitWorldPos) {
+    // Surface normal at unit position (points outward from Earth center)
+    const surfaceNormal = unitWorldPos.clone().sub(earthWorldPos).normalize();
+    // Direction from unit to camera
+    const toCamera = cameraWorldPos.clone().sub(unitWorldPos).normalize();
+    // If dot product > 0, unit is facing camera (visible side)
+    return surfaceNormal.dot(toCamera) > 0;
+  }
+
   // Check ships (if visible)
   if (unitCountParams.showShips) {
     for (let i = 0; i < shipSimState.length; i++) {
@@ -5289,8 +5302,9 @@ function onCanvasClick(event) {
 
       const screen = projectToScreen(worldPos);
 
-      // Skip if behind camera
+      // Skip if behind camera or on far side of globe
       if (screen.z > 1) continue;
+      if (!isOnVisibleSide(worldPos)) continue;
 
       const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
       if (dist < closestDist) {
@@ -5309,6 +5323,7 @@ function onCanvasClick(event) {
 
       const screen = projectToScreen(worldPos);
       if (screen.z > 1) continue;
+      if (!isOnVisibleSide(worldPos)) continue;
 
       const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
       if (dist < closestDist) {
@@ -5327,6 +5342,7 @@ function onCanvasClick(event) {
 
       const screen = projectToScreen(worldPos);
       if (screen.z > 1) continue;
+      if (!isOnVisibleSide(worldPos)) continue;
 
       const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
       if (dist < closestDist) {
@@ -5345,6 +5361,7 @@ function onCanvasClick(event) {
 
       const screen = projectToScreen(worldPos);
       if (screen.z > 1) continue;
+      if (!isOnVisibleSide(worldPos)) continue;
 
       const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
       if (dist < closestDist) {
@@ -5363,6 +5380,7 @@ function onCanvasClick(event) {
 
       const screen = projectToScreen(worldPos);
       if (screen.z > 1) continue;
+      if (!isOnVisibleSide(worldPos)) continue;
 
       const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
       if (dist < closestDist) {
