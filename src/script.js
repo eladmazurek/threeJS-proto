@@ -2746,6 +2746,70 @@ selectionRing.visible = false;
 selectionRing.renderOrder = 10; // Render on top
 earth.add(selectionRing);
 
+// -----------------------------------------------------------------------------
+// SATELLITE ORBIT LINE
+// -----------------------------------------------------------------------------
+// Shows the full orbital path when a satellite is selected
+
+const ORBIT_LINE_SEGMENTS = 128; // Points around the orbit
+
+const orbitLineMaterial = new THREE.LineBasicMaterial({
+  color: 0xaa88ff, // Violet to match satellite color
+  transparent: true,
+  opacity: 0.6,
+  depthTest: true,
+  depthWrite: false,
+});
+
+const orbitLineGeometry = new THREE.BufferGeometry();
+const orbitLinePositions = new Float32Array(ORBIT_LINE_SEGMENTS * 3);
+orbitLineGeometry.setAttribute('position', new THREE.BufferAttribute(orbitLinePositions, 3));
+
+const orbitLine = new THREE.LineLoop(orbitLineGeometry, orbitLineMaterial);
+orbitLine.visible = false;
+orbitLine.renderOrder = 5;
+earth.add(orbitLine);
+
+/**
+ * Compute orbital path points for a satellite
+ * Uses the same orbital mechanics as updateSatelliteMotion
+ */
+function updateOrbitLine(sat) {
+  if (!sat) {
+    orbitLine.visible = false;
+    return;
+  }
+
+  const positions = orbitLineGeometry.attributes.position.array;
+  const inclinationRad = sat.inclination * (Math.PI / 180);
+  const radius = EARTH_RADIUS + sat.altitude;
+
+  for (let i = 0; i < ORBIT_LINE_SEGMENTS; i++) {
+    const phase = (i / ORBIT_LINE_SEGMENTS) * 360;
+    const phaseRad = phase * (Math.PI / 180);
+
+    // Same calculations as updateSatelliteMotion
+    const xOrbit = Math.cos(phaseRad);
+    const yOrbit = Math.sin(phaseRad);
+
+    // Compute lat/lon
+    const lat = Math.asin(yOrbit * Math.sin(inclinationRad)) * (180 / Math.PI);
+    const lonInOrbit = Math.atan2(yOrbit * Math.cos(inclinationRad), xOrbit) * (180 / Math.PI);
+    const lon = sat.ascendingNode + lonInOrbit;
+
+    // Convert to 3D position
+    const phi = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+
+    positions[i * 3] = -radius * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = radius * Math.cos(phi);
+    positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+  }
+
+  orbitLineGeometry.attributes.position.needsUpdate = true;
+  orbitLine.visible = true;
+}
+
 /**
  * Update selection ring position to follow selected unit
  */
@@ -3364,7 +3428,7 @@ function initSatelliteState(altitude, inclination, ascendingNode, phase) {
     lat: 0,
     lon: 0,
     heading: 0,
-    scale: 0.6 + Math.random() * 0.4, // Visual scale
+    scale: 1.0 + Math.random() * 0.5, // Visual scale (larger for visibility)
   };
 }
 
@@ -4460,6 +4524,7 @@ function deselectUnit() {
   selectedUnit = null;
   unitInfoPanel?.classList.add("hidden");
   selectionRing.visible = false;
+  orbitLine.visible = false;
 }
 
 /**
@@ -4511,6 +4576,13 @@ function selectUnit(type, index) {
 
   // Update values (will be refreshed each frame)
   updateSelectedUnitInfo();
+
+  // Show orbit line for satellites
+  if (type === "satellite") {
+    updateOrbitLine(unitData);
+  } else {
+    orbitLine.visible = false;
+  }
 }
 
 /**
