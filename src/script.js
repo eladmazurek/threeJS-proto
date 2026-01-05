@@ -25,6 +25,10 @@ import glassVertexShader from "./shaders/tracking/glass-vertex.glsl";
 import glassFragmentShader from "./shaders/tracking/glass-fragment.glsl";
 import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
 
+// Import 3D Tiles Renderer for Google Photorealistic Tiles
+import { TilesRenderer } from '3d-tiles-renderer';
+import { GoogleCloudAuthPlugin } from '3d-tiles-renderer/plugins';
+
 /**
  * =============================================================================
  * BASE SETUP
@@ -789,6 +793,29 @@ function updateTelemetry(cameraDistance, cameraPosition) {
 // Earth radius constant - must match the sphere geometry radius
 const EARTH_RADIUS = 2;
 
+/**
+ * =============================================================================
+ * GOOGLE PHOTOREALISTIC 3D TILES CONFIGURATION
+ * =============================================================================
+ */
+
+// API key loaded from environment variable (set in .env.local)
+const GOOGLE_TILES_API_KEY = import.meta.env.VITE_GOOGLE_TILES_API_KEY;
+
+// Scale factor to convert real-world meters to scene units
+// Real Earth radius: 6,371,000 meters, Scene Earth radius: 2 units
+const TILES_SCALE_FACTOR = EARTH_RADIUS / 6371000;
+
+// Transition altitude in scene units
+let TILES_TRANSITION_ALTITUDE = 0.628; // ~2000km in scene units
+const TILES_TRANSITION_RANGE = 0.125; // ~400km crossfade range for smooth blend
+
+// Tiles parameters for GUI
+const tilesParams = {
+  enabled: false,
+  transitionAltitude: 2000, // km, for GUI display
+};
+
 // Get reference to the WebGL canvas element defined in index.html
 const canvas = document.querySelector("canvas.webgl");
 
@@ -980,7 +1007,11 @@ const earthMaterial = new THREE.ShaderMaterial({
 
     // Night blend toggle (0=day only, 1=day/night blend)
     uNightBlend: { value: 1.0 },
+
+    // Opacity for crossfade with 3D tiles
+    uOpacity: { value: 1.0 },
   },
+  transparent: true,
 });
 
 // Create the Earth mesh by combining geometry and material
@@ -1058,6 +1089,224 @@ const atmosphereMaterial = new THREE.ShaderMaterial({
 
 const atmosphereMesh = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
 scene.add(atmosphereMesh);
+
+/**
+ * =============================================================================
+ * GOOGLE PHOTOREALISTIC 3D TILES
+ * =============================================================================
+ * Streams Google's 3D tile data when zoomed in for high-resolution terrain
+ */
+
+let tilesRenderer = null;
+let tilesGroup = null; // Parent group for Y rotation (syncs with Earth's rotation)
+let tilesLoaded = false;
+
+/**
+ * Convert WGS84 lat/lon to scene coordinates
+ * Handles ECEF (Z-up) to Three.js (Y-up) transformation
+ * @param {number} lat - Latitude in degrees
+ * @param {number} lon - Longitude in degrees
+ * @param {number} altitude - Altitude in scene units (default 0)
+ * @returns {THREE.Vector3} Position in scene coordinates
+ */
+function wgs84ToScene(lat, lon, altitude = 0) {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lon + 180) * (Math.PI / 180);
+  const radius = EARTH_RADIUS + altitude;
+
+  // Standard spherical to cartesian (Y-up)
+  const x = -radius * Math.sin(phi) * Math.cos(theta);
+  const y = radius * Math.cos(phi);
+  const z = radius * Math.sin(phi) * Math.sin(theta);
+
+  return new THREE.Vector3(x, y, z);
+}
+
+/**
+ * Initialize Google Photorealistic 3D Tiles
+ * Handles coordinate transformation from ECEF (Z-up) to Three.js (Y-up)
+ */
+function initGoogleTiles(camera, renderer) {
+  if (!GOOGLE_TILES_API_KEY) {
+    console.warn('Google Tiles API key not found. Set VITE_GOOGLE_TILES_API_KEY in .env.local');
+    return;
+  }
+
+  // Create tiles renderer
+  tilesRenderer = new TilesRenderer();
+
+  // Register Google authentication plugin for session management
+  tilesRenderer.registerPlugin(new GoogleCloudAuthPlugin({
+    apiToken: GOOGLE_TILES_API_KEY,
+    autoRefreshToken: true,
+  }));
+
+  // Configure renderer with camera and resolution
+  tilesRenderer.setCamera(camera);
+  tilesRenderer.setResolutionFromRenderer(camera, renderer);
+
+  // =========================================================================
+  // COORDINATE TRANSFORMATION: ECEF (Z-up) -> Three.js (Y-up)
+  // =========================================================================
+  // Use two nested groups to handle rotations correctly:
+  // - Parent group (tilesGroup): Y rotation to sync with Earth's rotation
+  // - Child group (tilesRenderer.group): X rotation for ECEF to Y-up conversion
+  // This avoids Euler angle order issues.
+  // =========================================================================
+
+  // Create parent group for Y rotation (syncs with Earth's rotation)
+  tilesGroup = new THREE.Group();
+  tilesGroup.name = "tilesRotationGroup";
+  scene.add(tilesGroup);
+
+  // Add tiles renderer group as child
+  tilesGroup.add(tilesRenderer.group);
+
+  // Apply X rotation on the inner group: -90° to convert ECEF Z-up to Y-up
+  tilesRenderer.group.rotation.x = -Math.PI / 2;
+
+  // Apply uniform scale from meters to scene units on the inner group
+  tilesRenderer.group.scale.setScalar(TILES_SCALE_FACTOR);
+
+  // =========================================================================
+  // RENDERER SETTINGS FOR TINY SCALE
+  // =========================================================================
+  // At our tiny scale (1:3,185,500), we need to adjust several settings:
+  // - Error thresholds for LOD selection
+  // - Frustum culling behavior
+  // - Memory management for tile caching
+  // =========================================================================
+
+  // Error target in pixels - lower = sharper/higher detail tiles (default is 6)
+  tilesRenderer.errorTarget = 10;
+
+  // Don't use errorMultiplier with scale - it's already factored into screen-space error
+  // The renderer calculates screen-space error which accounts for camera distance
+
+  // Increase max depth to allow loading more detailed tiles
+  tilesRenderer.maxDepth = 30;
+
+  // Load more tiles in parallel for better coverage
+  tilesRenderer.downloadQueue.maxJobs = 10;
+  tilesRenderer.parseQueue.maxJobs = 4;
+
+  // Increase cache size for smoother navigation
+  tilesRenderer.lruCache.maxSize = 800;
+  tilesRenderer.lruCache.minSize = 400;
+
+  // Initially hidden until transition threshold
+  tilesGroup.visible = false;
+
+  // Listen for root tileset load
+  tilesRenderer.addEventListener('load-tileset', () => {
+    tilesLoaded = true;
+    console.log('Google 3D Tiles root tileset loaded');
+  });
+
+  // Error handling
+  tilesRenderer.addEventListener('load-error', (error) => {
+    console.error('Google 3D Tiles load error:', error);
+  });
+
+  console.log('Google 3D Tiles initialized with ECEF->Y-up transformation');
+}
+
+/**
+ * Get camera altitude above Earth surface in scene units
+ */
+function getCameraAltitudeForTiles() {
+  return camera.position.length() - EARTH_RADIUS;
+}
+
+/**
+ * Calculate transition factor for crossfade (0 = globe texture, 1 = tiles)
+ * Uses quintic smoothstep for gradual, smooth blending
+ */
+function getTilesTransitionFactor() {
+  const altitude = getCameraAltitudeForTiles();
+
+  // Above transition + range: show globe texture (factor 0)
+  // Below transition: show tiles (factor 1)
+  const transitionStart = TILES_TRANSITION_ALTITUDE + TILES_TRANSITION_RANGE;
+  const transitionEnd = TILES_TRANSITION_ALTITUDE;
+
+  if (altitude >= transitionStart) return 0;
+  if (altitude <= transitionEnd) return 1;
+
+  // Linear interpolation
+  const t = 1 - (altitude - transitionEnd) / TILES_TRANSITION_RANGE;
+
+  // Quintic smoothstep: 6t⁵ - 15t⁴ + 10t³ (zero velocity & acceleration at endpoints)
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/**
+ * Update crossfade between globe texture and 3D tiles
+ */
+function updateTilesCrossfade() {
+  if (!tilesParams.enabled || !tilesRenderer) {
+    // Tiles disabled - show full globe
+    earthMaterial.uniforms.uOpacity.value = 1.0;
+    if (tilesGroup) tilesGroup.visible = false;
+    earth.visible = true;
+    return;
+  }
+
+  const factor = getTilesTransitionFactor();
+
+  // Globe texture opacity (inverse of transition)
+  earthMaterial.uniforms.uOpacity.value = 1.0 - factor;
+
+  // Tiles visibility
+  if (factor > 0 && tilesLoaded) {
+    tilesGroup.visible = true;
+
+    // Sync Y rotation with Earth's rotation on the parent group
+    // This keeps tiles aligned with the globe as it rotates
+    tilesGroup.rotation.y = earth.rotation.y;
+  } else {
+    tilesGroup.visible = false;
+  }
+
+  // Hide globe mesh completely when tiles are fully visible (optimization)
+  earth.visible = factor < 1.0;
+
+  // Fade out overlays when tiles are dominant to prevent z-fighting
+  if (typeof cloudMesh !== 'undefined') {
+    cloudMesh.visible = factor < 0.5;
+  }
+  atmosphereMesh.visible = factor < 0.8;
+}
+
+/**
+ * Update Google Tiles attribution display
+ */
+function updateTilesAttribution() {
+  const attributionEl = document.getElementById('tiles-attribution');
+  const textEl = document.getElementById('tiles-attribution-text');
+
+  if (!attributionEl || !textEl) return;
+
+  if (tilesParams.enabled && tilesGroup && tilesGroup.visible) {
+    // Get attributions from tiles renderer
+    const attributions = tilesRenderer ? tilesRenderer.getAttributions() : [];
+
+    if (attributions && attributions.length > 0) {
+      // Combine attribution strings
+      const text = attributions
+        .filter(attr => attr.type === 'string' || typeof attr === 'string')
+        .map(attr => typeof attr === 'string' ? attr : attr.value)
+        .join(' | ');
+
+      textEl.textContent = text || 'Google';
+    } else {
+      textEl.textContent = 'Google';
+    }
+    attributionEl.classList.remove('hidden');
+  } else {
+    attributionEl.classList.add('hidden');
+  }
+}
 
 /**
  * =============================================================================
@@ -2683,7 +2932,6 @@ const shipMaterial = new THREE.ShaderMaterial({
   },
   transparent: true,
   side: THREE.DoubleSide,
-  depthTest: true,
   depthWrite: false,
   blending: THREE.NormalBlending,
 });
@@ -2692,7 +2940,7 @@ const shipMaterial = new THREE.ShaderMaterial({
 const shipMesh = new THREE.Mesh(shipGeometry, shipMaterial);
 shipMesh.frustumCulled = false;
 shipMesh.renderOrder = 1; // Render ships first (below aircraft)
-earth.add(shipMesh);
+scene.add(shipMesh); // Added to scene (not earth) so units stay visible with 3D tiles
 
 // -----------------------------------------------------------------------------
 // Aircraft Symbol Geometry (airplane shape)
@@ -2743,7 +2991,6 @@ const aircraftMaterial = new THREE.ShaderMaterial({
   },
   transparent: true,
   side: THREE.DoubleSide,
-  depthTest: true,
   depthWrite: false,
   blending: THREE.NormalBlending,
 });
@@ -2752,7 +2999,7 @@ const aircraftMaterial = new THREE.ShaderMaterial({
 const aircraftMesh = new THREE.Mesh(aircraftGeometry, aircraftMaterial);
 aircraftMesh.frustumCulled = false;
 aircraftMesh.renderOrder = 2; // Render aircraft after ships (above ships)
-earth.add(aircraftMesh);
+scene.add(aircraftMesh); // Added to scene (not earth) so units stay visible with 3D tiles
 
 // -----------------------------------------------------------------------------
 // Satellite Symbol Geometry (diamond with solar panel wings)
@@ -2821,7 +3068,6 @@ const satelliteMaterial = new THREE.ShaderMaterial({
   },
   transparent: true,
   side: THREE.DoubleSide,
-  depthTest: true,
   depthWrite: false,
   blending: THREE.NormalBlending,
 });
@@ -2830,7 +3076,7 @@ const satelliteMaterial = new THREE.ShaderMaterial({
 const satelliteMesh = new THREE.Mesh(satelliteGeometry, satelliteMaterial);
 satelliteMesh.frustumCulled = false;
 satelliteMesh.renderOrder = 3; // Render above aircraft (highest altitude)
-earth.add(satelliteMesh);
+scene.add(satelliteMesh); // Added to scene (not earth) so units stay visible with 3D tiles
 
 // -----------------------------------------------------------------------------
 // Drone/UAV Symbol Geometry (MQ-9 Reaper style - long fuselage with V-tail)
@@ -2887,7 +3133,6 @@ const droneMaterial = new THREE.ShaderMaterial({
   },
   transparent: true,
   side: THREE.DoubleSide,
-  depthTest: true,
   depthWrite: false,
   blending: THREE.NormalBlending,
 });
@@ -2895,7 +3140,7 @@ const droneMaterial = new THREE.ShaderMaterial({
 const droneMesh = new THREE.Mesh(droneGeometry, droneMaterial);
 droneMesh.frustumCulled = false;
 droneMesh.renderOrder = 2; // Same level as aircraft
-earth.add(droneMesh);
+scene.add(droneMesh); // Added to scene (not earth) so units stay visible with 3D tiles
 
 // -----------------------------------------------------------------------------
 // Drone Patrol Circle Visualization
@@ -2906,7 +3151,6 @@ const patrolCircleMaterial = new THREE.LineBasicMaterial({
   color: 0x84cc16, // Lime green to match drone
   transparent: true,
   opacity: 0.7,
-  depthTest: true,
   depthWrite: false,
 });
 
@@ -2917,7 +3161,7 @@ patrolCircleGeometry.setAttribute('position', new THREE.BufferAttribute(patrolCi
 const patrolCircle = new THREE.LineLoop(patrolCircleGeometry, patrolCircleMaterial);
 patrolCircle.visible = false;
 patrolCircle.renderOrder = 5;
-earth.add(patrolCircle);
+scene.add(patrolCircle); // Added to scene so visible with 3D tiles
 
 // Observation line (from drone to ground target)
 const observationLineMaterial = new THREE.LineDashedMaterial({
@@ -2937,7 +3181,7 @@ observationLineGeometry.setAttribute('position', new THREE.BufferAttribute(obser
 const observationLine = new THREE.Line(observationLineGeometry, observationLineMaterial);
 observationLine.visible = false;
 observationLine.renderOrder = 5;
-earth.add(observationLine);
+scene.add(observationLine); // Added to scene so visible with 3D tiles
 
 // Ground target marker (small pulsing diamond on ground)
 const targetMarkerGeometry = new THREE.RingGeometry(0.008, 0.012, 4);
@@ -2956,7 +3200,7 @@ const targetMarkerMaterial = new THREE.MeshBasicMaterial({
 const targetMarker = new THREE.Mesh(targetMarkerGeometry, targetMarkerMaterial);
 targetMarker.visible = false;
 targetMarker.renderOrder = 6;
-earth.add(targetMarker);
+scene.add(targetMarker); // Added to scene so visible with 3D tiles
 
 /**
  * Update drone patrol circle visualization
@@ -3086,7 +3330,7 @@ const selectionRingMaterial = new THREE.ShaderMaterial({
 const selectionRing = new THREE.Mesh(selectionRingGeometry, selectionRingMaterial);
 selectionRing.visible = false;
 selectionRing.renderOrder = 10; // Render on top
-earth.add(selectionRing);
+scene.add(selectionRing); // Added to scene so visible with 3D tiles
 
 // -----------------------------------------------------------------------------
 // SATELLITE ORBIT LINE
@@ -3099,7 +3343,6 @@ const orbitLineMaterial = new THREE.LineBasicMaterial({
   color: 0xaa88ff, // Violet to match satellite color
   transparent: true,
   opacity: 0.6,
-  depthTest: true,
   depthWrite: false,
 });
 
@@ -3110,7 +3353,7 @@ orbitLineGeometry.setAttribute('position', new THREE.BufferAttribute(orbitLinePo
 const orbitLine = new THREE.LineLoop(orbitLineGeometry, orbitLineMaterial);
 orbitLine.visible = false;
 orbitLine.renderOrder = 5;
-earth.add(orbitLine);
+scene.add(orbitLine); // Added to scene so visible with 3D tiles
 
 /**
  * Compute orbital path points for a satellite
@@ -3196,7 +3439,7 @@ function updateSelectionRing() {
     if (!airport) { selectionRing.visible = false; return; }
     lat = airport[1];
     lon = airport[2];
-    altitude = 0.002; // Same as airport markers
+    altitude = 0.008; // Same as airport markers
   } else {
     selectionRing.visible = false;
     return;
@@ -3350,7 +3593,6 @@ const shipTrailMaterial = new THREE.ShaderMaterial({
     uBaseOpacity: { value: trailParams.opacity },
   },
   transparent: true,
-  depthTest: true,
   depthWrite: false,
   blending: THREE.NormalBlending,
 });
@@ -3358,7 +3600,7 @@ const shipTrailMaterial = new THREE.ShaderMaterial({
 const shipTrailMesh = new THREE.Points(shipTrailGeometry, shipTrailMaterial);
 shipTrailMesh.frustumCulled = false;
 shipTrailMesh.renderOrder = 0.5; // Just above shadows
-earth.add(shipTrailMesh);
+scene.add(shipTrailMesh); // Added to scene (not earth) so trails stay visible with 3D tiles
 
 // Aircraft trails
 const aircraftTrailGeometry = createTrailGeometry(MAX_TRAIL_POINTS);
@@ -3372,7 +3614,6 @@ const aircraftTrailMaterial = new THREE.ShaderMaterial({
     uBaseOpacity: { value: trailParams.opacity },
   },
   transparent: true,
-  depthTest: true,
   depthWrite: false,
   blending: THREE.NormalBlending,
 });
@@ -3380,7 +3621,7 @@ const aircraftTrailMaterial = new THREE.ShaderMaterial({
 const aircraftTrailMesh = new THREE.Points(aircraftTrailGeometry, aircraftTrailMaterial);
 aircraftTrailMesh.frustumCulled = false;
 aircraftTrailMesh.renderOrder = 1.8; // Just below aircraft
-earth.add(aircraftTrailMesh);
+scene.add(aircraftTrailMesh); // Added to scene (not earth) so trails stay visible with 3D tiles
 
 // Trail history storage - ring buffers per unit
 let shipTrailHistory = []; // Array of arrays, one per ship
@@ -4349,9 +4590,10 @@ const airportParams = {
 };
 
 // Group to hold all airport markers
+// Added to scene (not earth) so airports stay visible when 3D tiles are active
 const airportGroup = new THREE.Group();
 airportGroup.renderOrder = 5;
-earth.add(airportGroup);
+scene.add(airportGroup);
 
 /**
  * Create airport marker sprite (small diamond shape)
@@ -4362,7 +4604,7 @@ function createAirportMarker(lat, lon, code) {
   // Calculate position on globe
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (lon + 180) * (Math.PI / 180);
-  const radius = EARTH_RADIUS + 0.002; // Slightly above surface
+  const radius = EARTH_RADIUS + 0.02; // Above surface (raised higher to clear 3D tiles terrain)
 
   const x = -radius * Math.sin(phi) * Math.cos(theta);
   const y = radius * Math.cos(phi);
@@ -4394,7 +4636,6 @@ function createAirportMarker(lat, lon, code) {
     map: markerTexture,
     transparent: true,
     depthWrite: false,
-    depthTest: true,
   });
 
   const marker = new THREE.Sprite(markerMaterial);
@@ -4425,7 +4666,6 @@ function createAirportMarker(lat, lon, code) {
     map: labelTexture,
     transparent: true,
     depthWrite: false,
-    depthTest: true,
   });
 
   const label = new THREE.Sprite(labelMaterial);
@@ -4804,6 +5044,47 @@ cameraFolder.add(tiltPresets, "Slight Tilt").name("◢ Slight Tilt");
 cameraFolder.add(tiltPresets, "Tracking").name("→ Tracking View");
 cameraFolder.add(tiltPresets, "Horizon").name("— Horizon");
 
+// Google 3D Tiles folder
+const tilesFolder = gui.addFolder("3D Tiles");
+tilesFolder.close();
+tilesFolder
+  .add(tilesParams, "enabled")
+  .name("Enable Tiles")
+  .onChange((value) => {
+    if (!value) {
+      // Reset to full globe when disabled
+      earthMaterial.uniforms.uOpacity.value = 1.0;
+      if (tilesGroup) tilesGroup.visible = false;
+      earth.visible = true;
+      atmosphereMesh.visible = true;
+      if (typeof cloudMesh !== 'undefined') cloudMesh.visible = true;
+    }
+  });
+tilesFolder
+  .add(tilesParams, "transitionAltitude", 100, 2000, 50)
+  .name("Transition Alt (km)")
+  .onChange((value) => {
+    // Convert km to scene units (km * EARTH_RADIUS / 6371)
+    TILES_TRANSITION_ALTITUDE = value * (EARTH_RADIUS / 6371);
+  });
+
+// Add debug controls for tile loading (only if tilesRenderer exists)
+const tilesDebugParams = {
+  errorTarget: 10,
+  maxDepth: 30,
+};
+tilesFolder
+  .add(tilesDebugParams, "errorTarget", 0.5, 10, 0.5)
+  .name("Error Target (px)")
+  .onChange((value) => {
+    if (tilesRenderer) tilesRenderer.errorTarget = value;
+  });
+tilesFolder
+  .add(tilesDebugParams, "maxDepth", 10, 50, 1)
+  .name("Max Depth")
+  .onChange((value) => {
+    if (tilesRenderer) tilesRenderer.maxDepth = value;
+  });
 // Trails folder
 const trailsFolder = gui.addFolder("Trails");
 trailsFolder.close();
@@ -4953,10 +5234,11 @@ window.addEventListener("resize", () => {
  */
 
 // Create a perspective camera (mimics human eye perspective)
-// Parameters: FOV=25°, aspect ratio, near plane=0.1, far plane=100
+// Parameters: FOV=25°, aspect ratio, near plane=0.01, far plane=100
 // - FOV: Narrow field of view (25°) gives a more "zoomed in" look
 // - Near/far planes: Objects outside this range won't be rendered
-const camera = new THREE.PerspectiveCamera(25, sizes.width / sizes.height, 0.1, 100);
+// - Near plane 0.01 gives good depth buffer precision (reduces z-fighting shimmer)
+const camera = new THREE.PerspectiveCamera(25, sizes.width / sizes.height, 0.01, 100);
 
 // Position the camera for an isometric-like view of the Earth
 // x=12: To the right, y=5: Above, z=4: Slightly in front
@@ -4979,7 +5261,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.05; // Smoother deceleration
 
 // Prevent zooming inside the Earth
-controls.minDistance = EARTH_RADIUS + 0.5; // Stay above surface
+controls.minDistance = EARTH_RADIUS + 0.001; // ~3km altitude - dynamic near plane handles depth precision
 controls.maxDistance = 20; // Don't zoom too far out
 
 // Allow full vertical rotation for tilt views
@@ -5425,6 +5707,9 @@ earthDayTexture.anisotropy = maxAnisotropy;
 earthNightTexture.anisotropy = maxAnisotropy;
 earthSpecularCloudsTexture.anisotropy = maxAnisotropy;
 
+// Initialize Google 3D Tiles after renderer is ready
+initGoogleTiles(camera, renderer);
+
 /**
  * =============================================================================
  * ANIMATION LOOP
@@ -5451,6 +5736,22 @@ const tick = () => {
     earth.rotation.y += 0.0003 * rotationFactor;
   }
 
+  // Sync scene-level objects rotation with earth (since they're not parented to earth)
+  // This keeps units, trails, overlays, and airports aligned with the globe as it rotates
+  const earthRotY = earth.rotation.y;
+  airportGroup.rotation.y = earthRotY;
+  shipMesh.rotation.y = earthRotY;
+  aircraftMesh.rotation.y = earthRotY;
+  satelliteMesh.rotation.y = earthRotY;
+  droneMesh.rotation.y = earthRotY;
+  shipTrailMesh.rotation.y = earthRotY;
+  aircraftTrailMesh.rotation.y = earthRotY;
+  patrolCircle.rotation.y = earthRotY;
+  observationLine.rotation.y = earthRotY;
+  targetMarker.rotation.y = earthRotY;
+  selectionRing.rotation.y = earthRotY;
+  orbitLine.rotation.y = earthRotY;
+
   // Update weather animation
   if (weatherParams.enabled && weatherParams.animate) {
     weatherMaterial.uniforms.uTime.value = elapsedTime;
@@ -5470,7 +5771,8 @@ const tick = () => {
   // Adjust rotation speed based on zoom level
   // Slower when zoomed in for precise control, faster when zoomed out
   const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
-  controls.rotateSpeed = 0.3 + zoomFactor * 0.7; // Range: 0.3 (close) to 1.0 (far)
+  controls.rotateSpeed = 0.02 + zoomFactor * 0.98; // Range: 0.02 (close) to 1.0 (far)
+  controls.panSpeed = 0.1 + zoomFactor * 0.9; // Also slow down panning
 
   // Update telemetry display
   updateTelemetry(cameraDistance, camera.position);
@@ -5498,16 +5800,39 @@ const tick = () => {
   updateSelectionRing();
   selectionRingMaterial.uniforms.uTime.value = elapsedTime;
 
+  // Update Google 3D Tiles - only when close enough to need them
+  if (tilesRenderer && tilesParams.enabled) {
+    const altitude = camera.position.length() - EARTH_RADIUS;
+    // Pre-load tiles well before the visual transition starts
+    // This prevents the "stuck" feeling when zooming in/out of tile zone
+    const tilesPreloadAltitude = TILES_TRANSITION_ALTITUDE + TILES_TRANSITION_RANGE + 0.3; // ~1000km buffer
+
+    if (altitude < tilesPreloadAltitude) {
+      camera.updateMatrixWorld();
+      tilesRenderer.update();
+    }
+    updateTilesCrossfade();
+    updateTilesAttribution();
+  }
+
   // Update OrbitControls - required for damping to work
   controls.update();
 
   // Enforce minimum distance from Earth center (not just from target)
   // This prevents zooming into the globe when tilt is applied
-  const minDistanceFromCenter = EARTH_RADIUS + 0.3;
+  const minDistanceFromCenter = EARTH_RADIUS + 0.001;
   const distanceFromCenter = camera.position.length();
   if (distanceFromCenter < minDistanceFromCenter) {
     camera.position.normalize().multiplyScalar(minDistanceFromCenter);
   }
+
+  // Dynamic near plane based on altitude
+  // - Far from Earth: larger near plane (better depth precision, less shimmer)
+  // - Close to Earth: smaller near plane (avoid clipping terrain)
+  const altitude = distanceFromCenter - EARTH_RADIUS;
+  const nearPlane = Math.max(0.0001, Math.min(0.01, altitude * 0.1));
+  camera.near = nearPlane;
+  camera.updateProjectionMatrix();
 
   // Render the scene from the camera's perspective
   renderer.render(scene, camera);

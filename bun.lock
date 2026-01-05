@@ -5,6 +5,7 @@
     "": {
       "name": "earth-shaders",
       "dependencies": {
+        "3d-tiles-renderer": "^0.4.19",
         "h3-js": "^4.4.0",
         "lil-gui": "^0.21.0",
         "three": "^0.182.0",
@@ -17,6 +18,8 @@
     },
   },
   "packages": {
+    "3d-tiles-renderer": ["3d-tiles-renderer@0.4.19", "", { "peerDependencies": { "@react-three/fiber": "^8.17.9 || ^9.0.0", "react": "^18.3.1 || ^19.0.0", "react-dom": "^18.3.1 || ^19.0.0", "three": ">=0.167.0" }, "optionalPeers": ["@react-three/fiber", "react", "react-dom"] }, "sha512-emynINuVR+fvop+YN456zFcOdwwzRbKAXIKfvkF3avDIS4Sm3jhuTeGBaO754ghXI/xyjPup0ZSryQ7SUvO8AA=="],
+
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.27.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-GZMB+a0mOMZs4MpDbj8RJp4cw+w1WV5NYD6xzgvzUJ5Ek2jerwfO2eADyI6ExDSUED+1X8aMbegahsJi+8mgpw=="],
 
     "@esbuild/android-arm": ["@esbuild/android-arm@0.27.2", "", { "os": "android", "cpu": "arm" }, "sha512-DVNI8jlPa7Ujbr1yjU2PfUSRtAUZPG9I1RwW4F4xFB1Imiu2on0ADiI/c3td+KmDtVKNbi+nffGDQMfcIMkwIA=="],

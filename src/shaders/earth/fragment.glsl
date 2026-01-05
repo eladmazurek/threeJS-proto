@@ -37,6 +37,9 @@ uniform float uSpecularGlowSize;         // Size of medium glow (higher = smalle
 uniform int uColorMode;                  // 0=normal, 1=grayscale, 2=night vision, 3=thermal, 4=hologram
 uniform float uNightBlend;               // 0=day only, 1=day/night blend
 
+// Opacity for crossfade with 3D tiles
+uniform float uOpacity;
+
 // Varyings from vertex shader
 varying vec2 vUv;                        // Texture coordinates
 varying vec3 vNormal;                    // Surface normal in world space
@@ -212,7 +215,7 @@ void main()
     // FINAL OUTPUT
     // ==========================================================================
 
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragColor = vec4(color, uOpacity);
 
     // Three.js color management
     #include <tonemapping_fragment>
