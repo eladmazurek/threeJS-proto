@@ -3450,11 +3450,18 @@ function updateSelectionRing() {
   const theta = (lon + 180) * (Math.PI / 180);
   const radius = EARTH_RADIUS + altitude;
 
-  const x = -radius * Math.sin(phi) * Math.cos(theta);
+  let x = -radius * Math.sin(phi) * Math.cos(theta);
   const y = radius * Math.cos(phi);
-  const z = radius * Math.sin(phi) * Math.sin(theta);
+  let z = radius * Math.sin(phi) * Math.sin(theta);
 
-  selectionRing.position.set(x, y, z);
+  // Apply earth rotation to position (rotate around world Y axis)
+  const earthRotY = earth.rotation.y;
+  const cosR = Math.cos(earthRotY);
+  const sinR = Math.sin(earthRotY);
+  const rx = x * cosR + z * sinR;
+  const rz = -x * sinR + z * cosR;
+
+  selectionRing.position.set(rx, y, rz);
 
   // Orient ring perpendicular to surface (face outward from Earth center)
   // Surface normal points from origin to position
@@ -5749,7 +5756,7 @@ const tick = () => {
   patrolCircle.rotation.y = earthRotY;
   observationLine.rotation.y = earthRotY;
   targetMarker.rotation.y = earthRotY;
-  selectionRing.rotation.y = earthRotY;
+  // selectionRing position is already rotated in updateSelectionRing()
   orbitLine.rotation.y = earthRotY;
 
   // Update weather animation
