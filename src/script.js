@@ -3481,6 +3481,12 @@ function updateSelectionRing() {
   };
   selectionRingMaterial.uniforms.uColor.value.setHex(colors[type] || 0xffffff);
 
+  // Scale ring to match icon scaling (including user multiplier)
+  const cameraDistance = camera.position.length();
+  const baseDistance = 13;
+  const ringScale = Math.max(0.3, Math.min(2.0, cameraDistance / baseDistance)) * iconScaleParams.multiplier;
+  selectionRing.scale.setScalar(ringScale);
+
   selectionRing.visible = true;
 }
 
@@ -4593,7 +4599,7 @@ const AIRPORTS = [
 const airportParams = {
   visible: true,
   showLabels: true,
-  markerSize: 0.02, // Default size (also controls label size)
+  markerSize: 0.06, // Default size (also controls label size)
 };
 
 // Group to hold all airport markers
@@ -4684,15 +4690,19 @@ function createAirportMarker(lat, lon, code) {
   if (right.length() < 0.001) {
     right.set(1, 0, 0);
   }
-  const labelOffset = 0.02;
+  // Store base position and offset direction for dynamic positioning
+  const baseOffset = 0.06;
   label.position.set(
-    x + right.x * labelOffset,
-    y + right.y * labelOffset,
-    z + right.z * labelOffset
+    x + right.x * baseOffset,
+    y + right.y * baseOffset,
+    z + right.z * baseOffset
   );
-  label.scale.set(0.04, 0.015, 1); // Smaller base size
+  label.scale.set(0.12, 0.045, 1); // Base size (3x increase to match marker)
   label.userData.isLabel = true;
-  label.userData.baseScale = { x: 0.04, y: 0.015 };
+  label.userData.baseScale = { x: 0.12, y: 0.045 };
+  label.userData.basePosition = { x, y, z }; // Marker position
+  label.userData.offsetDirection = { x: right.x, y: right.y, z: right.z };
+  label.userData.baseOffset = baseOffset;
   group.add(label);
 
   // Store marker base scale for dynamic sizing
@@ -4744,16 +4754,15 @@ function updateAirportLabels() {
  * Keeps them at a consistent screen size regardless of zoom
  */
 function updateAirportScales(cameraDistance) {
-  // Scale factor: smaller when zoomed in, larger when zoomed out
-  // Normalize to a comfortable size at mid-zoom
-  const midZoom = 5; // Reference distance
-  const scaleFactor = cameraDistance / midZoom;
+  // Scale factor: same as icons
+  const baseDistance = 13;
+  const scaleFactor = cameraDistance / baseDistance;
 
   // Clamp scale to reasonable range
   const clampedScale = Math.max(0.3, Math.min(2.0, scaleFactor));
 
-  // Use markerSize param as multiplier for both marker and label
-  const sizeMultiplier = airportParams.markerSize / 0.02; // Normalize to default size
+  // Use markerSize param as multiplier
+  const sizeMultiplier = airportParams.markerSize / 0.06; // Normalize to default size
 
   airportGroup.traverse((obj) => {
     if (obj.userData && obj.userData.baseScale) {
@@ -4765,6 +4774,17 @@ function updateAirportScales(cameraDistance) {
           obj.userData.baseScale.y * labelScale,
           1
         );
+        // Also update label position to maintain constant visual distance from marker
+        if (obj.userData.basePosition && obj.userData.offsetDirection) {
+          const bp = obj.userData.basePosition;
+          const od = obj.userData.offsetDirection;
+          const scaledOffset = obj.userData.baseOffset * clampedScale;
+          obj.position.set(
+            bp.x + od.x * scaledOffset,
+            bp.y + od.y * scaledOffset,
+            bp.z + od.z * scaledOffset
+          );
+        }
       } else {
         // Markers
         const size = airportParams.markerSize * clampedScale;
@@ -5020,7 +5040,7 @@ airportsFolder.add(airportParams, "visible").name("Show Airports").onChange(() =
 airportsFolder.add(airportParams, "showLabels").name("Show Labels").onChange(() => {
   updateAirportLabels();
 });
-airportsFolder.add(airportParams, "markerSize", 0.01, 0.05, 0.002).name("Size");
+airportsFolder.add(airportParams, "markerSize", 0.02, 0.12, 0.005).name("Size");
 
 // Motion/Speed folder - simplified controls
 const motionFolder = gui.addFolder("Motion");
@@ -5764,16 +5784,16 @@ const tick = () => {
     weatherMaterial.uniforms.uTime.value = elapsedTime;
   }
 
+  // Scale tracking icons based on camera distance BEFORE motion simulation
+  // so attributes use current frame's scale
+  const cameraDistance = camera.position.length();
+  updateIconScale(cameraDistance);
+
   // Update motion simulation for ships and aircraft
   updateMotionSimulation(elapsedTime);
 
   // Update unit trails (throttled internally)
   updateTrails();
-
-  // Scale tracking icons based on camera distance
-  // Icons should be smaller when zoomed in, larger when zoomed out
-  const cameraDistance = camera.position.length();
-  updateIconScale(cameraDistance);
 
   // Adjust rotation speed based on zoom level
   // Slower when zoomed in for precise control, faster when zoomed out
