@@ -129,6 +129,143 @@ function calculateDensity(data) {
   return { densityEntries, cellCountEntries, allCells };
 }
 
+// =============================================================================
+// LABEL VISIBILITY INDEX
+// =============================================================================
+
+// Persistent spatial index for labels
+const labelIndex = {
+  ships: new Map(),      // H3 cell -> array of indices
+  aircraft: new Map(),   // H3 cell -> array of indices
+  drones: new Map(),     // H3 cell -> array of indices
+  resolution: 3,
+};
+
+/**
+ * Build the label spatial index from unit positions
+ */
+function buildLabelIndex(data) {
+  const { resolution, shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons } = data;
+
+  labelIndex.resolution = resolution;
+  labelIndex.ships.clear();
+  labelIndex.aircraft.clear();
+  labelIndex.drones.clear();
+
+  // Index ships
+  if (shipLats && shipLons) {
+    for (let i = 0; i < shipLats.length; i++) {
+      const lat = shipLats[i];
+      const lon = shipLons[i];
+      if (lat === 0 && lon === 0) continue; // Skip uninitialized
+      try {
+        const cell = h3.latLngToCell(lat, lon, resolution);
+        if (!labelIndex.ships.has(cell)) {
+          labelIndex.ships.set(cell, []);
+        }
+        labelIndex.ships.get(cell).push(i);
+      } catch (e) { /* Skip invalid */ }
+    }
+  }
+
+  // Index aircraft
+  if (aircraftLats && aircraftLons) {
+    for (let i = 0; i < aircraftLats.length; i++) {
+      const lat = aircraftLats[i];
+      const lon = aircraftLons[i];
+      if (lat === 0 && lon === 0) continue;
+      try {
+        const cell = h3.latLngToCell(lat, lon, resolution);
+        if (!labelIndex.aircraft.has(cell)) {
+          labelIndex.aircraft.set(cell, []);
+        }
+        labelIndex.aircraft.get(cell).push(i);
+      } catch (e) { /* Skip invalid */ }
+    }
+  }
+
+  // Index drones
+  if (droneLats && droneLons) {
+    for (let i = 0; i < droneLats.length; i++) {
+      const lat = droneLats[i];
+      const lon = droneLons[i];
+      if (lat === 0 && lon === 0) continue;
+      try {
+        const cell = h3.latLngToCell(lat, lon, resolution);
+        if (!labelIndex.drones.has(cell)) {
+          labelIndex.drones.set(cell, []);
+        }
+        labelIndex.drones.get(cell).push(i);
+      } catch (e) { /* Skip invalid */ }
+    }
+  }
+
+  return {
+    shipCells: labelIndex.ships.size,
+    aircraftCells: labelIndex.aircraft.size,
+    droneCells: labelIndex.drones.size,
+    totalShips: shipLats ? shipLats.length : 0,
+    totalAircraft: aircraftLats ? aircraftLats.length : 0,
+    totalDrones: droneLats ? droneLats.length : 0,
+  };
+}
+
+/**
+ * Query visible units based on camera position
+ * Returns arrays of unit indices that are in visible H3 cells
+ */
+function queryVisibleUnits(data) {
+  const { centerLat, centerLon, ringSize, includeShips, includeAircraft, includeDrones } = data;
+  const resolution = labelIndex.resolution;
+
+  const visibleShips = [];
+  const visibleAircraft = [];
+  const visibleDrones = [];
+
+  try {
+    // Get center cell and surrounding ring
+    const centerCell = h3.latLngToCell(centerLat, centerLon, resolution);
+    const visibleCells = h3.gridDisk(centerCell, ringSize);
+
+    // Collect unit indices from visible cells
+    if (includeShips) {
+      for (const cell of visibleCells) {
+        const indices = labelIndex.ships.get(cell);
+        if (indices) {
+          visibleShips.push(...indices);
+        }
+      }
+    }
+
+    if (includeAircraft) {
+      for (const cell of visibleCells) {
+        const indices = labelIndex.aircraft.get(cell);
+        if (indices) {
+          visibleAircraft.push(...indices);
+        }
+      }
+    }
+
+    if (includeDrones) {
+      for (const cell of visibleCells) {
+        const indices = labelIndex.drones.get(cell);
+        if (indices) {
+          visibleDrones.push(...indices);
+        }
+      }
+    }
+
+    return {
+      shipIndices: visibleShips,
+      aircraftIndices: visibleAircraft,
+      droneIndices: visibleDrones,
+      cellCount: visibleCells.length,
+    };
+  } catch (e) {
+    return { shipIndices: [], aircraftIndices: [], droneIndices: [], cellCount: 0, error: e.message };
+  }
+}
+
 // Handle messages from main thread
 self.onmessage = function(e) {
   const { type, data } = e.data;
@@ -136,5 +273,15 @@ self.onmessage = function(e) {
   if (type === 'calculateDensity') {
     const result = calculateDensity(data);
     self.postMessage({ type: 'densityResult', data: result });
+  }
+
+  if (type === 'buildLabelIndex') {
+    const result = buildLabelIndex(data);
+    self.postMessage({ type: 'labelIndexBuilt', data: result });
+  }
+
+  if (type === 'queryVisibleUnits') {
+    const result = queryVisibleUnits(data);
+    self.postMessage({ type: 'visibleUnitsResult', data: result });
   }
 };

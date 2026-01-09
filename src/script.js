@@ -419,8 +419,8 @@ gui.title("Controls");
     /* Unit info panel */
     #unit-info {
       position: absolute;
-      bottom: 20px;
-      right: 20px;
+      top: 50px;
+      left: 20px;
       background: rgba(0, 0, 0, 0.85);
       border: 1px solid rgba(255, 255, 255, 0.2);
       border-radius: 4px;
@@ -504,8 +504,8 @@ gui.title("Controls");
     /* Drone Video Feed Panel */
     #drone-feed {
       position: absolute;
-      bottom: 20px;
-      right: 220px;
+      top: 230px;
+      left: 20px;
       background: rgba(0, 0, 0, 0.9);
       border: 1px solid rgba(132, 204, 22, 0.5);
       border-radius: 4px;
@@ -2853,7 +2853,7 @@ function createTrackingGeometry(baseGeometry, maxInstances) {
     instancedGeometry.attributes.normal = baseGeometry.attributes.normal;
   }
 
-  // Create instanced attribute buffers
+  // Create separate instanced attribute buffers
   const latArray = new Float32Array(maxInstances);
   const lonArray = new Float32Array(maxInstances);
   const headingArray = new Float32Array(maxInstances);
@@ -3143,6 +3143,883 @@ droneMesh.renderOrder = 2; // Same level as aircraft
 scene.add(droneMesh); // Added to scene (not earth) so units stay visible with 3D tiles
 
 // -----------------------------------------------------------------------------
+// UNIT LABELS - GPU-instanced SDF text rendering (Flat Buffer Architecture)
+// -----------------------------------------------------------------------------
+
+// Label system configuration
+const labelParams = {
+  enabled: true,
+  maxLabels: 500,
+  updateInterval: 100,        // ms between spatial filter updates
+  fontSize: 0.015,            // Base scale for labels
+  labelOffset: 0.025,         // Offset to the right of unit (screen-space)
+  showShipLabels: true,
+  showAircraftLabels: true,
+  showDroneLabels: true,
+  debugMode: 0,               // 0=normal, 1=UV, 2=texture, 3=solid
+  h3Resolution: 3,            // H3 resolution for spatial indexing (2-4 recommended)
+};
+
+// =============================================================================
+// LABEL VISIBILITY - Worker-based H3 spatial indexing
+// =============================================================================
+// Heavy H3 work is done in web worker, main thread only renders
+
+// Visible unit indices (updated by worker)
+const labelVisibility = {
+  shipIndices: [],        // Indices of ships in visible H3 cells
+  aircraftIndices: [],    // Indices of aircraft in visible H3 cells
+  droneIndices: [],       // Indices of drones in visible H3 cells
+  lastQuery: 0,
+  queryInterval: 200,     // Query worker every 200ms
+  lastIndexBuild: -Infinity,  // Force first build immediately
+  indexBuildInterval: 1000,   // Rebuild index every 1s
+  pendingQuery: false,
+};
+
+// Label slot assignments - maps label index to unit info
+// This allows per-frame position updates without full reassignment
+const labelAssignments = {
+  slots: [],      // Array of {type: 0|1, unitIndex: number} per label slot
+  count: 0,       // Number of active labels
+};
+
+// Pooled typed arrays for worker communication (avoid GC pressure)
+// These are pre-allocated at max size and reused
+const workerArrayPool = {
+  shipLats: null,
+  shipLons: null,
+  aircraftLats: null,
+  aircraftLons: null,
+  droneLats: null,
+  droneLons: null,
+  // Track current capacity to resize if needed
+  shipCapacity: 0,
+  aircraftCapacity: 0,
+  droneCapacity: 0,
+};
+
+/**
+ * Ensure pooled arrays are large enough for current unit counts
+ */
+function ensureWorkerArrayCapacity() {
+  const shipCount = shipSimState.length;
+  const aircraftCount = aircraftSimState.length;
+  const droneCount = droneSimState.length;
+
+  if (shipCount > workerArrayPool.shipCapacity) {
+    // Allocate with 20% headroom to avoid frequent resizes
+    const newCapacity = Math.ceil(shipCount * 1.2);
+    workerArrayPool.shipLats = new Float32Array(newCapacity);
+    workerArrayPool.shipLons = new Float32Array(newCapacity);
+    workerArrayPool.shipCapacity = newCapacity;
+  }
+
+  if (aircraftCount > workerArrayPool.aircraftCapacity) {
+    const newCapacity = Math.ceil(aircraftCount * 1.2);
+    workerArrayPool.aircraftLats = new Float32Array(newCapacity);
+    workerArrayPool.aircraftLons = new Float32Array(newCapacity);
+    workerArrayPool.aircraftCapacity = newCapacity;
+  }
+
+  if (droneCount > workerArrayPool.droneCapacity) {
+    const newCapacity = Math.ceil(droneCount * 1.2);
+    workerArrayPool.droneLats = new Float32Array(newCapacity);
+    workerArrayPool.droneLons = new Float32Array(newCapacity);
+    workerArrayPool.droneCapacity = newCapacity;
+  }
+}
+
+// Camera movement threshold - only re-query if camera moved significantly
+const cameraState = {
+  lastLat: 0,
+  lastLon: 0,
+  lastDist: 0,
+  threshold: 2.0,  // Degrees of movement before re-query
+};
+
+/**
+ * Get camera center in lat/lon (accounts for earth rotation)
+ */
+function getCameraLatLon() {
+  const camPos = camera.position;
+  const camDist = camPos.length();
+  const earthRotY = earth.rotation.y;
+
+  // Undo earth rotation to get earth-fixed coordinates
+  const cosR = Math.cos(-earthRotY);
+  const sinR = Math.sin(-earthRotY);
+  const camX = camPos.x * cosR + camPos.z * sinR;
+  const camY = camPos.y;
+  const camZ = -camPos.x * sinR + camPos.z * cosR;
+
+  // Normalize to get point on earth surface
+  const len = Math.sqrt(camX * camX + camY * camY + camZ * camZ);
+  const x = (camX / len) * EARTH_RADIUS;
+  const y = (camY / len) * EARTH_RADIUS;
+  const z = (camZ / len) * EARTH_RADIUS;
+
+  // Convert to lat/lon
+  const lat = Math.asin(y / EARTH_RADIUS) * (180 / Math.PI);
+  const lon = ((Math.atan2(z, -x) * (180 / Math.PI) - 180 + 540) % 360) - 180;
+
+  return { lat, lon, dist: camDist };
+}
+
+/**
+ * Check if camera has moved enough to warrant a new query
+ */
+function cameraMovedSignificantly() {
+  const { lat, lon, dist } = getCameraLatLon();
+  const dLat = Math.abs(lat - cameraState.lastLat);
+  const dLon = Math.abs(lon - cameraState.lastLon);
+  const dDist = Math.abs(dist - cameraState.lastDist);
+
+  // Threshold scales with zoom - when zoomed in, smaller movements matter more
+  const zoomScale = Math.max(0.5, dist / 5);
+  const threshold = cameraState.threshold * zoomScale;
+
+  if (dLat > threshold || dLon > threshold || dDist > 0.5) {
+    cameraState.lastLat = lat;
+    cameraState.lastLon = lon;
+    cameraState.lastDist = dist;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Send index build request to worker
+ * Uses pooled arrays to avoid GC pressure
+ */
+function requestLabelIndexBuild() {
+  // Ensure arrays are large enough
+  ensureWorkerArrayCapacity();
+
+  const shipCount = shipSimState.length;
+  const aircraftCount = aircraftSimState.length;
+  const droneCount = droneSimState.length;
+
+  // Fill pooled arrays (reusing existing memory)
+  const { shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons } = workerArrayPool;
+
+  for (let i = 0; i < shipCount; i++) {
+    shipLats[i] = shipSimState[i].lat;
+    shipLons[i] = shipSimState[i].lon;
+  }
+
+  for (let i = 0; i < aircraftCount; i++) {
+    aircraftLats[i] = aircraftSimState[i].lat;
+    aircraftLons[i] = aircraftSimState[i].lon;
+  }
+
+  for (let i = 0; i < droneCount; i++) {
+    droneLats[i] = droneSimState[i].lat;
+    droneLons[i] = droneSimState[i].lon;
+  }
+
+  // Send subarray views (no copy, just a view into the pooled buffer)
+  h3Worker.postMessage({
+    type: 'buildLabelIndex',
+    data: {
+      resolution: labelParams.h3Resolution,
+      shipLats: shipLats.subarray(0, shipCount),
+      shipLons: shipLons.subarray(0, shipCount),
+      aircraftLats: aircraftLats.subarray(0, aircraftCount),
+      aircraftLons: aircraftLons.subarray(0, aircraftCount),
+      droneLats: droneLats ? droneLats.subarray(0, droneCount) : null,
+      droneLons: droneLons ? droneLons.subarray(0, droneCount) : null,
+    }
+  });
+
+  labelVisibility.lastIndexBuild = performance.now();
+}
+
+/**
+ * Send visibility query to worker
+ */
+function requestVisibleUnits() {
+  if (labelVisibility.pendingQuery) return;
+
+  const { lat, lon, dist } = getCameraLatLon();
+
+  // Ring size based on zoom, with padding for screen edges
+  // Without padding, units at frustum edges won't get labels
+  const zoomFactor = Math.max(0.1, (dist - EARTH_RADIUS) / EARTH_RADIUS);
+  const baseRing = Math.floor(zoomFactor * 15);
+  const ringPadding = 4; // Extra rings to cover screen edges
+  const ringSize = Math.max(4, Math.min(25, baseRing + ringPadding));
+
+  h3Worker.postMessage({
+    type: 'queryVisibleUnits',
+    data: {
+      centerLat: lat,
+      centerLon: lon,
+      ringSize,
+      includeShips: labelParams.showShipLabels && unitCountParams.showShips,
+      includeAircraft: labelParams.showAircraftLabels && unitCountParams.showAircraft,
+      includeDrones: labelParams.showDroneLabels && unitCountParams.showDrones,
+    }
+  });
+
+  labelVisibility.pendingQuery = true;
+  labelVisibility.lastQuery = performance.now();
+}
+
+// Constants
+const MAX_LABEL_CHARS = 24;
+const CHAR_SET = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ|.-/";
+const ATLAS_SIZE = 512;
+const ATLAS_CHAR_SIZE = 32;
+
+// Character lookup table - O(1) encoding (ASCII codes 0-127)
+const CHAR_TO_INDEX = new Uint8Array(128);
+CHAR_SET.split('').forEach((c, i) => { CHAR_TO_INDEX[c.charCodeAt(0)] = i; });
+
+// UV lookup tables - flat arrays indexed by character index
+const CHAR_UV_U = new Float32Array(CHAR_SET.length);
+const CHAR_UV_V = new Float32Array(CHAR_SET.length);
+const CHAR_UV_W = ATLAS_CHAR_SIZE / ATLAS_SIZE; // Same for all chars (monospace)
+const CHAR_UV_H = ATLAS_CHAR_SIZE / ATLAS_SIZE;
+
+// Pre-compute UV coordinates for each character
+const charsPerRow = Math.floor(ATLAS_SIZE / ATLAS_CHAR_SIZE);
+for (let i = 0; i < CHAR_SET.length; i++) {
+  const col = i % charsPerRow;
+  const row = Math.floor(i / charsPerRow);
+  CHAR_UV_U[i] = col * ATLAS_CHAR_SIZE / ATLAS_SIZE;
+  CHAR_UV_V[i] = row * ATLAS_CHAR_SIZE / ATLAS_SIZE;
+}
+
+// Font atlas texture
+let fontAtlasTexture = null;
+
+/**
+ * Generate font atlas texture
+ */
+function generateFontAtlas() {
+  const canvas = document.createElement('canvas');
+  canvas.width = ATLAS_SIZE;
+  canvas.height = ATLAS_SIZE;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, ATLAS_SIZE, ATLAS_SIZE);
+
+  ctx.fillStyle = 'white';
+  ctx.font = `bold ${ATLAS_CHAR_SIZE - 4}px "SF Mono", Monaco, "Courier New", monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i < CHAR_SET.length; i++) {
+    const col = i % charsPerRow;
+    const row = Math.floor(i / charsPerRow);
+    const x = col * ATLAS_CHAR_SIZE + ATLAS_CHAR_SIZE / 2;
+    const y = row * ATLAS_CHAR_SIZE + ATLAS_CHAR_SIZE / 2;
+    ctx.fillText(CHAR_SET[i], x, y);
+  }
+
+  fontAtlasTexture = new THREE.CanvasTexture(canvas);
+  fontAtlasTexture.flipY = false; // Canvas Y=0 is top, we want UV V=0 to be top
+  fontAtlasTexture.minFilter = THREE.LinearFilter;
+  fontAtlasTexture.magFilter = THREE.LinearFilter;
+  fontAtlasTexture.needsUpdate = true;
+
+  // Debug: log atlas info
+  console.log('Font atlas generated:', ATLAS_SIZE + 'x' + ATLAS_SIZE, 'chars:', CHAR_SET.length);
+
+  // Debug: show atlas in corner of screen (uncomment to debug)
+  // canvas.style.cssText = 'position:fixed;bottom:10px;left:10px;width:128px;height:128px;border:1px solid white;z-index:1000;opacity:0.9;';
+  // canvas.id = 'debug-font-atlas';
+  // document.body.appendChild(canvas);
+}
+
+generateFontAtlas();
+
+// =============================================================================
+// FLAT BUFFER DATA STRUCTURES
+// =============================================================================
+
+// Candidate buffer for spatial filtering (avoids object allocations)
+const MAX_CANDIDATES = 2000;
+const candidateBuffer = {
+  // Parallel arrays for candidate data
+  type: new Uint8Array(MAX_CANDIDATES),        // 0=ship, 1=aircraft
+  index: new Uint16Array(MAX_CANDIDATES),      // Index into simState array
+  priority: new Float32Array(MAX_CANDIDATES),  // Distance-based priority
+  worldX: new Float32Array(MAX_CANDIDATES),    // Pre-computed world position
+  worldY: new Float32Array(MAX_CANDIDATES),
+  worldZ: new Float32Array(MAX_CANDIDATES),
+  count: 0,
+};
+
+// Label buffer - directly maps to GPU attributes
+const totalInstances = labelParams.maxLabels * MAX_LABEL_CHARS;
+const labelBuffer = {
+  positions: new Float32Array(totalInstances * 3),
+  charUVs: new Float32Array(totalInstances * 4),
+  colors: new Float32Array(totalInstances * 3),
+  scales: new Float32Array(totalInstances),
+  charIndices: new Float32Array(totalInstances),
+  activeCount: 0,
+};
+
+// Pre-fill character indices (static - never changes)
+for (let label = 0; label < labelParams.maxLabels; label++) {
+  for (let char = 0; char < MAX_LABEL_CHARS; char++) {
+    labelBuffer.charIndices[label * MAX_LABEL_CHARS + char] = char;
+  }
+}
+
+// Reusable Vector3s to avoid allocations in hot path
+const _tempVec3 = new THREE.Vector3();
+const _tempVec3b = new THREE.Vector3();
+const _surfaceNormal = new THREE.Vector3();
+const _toCamera = new THREE.Vector3();
+const _offsetDir = new THREE.Vector3();
+const _worldUp = new THREE.Vector3(0, 1, 0);
+
+// Pre-allocated text buffer for formatting (avoids string allocations)
+const _textBuffer = new Uint8Array(MAX_LABEL_CHARS);
+
+// Label geometry and mesh references
+let labelGeometry = null;
+let labelMaterial = null;
+let labelMesh = null;
+
+// Frustum for spatial filtering
+const labelFrustum = new THREE.Frustum();
+const labelProjMatrix = new THREE.Matrix4();
+
+/**
+ * Initialize the label instancing system
+ */
+function initLabelSystem() {
+  labelGeometry = new THREE.InstancedBufferGeometry();
+
+  // Base quad vertices (2 triangles)
+  const quadPositions = new Float32Array([
+    -0.5, -0.5, 0,  0.5, -0.5, 0,  0.5, 0.5, 0,
+    -0.5, -0.5, 0,  0.5, 0.5, 0,  -0.5, 0.5, 0,
+  ]);
+  labelGeometry.setAttribute('position', new THREE.BufferAttribute(quadPositions, 3));
+
+  // Create instanced buffer attributes from our flat buffers
+  const posAttr = new THREE.InstancedBufferAttribute(labelBuffer.positions, 3);
+  const uvAttr = new THREE.InstancedBufferAttribute(labelBuffer.charUVs, 4);
+  const colorAttr = new THREE.InstancedBufferAttribute(labelBuffer.colors, 3);
+  const scaleAttr = new THREE.InstancedBufferAttribute(labelBuffer.scales, 1);
+  const charIdxAttr = new THREE.InstancedBufferAttribute(labelBuffer.charIndices, 1);
+
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  uvAttr.setUsage(THREE.DynamicDrawUsage);
+  colorAttr.setUsage(THREE.DynamicDrawUsage);
+  scaleAttr.setUsage(THREE.DynamicDrawUsage);
+
+  labelGeometry.setAttribute('aLabelPos', posAttr);
+  labelGeometry.setAttribute('aCharUV', uvAttr);
+  labelGeometry.setAttribute('aColor', colorAttr);
+  labelGeometry.setAttribute('aScale', scaleAttr);
+  labelGeometry.setAttribute('aCharIndex', charIdxAttr);
+
+  labelGeometry.userData = { posAttr, uvAttr, colorAttr, scaleAttr };
+
+  // Inline shaders to avoid import/caching issues
+  const inlineVertexShader = `
+    attribute vec3 aLabelPos;
+    attribute float aCharIndex;
+    attribute vec4 aCharUV;
+    attribute vec3 aColor;
+    attribute float aScale;
+
+    uniform float uCharWidth;
+    uniform float uCharHeight;
+    uniform float uCharsPerLine;  // For multi-line layout
+    uniform float uCameraDistance; // For GPU semantic zoom
+    uniform float uLabelOffset;   // Offset to the right of unit (screen-space)
+
+    varying vec2 vUV;
+    varying vec3 vColor;
+
+    void main() {
+      vColor = aColor;
+
+      // GPU Semantic Zoom: scale based on camera distance
+      // Closer = larger labels, farther = smaller
+      float zoomScale = clamp(uCameraDistance * 0.15, 0.3, 2.0);
+      float finalScale = aScale * zoomScale;
+
+      // Billboard vectors from view matrix
+      vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+      vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+
+      // Multi-line layout: which line and column is this character?
+      float lineNum = floor(aCharIndex / uCharsPerLine);
+      float colNum = mod(aCharIndex, uCharsPerLine);
+
+      // Character offset (left to right from viewer's perspective)
+      float charOffsetX = colNum * uCharWidth * finalScale;
+      float charOffsetY = -lineNum * uCharHeight * finalScale * 1.2; // Line spacing
+
+      // Quad position
+      float qx = position.x * uCharWidth * finalScale;
+      float qy = position.y * uCharHeight * finalScale;
+
+      // Position label to the right of unit in screen-space
+      vec3 worldPos = aLabelPos
+        + camRight * (qx + charOffsetX + uLabelOffset)
+        + camUp * (qy + charOffsetY);
+
+      // UV mapping - flip V to correct upside-down characters
+      vUV = aCharUV.xy + vec2(position.x + 0.5, 0.5 - position.y) * aCharUV.zw;
+
+      gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+    }
+  `;
+
+  const inlineFragmentShader = `
+    precision highp float;
+    uniform sampler2D uAtlas;
+    uniform float uSmoothing;
+    uniform float uDebugMode; // 0=normal, 1=show UV, 2=show texture, 3=solid
+    varying vec2 vUV;
+    varying vec3 vColor;
+
+    void main() {
+      // Debug mode 3: solid color (geometry test)
+      if (uDebugMode > 2.5) {
+        gl_FragColor = vec4(vColor, 1.0);
+        return;
+      }
+
+      // Debug mode 1: visualize UV coordinates
+      if (uDebugMode > 0.5 && uDebugMode < 1.5) {
+        gl_FragColor = vec4(vUV.x, vUV.y, 0.0, 1.0);
+        return;
+      }
+
+      // Sample font atlas
+      vec4 texSample = texture2D(uAtlas, vUV);
+      float dist = texSample.r;
+
+      // Debug mode 2: visualize raw texture value
+      if (uDebugMode > 1.5 && uDebugMode < 2.5) {
+        gl_FragColor = vec4(dist, dist, dist, 1.0);
+        return;
+      }
+
+      // Normal rendering: threshold for canvas-rendered text
+      float alpha = smoothstep(0.1, 0.5, dist);
+
+      // Safety: if texture returns 0, show faint outline instead of discard
+      if (dist < 0.01) {
+        gl_FragColor = vec4(vColor * 0.3, 0.2);
+        return;
+      }
+
+      if (alpha < 0.01) discard;
+
+      gl_FragColor = vec4(vColor, alpha);
+    }
+  `;
+
+  labelMaterial = new THREE.ShaderMaterial({
+    vertexShader: inlineVertexShader,
+    fragmentShader: inlineFragmentShader,
+    uniforms: {
+      uAtlas: { value: fontAtlasTexture },
+      uCharWidth: { value: 0.7 },
+      uCharHeight: { value: 1.0 },
+      uCharsPerLine: { value: 12.0 },  // 2 lines of 12 chars
+      uCameraDistance: { value: 5.0 }, // Updated each frame for GPU zoom
+      uLabelOffset: { value: labelParams.labelOffset }, // Screen-space offset to right of unit
+      uAtlasSize: { value: new THREE.Vector2(ATLAS_SIZE, ATLAS_SIZE) },
+      uSmoothing: { value: 0.2 },
+      uOutlineWidth: { value: 0.1 },
+      uOutlineColor: { value: new THREE.Color(0x000000) },
+      uDebugMode: { value: 0.0 }, // 0=normal rendering
+    },
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+
+  labelMaterial.polygonOffset = true;
+  labelMaterial.polygonOffsetFactor = -2;
+  labelMaterial.polygonOffsetUnits = -2;
+
+  labelMesh = new THREE.Mesh(labelGeometry, labelMaterial);
+  labelMesh.frustumCulled = false;
+  labelMesh.renderOrder = 10;
+  labelMesh.visible = labelParams.enabled;
+  scene.add(labelMesh);
+
+  labelGeometry.instanceCount = 0;
+  labelGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 10);
+
+  console.log('Label system initialized (flat buffer v3)');
+  console.log('  - fontAtlasTexture:', fontAtlasTexture ? 'created' : 'MISSING');
+  console.log('  - labelMesh visible:', labelMesh.visible);
+  console.log('  - labelMaterial:', labelMaterial ? 'created' : 'MISSING');
+
+  // Note: Shader compiles lazily on first render, so we can't check here
+  console.log('  - Shader will compile on first render');
+}
+
+initLabelSystem();
+
+/**
+ * Convert lat/lon to world position (inline, writes to output vector)
+ */
+function latLonToWorld(lat, lon, altitude, earthRotY, outVec) {
+  const phi = (90 - lat) * 0.017453292519943295; // DEG_TO_RAD
+  const theta = (lon + 180) * 0.017453292519943295;
+  const radius = EARTH_RADIUS + altitude;
+
+  const sinPhi = Math.sin(phi);
+  const cosPhi = Math.cos(phi);
+  const sinTheta = Math.sin(theta);
+  const cosTheta = Math.cos(theta);
+
+  const x = -radius * sinPhi * cosTheta;
+  const y = radius * cosPhi;
+  const z = radius * sinPhi * sinTheta;
+
+  // Apply earth rotation
+  const cosR = Math.cos(earthRotY);
+  const sinR = Math.sin(earthRotY);
+
+  outVec.x = x * cosR + z * sinR;
+  outVec.y = y;
+  outVec.z = -x * sinR + z * cosR;
+}
+
+/**
+ * Check if position is on visible side of globe (no allocations)
+ */
+function isVisibleSide(wx, wy, wz, camX, camY, camZ) {
+  // Surface normal (normalized position)
+  const len = Math.sqrt(wx * wx + wy * wy + wz * wz);
+  const nx = wx / len, ny = wy / len, nz = wz / len;
+
+  // Direction to camera
+  const dx = camX - wx, dy = camY - wy, dz = camZ - wz;
+  const dlen = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+  // Dot product > 0 means facing camera
+  return (nx * dx + ny * dy + nz * dz) / dlen > 0;
+}
+
+/**
+ * Encode text directly into UV buffer (zero-allocation)
+ */
+function encodeTextToBuffer(text, labelIdx) {
+  const baseIdx = labelIdx * MAX_LABEL_CHARS * 4;
+
+  for (let c = 0; c < MAX_LABEL_CHARS; c++) {
+    const charCode = c < text.length ? text.charCodeAt(c) : 32; // space
+    const charIdx = charCode < 128 ? CHAR_TO_INDEX[charCode] : 0;
+
+    labelBuffer.charUVs[baseIdx + c * 4] = CHAR_UV_U[charIdx];
+    labelBuffer.charUVs[baseIdx + c * 4 + 1] = CHAR_UV_V[charIdx];
+    labelBuffer.charUVs[baseIdx + c * 4 + 2] = CHAR_UV_W;
+    labelBuffer.charUVs[baseIdx + c * 4 + 3] = CHAR_UV_H;
+  }
+}
+
+// Label layout: 2 lines of 12 chars each
+const CHARS_PER_LINE = 12;
+
+/**
+ * Format ship label text (2 lines)
+ * Line 1: Ship name (12 chars)
+ * Line 2: Speed info (12 chars)
+ */
+function formatShipLabel(unit) {
+  const name = (unit.name || 'UNKNOWN').substring(0, CHARS_PER_LINE).toUpperCase().padEnd(CHARS_PER_LINE);
+  const speed = unit.sog ? unit.sog.toFixed(1) + ' KT' : '0.0 KT';
+  const line2 = speed.padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
+  return name + line2;
+}
+
+/**
+ * Format aircraft label text (2 lines)
+ * Line 1: Callsign (12 chars)
+ * Line 2: Alt + Speed (12 chars)
+ */
+function formatAircraftLabel(unit) {
+  const callsign = (unit.callsign || 'N/A').substring(0, CHARS_PER_LINE).toUpperCase().padEnd(CHARS_PER_LINE);
+  const alt = unit.altitude ? Math.round(unit.altitude / 1000) + 'K' : '0K';
+  const spd = unit.groundSpeed ? unit.groundSpeed + 'KT' : '0KT';
+  const line2 = (alt + ' ' + spd).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
+  return callsign + line2;
+}
+
+/**
+ * Format drone/UAV label text (2 lines) - tactical style
+ * Line 1: Designation + status (12 chars)
+ * Line 2: Alt + mission type (12 chars)
+ */
+function formatDroneLabel(unit, index) {
+  // Tactical designation: MQ9-01, RQ4-02, etc.
+  const types = ['MQ9', 'RQ4', 'MQ1', 'RQ7'];
+  const type = types[index % types.length];
+  const num = String((index % 99) + 1).padStart(2, '0');
+  const status = 'ACTV';
+  const line1 = (type + '-' + num + ' ' + status).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
+
+  // Altitude in thousands + mission
+  const altFt = Math.round(unit.altitude * 6371 / EARTH_RADIUS * 3281);
+  const altK = Math.round(altFt / 1000) + 'K';
+  const mission = 'ISR';  // Intelligence, Surveillance, Reconnaissance
+  const line2 = ('FL' + altK + ' ' + mission).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
+
+  return line1 + line2;
+}
+
+// Track when labels were last rebuilt
+let _lastLabelRebuild = 0;
+let _lastVisibilityVersion = 0;
+let _labelVisibilityVersion = 0;
+
+/**
+ * Lightweight label update - only rebuilds when visibility changes
+ * Called every frame but does minimal work
+ */
+function updateLabelAssignments() {
+  if (!labelParams.enabled) {
+    labelGeometry.instanceCount = 0;
+    return;
+  }
+
+  // Update camera distance uniform for GPU semantic zoom (cheap, do every frame)
+  if (labelMaterial) {
+    labelMaterial.uniforms.uCameraDistance.value = camera.position.length();
+  }
+
+  const now = performance.now();
+
+  // Request worker updates (non-blocking)
+  if (now - labelVisibility.lastIndexBuild > labelVisibility.indexBuildInterval) {
+    requestLabelIndexBuild();
+  }
+
+  if (now - labelVisibility.lastQuery > labelVisibility.queryInterval) {
+    if (cameraMovedSignificantly()) {
+      requestVisibleUnits();
+    }
+  }
+
+  // CRITICAL: Skip expensive rebuild if visibility hasn't changed
+  // Only rebuild every 200ms OR when worker sends new data
+  const visibilityChanged = _labelVisibilityVersion !== _lastVisibilityVersion;
+  const timeToRebuild = now - _lastLabelRebuild > 200;
+
+  if (!visibilityChanged && !timeToRebuild) {
+    return; // Keep showing existing labels
+  }
+
+  _lastVisibilityVersion = _labelVisibilityVersion;
+  _lastLabelRebuild = now;
+
+  // Quick count of available units
+  const shipCount = labelVisibility.shipIndices.length;
+  const aircraftCount = labelVisibility.aircraftIndices.length;
+  const droneCount = labelVisibility.droneIndices.length;
+  const totalAvailable = shipCount + aircraftCount + droneCount;
+
+  if (totalAvailable === 0) {
+    labelGeometry.instanceCount = 0;
+    return;
+  }
+
+  const maxLabels = Math.min(labelParams.maxLabels, totalAvailable);
+  let labelIdx = 0;
+
+  // Reset assignments tracking
+  labelAssignments.count = 0;
+
+  // Take first N ships (no sorting - worker already filtered by proximity)
+  if (labelParams.showShipLabels && unitCountParams.showShips) {
+    const limit = Math.min(shipCount, maxLabels);
+    for (let j = 0; j < limit && labelIdx < maxLabels; j++) {
+      const i = labelVisibility.shipIndices[j];
+      const unit = shipSimState[i];
+      if (!unit) continue;
+
+      // Store assignment for per-frame position updates
+      labelAssignments.slots[labelIdx] = { type: 0, unitIndex: i };
+
+      // Fill buffers for this label (text, color, scale only - NOT position)
+      fillLabelBuffers(labelIdx, 0, unit);
+      labelIdx++;
+    }
+  }
+
+  // Take first N aircraft
+  if (labelParams.showAircraftLabels && unitCountParams.showAircraft) {
+    const limit = Math.min(aircraftCount, maxLabels - labelIdx);
+    for (let j = 0; j < limit && labelIdx < maxLabels; j++) {
+      const i = labelVisibility.aircraftIndices[j];
+      const unit = aircraftSimState[i];
+      if (!unit) continue;
+
+      // Store assignment for per-frame position updates
+      labelAssignments.slots[labelIdx] = { type: 1, unitIndex: i };
+
+      fillLabelBuffers(labelIdx, 1, unit);
+      labelIdx++;
+    }
+  }
+
+  // Take first N drones
+  if (labelParams.showDroneLabels && unitCountParams.showDrones) {
+    const limit = Math.min(droneCount, maxLabels - labelIdx);
+    for (let j = 0; j < limit && labelIdx < maxLabels; j++) {
+      const i = labelVisibility.droneIndices[j];
+      const unit = droneSimState[i];
+      if (!unit) continue;
+
+      // Store assignment for per-frame position updates (type 2 = drone)
+      labelAssignments.slots[labelIdx] = { type: 2, unitIndex: i };
+
+      fillLabelBuffers(labelIdx, 2, unit, i);
+      labelIdx++;
+    }
+  }
+
+  labelAssignments.count = labelIdx;
+
+  // Update GPU buffers (NOT positions - those are updated every frame in updateLabelPositions)
+  if (labelIdx > 0) {
+    labelGeometry.userData.uvAttr.needsUpdate = true;
+    labelGeometry.userData.colorAttr.needsUpdate = true;
+    labelGeometry.userData.scaleAttr.needsUpdate = true;
+  }
+
+  labelGeometry.instanceCount = labelIdx * MAX_LABEL_CHARS;
+}
+
+/**
+ * Fill label buffers for a single label (text, color, scale only - NOT position)
+ * Position is updated separately in updateLabelPositions() every frame
+ * unitType: 0=ship, 1=aircraft, 2=drone
+ */
+function fillLabelBuffers(labelIdx, unitType, unit, unitIndex) {
+  // Format text based on unit type
+  let text;
+  if (unitType === 0) {
+    text = formatShipLabel(unit);
+  } else if (unitType === 1) {
+    text = formatAircraftLabel(unit);
+  } else {
+    text = formatDroneLabel(unit, unitIndex || 0);
+  }
+
+  // Encode text to UVs
+  encodeTextToBuffer(text, labelIdx);
+
+  // Color: teal for ships, amber for aircraft, lime green for drones
+  let r, g, b;
+  if (unitType === 0) {
+    r = 0.18; g = 0.83; b = 0.75;  // Teal
+  } else if (unitType === 1) {
+    r = 0.98; g = 0.75; b = 0.14;  // Amber
+  } else {
+    r = 0.52; g = 0.80; b = 0.09;  // Lime green (#84cc16)
+  }
+
+  // Scale (will be modified by GPU based on camera distance)
+  const scale = labelParams.fontSize;
+
+  // Fill all character instances for this label (color and scale only)
+  const baseColor = labelIdx * MAX_LABEL_CHARS * 3;
+  const baseScale = labelIdx * MAX_LABEL_CHARS;
+
+  for (let c = 0; c < MAX_LABEL_CHARS; c++) {
+    const ci = baseColor + c * 3;
+    labelBuffer.colors[ci] = r;
+    labelBuffer.colors[ci + 1] = g;
+    labelBuffer.colors[ci + 2] = b;
+
+    labelBuffer.scales[baseScale + c] = scale;
+  }
+}
+
+/**
+ * Update label positions every frame based on current unit positions
+ * This runs every frame to ensure smooth label following
+ * Offset to the right is handled by GPU shader (uLabelOffset uniform)
+ */
+function updateLabelPositions() {
+  if (!labelParams.enabled || labelAssignments.count === 0) return;
+
+  const earthRotY = earth.rotation.y;
+
+  for (let labelIdx = 0; labelIdx < labelAssignments.count; labelIdx++) {
+    const assignment = labelAssignments.slots[labelIdx];
+    if (!assignment) continue;
+
+    // Get current unit position based on type (0=ship, 1=aircraft, 2=drone)
+    let unit, altitude;
+    if (assignment.type === 0) {
+      unit = shipSimState[assignment.unitIndex];
+      altitude = SHIP_ALTITUDE;
+    } else if (assignment.type === 1) {
+      unit = aircraftSimState[assignment.unitIndex];
+      altitude = AIRCRAFT_ALTITUDE;
+    } else {
+      unit = droneSimState[assignment.unitIndex];
+      altitude = unit ? unit.altitude : AIRCRAFT_ALTITUDE;
+    }
+    if (!unit) continue;
+
+    // Get world position with current earth rotation
+    latLonToWorld(unit.lat, unit.lon, altitude, earthRotY, _tempVec3);
+
+    // Fill position for all character instances of this label
+    // (GPU shader handles screen-space offset to the right)
+    const basePos = labelIdx * MAX_LABEL_CHARS * 3;
+    for (let c = 0; c < MAX_LABEL_CHARS; c++) {
+      const pi = basePos + c * 3;
+      labelBuffer.positions[pi] = _tempVec3.x;
+      labelBuffer.positions[pi + 1] = _tempVec3.y;
+      labelBuffer.positions[pi + 2] = _tempVec3.z;
+    }
+  }
+
+  // Mark position buffer for GPU upload
+  labelGeometry.userData.posAttr.needsUpdate = true;
+}
+
+// Increment version when worker returns new data
+const _origWorkerHandler = h3Worker.onmessage;
+h3Worker.onmessage = function(e) {
+  const { type, data } = e.data;
+
+  if (type === 'visibleUnitsResult') {
+    labelVisibility.shipIndices = data.shipIndices;
+    labelVisibility.aircraftIndices = data.aircraftIndices;
+    labelVisibility.droneIndices = data.droneIndices || [];
+    labelVisibility.pendingQuery = false;
+    _labelVisibilityVersion++; // Signal that data changed
+  }
+
+  if (type === 'labelIndexBuilt') {
+    // Index built - data.shipCells, data.aircraftCells available for debugging
+  }
+
+  // Forward density results
+  if (type === 'densityResult' && _origWorkerHandler) {
+    _origWorkerHandler.call(h3Worker, e);
+  }
+};
+
+// Throttle tracking (kept for compatibility)
+let lastLabelUpdate = 0;
+
+// -----------------------------------------------------------------------------
 // Drone Patrol Circle Visualization
 // -----------------------------------------------------------------------------
 const PATROL_CIRCLE_SEGMENTS = 64;
@@ -3218,6 +4095,11 @@ function updatePatrolCircle(drone) {
   const centerLon = drone.patrolCenterLon;
   const radius = drone.patrolRadius;
 
+  // Get earth rotation for position transformation
+  const earthRotY = earth.rotation.y;
+  const cosR = Math.cos(earthRotY);
+  const sinR = Math.sin(earthRotY);
+
   // Generate circle points around patrol center
   for (let i = 0; i < PATROL_CIRCLE_SEGMENTS; i++) {
     const angle = (i / PATROL_CIRCLE_SEGMENTS) * Math.PI * 2;
@@ -3229,14 +4111,19 @@ function updatePatrolCircle(drone) {
     const lat = centerLat + latOffset;
     const lon = centerLon + lonOffset;
 
-    // Convert to 3D
+    // Convert to 3D (unrotated)
     const phi = (90 - lat) * (Math.PI / 180);
     const theta = (lon + 180) * (Math.PI / 180);
     const r = EARTH_RADIUS + drone.altitude;
 
-    positions[i * 3] = -r * Math.sin(phi) * Math.cos(theta);
-    positions[i * 3 + 1] = r * Math.cos(phi);
-    positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    const x = -r * Math.sin(phi) * Math.cos(theta);
+    const y = r * Math.cos(phi);
+    const z = r * Math.sin(phi) * Math.sin(theta);
+
+    // Apply earth rotation
+    positions[i * 3] = x * cosR + z * sinR;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = -x * sinR + z * cosR;
   }
 
   patrolCircleGeometry.attributes.position.needsUpdate = true;
@@ -3253,15 +4140,23 @@ function updateObservationLine(drone) {
   if (!drone) return;
 
   const positions = observationLineGeometry.attributes.position.array;
+  const earthRotY = earth.rotation.y;
+  const cosR = Math.cos(earthRotY);
+  const sinR = Math.sin(earthRotY);
 
-  // Drone position
+  // Drone position (unrotated)
   const dronePhi = (90 - drone.lat) * (Math.PI / 180);
   const droneTheta = (drone.lon + 180) * (Math.PI / 180);
   const droneR = EARTH_RADIUS + drone.altitude;
 
-  positions[0] = -droneR * Math.sin(dronePhi) * Math.cos(droneTheta);
-  positions[1] = droneR * Math.cos(dronePhi);
-  positions[2] = droneR * Math.sin(dronePhi) * Math.sin(droneTheta);
+  let droneX = -droneR * Math.sin(dronePhi) * Math.cos(droneTheta);
+  const droneY = droneR * Math.cos(dronePhi);
+  let droneZ = droneR * Math.sin(dronePhi) * Math.sin(droneTheta);
+
+  // Apply earth rotation to drone position
+  positions[0] = droneX * cosR + droneZ * sinR;
+  positions[1] = droneY;
+  positions[2] = -droneX * sinR + droneZ * cosR;
 
   // Target position (on ground at patrol center)
   const targetLat = drone.targetLat;
@@ -3270,15 +4165,20 @@ function updateObservationLine(drone) {
   const targetTheta = (targetLon + 180) * (Math.PI / 180);
   const targetR = EARTH_RADIUS + 0.001; // Just above surface
 
-  positions[3] = -targetR * Math.sin(targetPhi) * Math.cos(targetTheta);
-  positions[4] = targetR * Math.cos(targetPhi);
-  positions[5] = targetR * Math.sin(targetPhi) * Math.sin(targetTheta);
+  let targetX = -targetR * Math.sin(targetPhi) * Math.cos(targetTheta);
+  const targetY = targetR * Math.cos(targetPhi);
+  let targetZ = targetR * Math.sin(targetPhi) * Math.sin(targetTheta);
+
+  // Apply earth rotation to target position
+  positions[3] = targetX * cosR + targetZ * sinR;
+  positions[4] = targetY;
+  positions[5] = -targetX * sinR + targetZ * cosR;
 
   observationLineGeometry.attributes.position.needsUpdate = true;
   observationLine.computeLineDistances(); // Required for dashed lines
   observationLine.visible = true;
 
-  // Update target marker position
+  // Update target marker position (rotated)
   targetMarker.position.set(positions[3], positions[4], positions[5]);
 
   // Orient marker to face outward from Earth
@@ -3849,28 +4749,38 @@ const iconScaleParams = {
 };
 
 /**
+ * Helper to mark buffer attribute for partial update
+ * Uses addUpdateRange for Three.js r144+
+ */
+function markAttributeForUpdate(attr, count) {
+  if (attr.clearUpdateRanges && attr.addUpdateRange) {
+    attr.clearUpdateRanges();
+    attr.addUpdateRange(0, count);
+  }
+  attr.needsUpdate = true;
+}
+
+/**
  * Update ship instances by writing directly to GPU attribute buffers
- * Much more efficient than uploading full matrices
  */
 function updateShipAttributes() {
-  const data = shipGeometry.userData;
+  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = shipGeometry.userData;
   const count = Math.min(shipSimState.length, MAX_SHIPS);
 
   for (let i = 0; i < count; i++) {
     const ship = shipSimState[i];
-    data.latArray[i] = ship.lat;
-    data.lonArray[i] = ship.lon;
-    data.headingArray[i] = ship.heading;
-    data.scaleArray[i] = ship.scale * currentIconScale;
+    latArray[i] = ship.lat;
+    lonArray[i] = ship.lon;
+    headingArray[i] = ship.heading;
+    scaleArray[i] = ship.scale * currentIconScale;
   }
 
-  // Mark attributes as needing upload to GPU
-  data.latAttr.needsUpdate = true;
-  data.lonAttr.needsUpdate = true;
-  data.headingAttr.needsUpdate = true;
-  data.scaleAttr.needsUpdate = true;
+  // Mark for partial update (only upload active units)
+  markAttributeForUpdate(latAttr, count);
+  markAttributeForUpdate(lonAttr, count);
+  markAttributeForUpdate(headingAttr, count);
+  markAttributeForUpdate(scaleAttr, count);
 
-  // Set instance count for rendering
   shipGeometry.instanceCount = count;
 }
 
@@ -3878,24 +4788,23 @@ function updateShipAttributes() {
  * Update aircraft instances by writing directly to GPU attribute buffers
  */
 function updateAircraftAttributes() {
-  const data = aircraftGeometry.userData;
+  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = aircraftGeometry.userData;
   const count = Math.min(aircraftSimState.length, MAX_AIRCRAFT);
 
   for (let i = 0; i < count; i++) {
     const aircraft = aircraftSimState[i];
-    data.latArray[i] = aircraft.lat;
-    data.lonArray[i] = aircraft.lon;
-    data.headingArray[i] = aircraft.heading;
-    data.scaleArray[i] = aircraft.scale * currentIconScale;
+    latArray[i] = aircraft.lat;
+    lonArray[i] = aircraft.lon;
+    headingArray[i] = aircraft.heading;
+    scaleArray[i] = aircraft.scale * currentIconScale;
   }
 
-  // Mark attributes as needing upload to GPU
-  data.latAttr.needsUpdate = true;
-  data.lonAttr.needsUpdate = true;
-  data.headingAttr.needsUpdate = true;
-  data.scaleAttr.needsUpdate = true;
+  // Mark for partial update (only upload active units)
+  markAttributeForUpdate(latAttr, count);
+  markAttributeForUpdate(lonAttr, count);
+  markAttributeForUpdate(headingAttr, count);
+  markAttributeForUpdate(scaleAttr, count);
 
-  // Set instance count for rendering
   aircraftGeometry.instanceCount = count;
 }
 
@@ -3911,26 +4820,27 @@ function updateIconScale(cameraDistance) {
  * Update satellite instances by writing directly to GPU attribute buffers
  */
 function updateSatelliteAttributes() {
-  const data = satelliteGeometry.userData;
+  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = satelliteGeometry.userData;
   const count = Math.min(satelliteSimState.length, MAX_SATELLITES);
 
   for (let i = 0; i < count; i++) {
     const sat = satelliteSimState[i];
-    data.latArray[i] = sat.lat;
-    data.lonArray[i] = sat.lon;
-    data.headingArray[i] = sat.heading;
+    latArray[i] = sat.lat;
+    lonArray[i] = sat.lon;
+    headingArray[i] = sat.heading;
     // Encode altitude and display scale in a single float:
     // Integer part: display scale * 10 (includes camera scaling)
     // Fractional part: altitude / 0.5 (normalized to 0-1 range)
     const scaledDisplay = sat.scale * currentIconScale;
     const normalizedAlt = sat.altitude / 0.5; // altitude 0-0.5 -> 0-1
-    data.scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
+    scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
   }
 
-  data.latAttr.needsUpdate = true;
-  data.lonAttr.needsUpdate = true;
-  data.headingAttr.needsUpdate = true;
-  data.scaleAttr.needsUpdate = true;
+  // Mark for partial update (only upload active units)
+  markAttributeForUpdate(latAttr, count);
+  markAttributeForUpdate(lonAttr, count);
+  markAttributeForUpdate(headingAttr, count);
+  markAttributeForUpdate(scaleAttr, count);
 
   satelliteGeometry.instanceCount = count;
 }
@@ -3939,26 +4849,27 @@ function updateSatelliteAttributes() {
  * Update drone instances by writing directly to GPU attribute buffers
  */
 function updateDroneAttributes() {
-  const data = droneGeometry.userData;
+  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = droneGeometry.userData;
   const count = Math.min(droneSimState.length, MAX_DRONES);
 
   for (let i = 0; i < count; i++) {
     const drone = droneSimState[i];
-    data.latArray[i] = drone.lat;
-    data.lonArray[i] = drone.lon;
-    data.headingArray[i] = drone.heading;
+    latArray[i] = drone.lat;
+    lonArray[i] = drone.lon;
+    headingArray[i] = drone.heading;
     // Encode scale and altitude like satellites do:
     // Integer part: display scale * 10 (includes camera scaling)
     // Fractional part: altitude / 0.5 (normalized to 0-1 range)
     const scaledDisplay = drone.scale * currentIconScale;
     const normalizedAlt = drone.altitude / 0.5;
-    data.scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
+    scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
   }
 
-  data.latAttr.needsUpdate = true;
-  data.lonAttr.needsUpdate = true;
-  data.headingAttr.needsUpdate = true;
-  data.scaleAttr.needsUpdate = true;
+  // Mark for partial update (only upload active units)
+  markAttributeForUpdate(latAttr, count);
+  markAttributeForUpdate(lonAttr, count);
+  markAttributeForUpdate(headingAttr, count);
+  markAttributeForUpdate(scaleAttr, count);
 
   droneGeometry.instanceCount = count;
 }
@@ -4051,15 +4962,31 @@ let satelliteSimState = [];
 let droneSimState = [];
 let lastSimTime = 0;
 
+// Sample ship names for labels
+const SHIP_NAMES = [
+  "EVER GIVEN", "MAERSK ALABAMA", "MSC OSCAR", "EMMA MAERSK", "CSCL GLOBE",
+  "OOCL HONG KONG", "MOL TRIUMPH", "MADRID MAERSK", "HMM ALGECIRAS", "EVER ACE",
+  "MSC GULSUN", "CMA CGM MARCO POLO", "COSCO SHIPPING UNIVERSE", "YANGMING WITNESS",
+  "ONE APUS", "EVERGREEN EVER", "HAPAG LLOYD EXPRESS", "ZIM INTEGRATED", "PIL ASIA",
+  "PACIFIC VOYAGER", "ATLANTIC PIONEER", "NORDIC SPIRIT", "OCEAN CARRIER", "SEA GIANT",
+  "GLOBAL LEADER", "TRADE WIND", "CARGO MASTER", "FREIGHT KING", "WAVE RIDER",
+  "MARINE STAR", "HORIZON BLUE", "DEEP SEA", "SWIFT CURRENT", "NORTHERN LIGHT"
+];
+
+// Sample airline codes for aircraft labels
+const AIRLINE_CODES = ["UA", "AA", "DL", "SW", "BA", "LH", "AF", "EK", "QF", "SQ",
+  "CX", "NH", "JL", "KE", "TK", "QR", "EY", "VS", "IB", "KL"];
+
 /**
  * Initialize simulation state for a unit
+ * @param {number} index - Unit index for generating consistent names/IDs
  */
-function initUnitState(lat, lon, heading, isAircraft) {
+function initUnitState(lat, lon, heading, isAircraft, index = 0) {
   // Base speed with some random variation (±20%)
   const baseSpeedRef = isAircraft ? motionParams.aircraftBaseSpeed : motionParams.shipBaseSpeed;
   const baseTurnRef = isAircraft ? motionParams.aircraftBaseTurnRate : motionParams.shipBaseTurnRate;
 
-  return {
+  const baseState = {
     lat,
     lon,
     heading,
@@ -4070,6 +4997,22 @@ function initUnitState(lat, lon, heading, isAircraft) {
     nextCourseChange: Math.random() * motionParams.courseChangeInterval,
     isAircraft,
   };
+
+  if (isAircraft) {
+    // Aircraft-specific fields
+    const airlineCode = AIRLINE_CODES[index % AIRLINE_CODES.length];
+    const flightNum = 100 + (index % 900);
+    baseState.callsign = `${airlineCode}${flightNum}`;
+    baseState.altitude = 28000 + Math.floor(Math.random() * 14) * 1000; // 28000-42000 ft
+    baseState.groundSpeed = 420 + Math.floor(Math.random() * 80); // 420-500 kts
+  } else {
+    // Ship-specific fields
+    baseState.name = SHIP_NAMES[index % SHIP_NAMES.length];
+    baseState.mmsi = String(211000000 + index); // German-style MMSI starting point
+    baseState.sog = 8 + Math.random() * 14; // 8-22 knots speed over ground
+  }
+
+  return baseState;
 }
 
 /**
@@ -4372,28 +5315,28 @@ function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount =
     for (let i = 0; i < shipCount; i++) {
       const region = selectWeightedRegion(SHIPPING_LANES);
       const { lat, lon } = randomInRegion(region.latRange, region.lonRange);
-      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false));
+      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false, i));
     }
 
     // Generate aircraft along realistic flight corridors
     for (let i = 0; i < aircraftCount; i++) {
       const region = selectWeightedRegion(FLIGHT_CORRIDORS);
       const { lat, lon } = randomInRegion(region.latRange, region.lonRange);
-      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true));
+      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true, i));
     }
   } else {
     // Generate ships distributed globally
     for (let i = 0; i < shipCount; i++) {
       const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI);
       const lon = Math.random() * 360 - 180;
-      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false));
+      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false, i));
     }
 
     // Generate aircraft distributed globally
     for (let i = 0; i < aircraftCount; i++) {
       const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI);
       const lon = Math.random() * 360 - 180;
-      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true));
+      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true, i));
     }
   }
 
@@ -5204,11 +6147,83 @@ unitsFolder
     droneMesh.visible = value && !h3Params.enabled;
   });
 
+// Unit Labels folder
+const labelsFolder = gui.addFolder("Unit Labels");
+labelsFolder
+  .add(labelParams, "enabled")
+  .name("Show Labels")
+  .onChange((value) => {
+    if (labelMesh) labelMesh.visible = value;
+  });
+labelsFolder
+  .add(labelParams, "maxLabels", 100, 1000, 50)
+  .name("Max Labels");
+labelsFolder
+  .add(labelParams, "showShipLabels")
+  .name("Ship Labels");
+labelsFolder
+  .add(labelParams, "showAircraftLabels")
+  .name("Aircraft Labels");
+labelsFolder
+  .add(labelParams, "showDroneLabels")
+  .name("Drone Labels");
+labelsFolder
+  .add(labelParams, "fontSize", 0.005, 0.03, 0.001)
+  .name("Label Scale");
+labelsFolder
+  .add(labelParams, "labelOffset", 0, 0.1, 0.005)
+  .name("Label Offset")
+  .onChange((value) => {
+    if (labelMaterial) labelMaterial.uniforms.uLabelOffset.value = value;
+  });
+labelsFolder
+  .add(labelParams, "debugMode", { "Normal": 0, "Show UV": 1, "Show Texture": 2, "Solid Color": 3 })
+  .name("Debug Mode")
+  .onChange((value) => {
+    if (labelMaterial) labelMaterial.uniforms.uDebugMode.value = parseFloat(value);
+  });
+
 // Performance stats display
-const perfStats = { fps: 0, ships: 0, aircraft: 0 };
+const perfStats = { fps: 0, ships: 0, aircraft: 0, frameMs: 0 };
 const statsDisplay = unitsFolder.add(perfStats, "fps").name("FPS").listen().disable();
+unitsFolder.add(perfStats, "frameMs").name("Frame (ms)").listen().disable();
 let frameCount = 0;
 let lastFpsTime = performance.now();
+
+// Frame timing profiler (toggle with perfProfiler.enabled)
+const perfProfiler = {
+  enabled: false,
+  times: {},
+  lastLog: 0,
+};
+
+function profileStart(name) {
+  if (!perfProfiler.enabled) return;
+  perfProfiler.times[name] = performance.now();
+}
+
+function profileEnd(name) {
+  if (!perfProfiler.enabled) return;
+  const start = perfProfiler.times[name];
+  if (start) {
+    perfProfiler.times[name] = performance.now() - start;
+  }
+}
+
+function profileLog() {
+  if (!perfProfiler.enabled) return;
+  const now = performance.now();
+  if (now - perfProfiler.lastLog < 2000) return;
+  perfProfiler.lastLog = now;
+
+  const entries = Object.entries(perfProfiler.times)
+    .filter(([k, v]) => typeof v === 'number' && v > 0.1)
+    .sort((a, b) => b[1] - a[1]);
+
+  if (entries.length > 0) {
+    console.log('Frame profile:', entries.map(([k, v]) => `${k}:${v.toFixed(1)}ms`).join(' '));
+  }
+}
 
 function updateFpsCounter() {
   frameCount++;
@@ -5445,7 +6460,7 @@ function updateSelectedUnitInfo() {
     unitData = shipSimState[index];
     if (!unitData) { deselectUnit(); return; }
     altitude = "0 ft";
-    speed = `${(motionParams.shipSpeed * 50).toFixed(0)} kts`;
+    speed = unitData.sog ? `${unitData.sog.toFixed(1)} kts` : "0.0 kts";
 
     // Set standard labels
     unitLabel1.textContent = "LAT";
@@ -5462,10 +6477,9 @@ function updateSelectedUnitInfo() {
   } else if (type === "aircraft") {
     unitData = aircraftSimState[index];
     if (!unitData) { deselectUnit(); return; }
-    // Generate consistent altitude based on index (28,000-41,000 ft)
-    const altFeet = (28000 + (index % 14) * 1000).toLocaleString();
+    const altFeet = unitData.altitude ? unitData.altitude.toLocaleString() : "0";
     altitude = `${altFeet} ft`;
-    speed = `${(motionParams.aircraftSpeed * 80).toFixed(0)} kts`;
+    speed = unitData.groundSpeed ? `${unitData.groundSpeed} kts` : "0 kts";
 
     // Set standard labels
     unitLabel1.textContent = "LAT";
@@ -5748,8 +6762,14 @@ initGoogleTiles(camera, renderer);
 // animation speed regardless of frame rate
 const clock = new THREE.Clock();
 
+// Track frame time for performance debugging
+let _frameStartTime = 0;
+let _frameTimes = [];
+
 // The main animation loop - called every frame (~60 times per second)
 const tick = () => {
+  _frameStartTime = performance.now();
+
   // Get total time elapsed since the clock started
   const elapsedTime = clock.getElapsedTime();
 
@@ -5773,10 +6793,7 @@ const tick = () => {
   droneMesh.rotation.y = earthRotY;
   shipTrailMesh.rotation.y = earthRotY;
   aircraftTrailMesh.rotation.y = earthRotY;
-  patrolCircle.rotation.y = earthRotY;
-  observationLine.rotation.y = earthRotY;
-  targetMarker.rotation.y = earthRotY;
-  // selectionRing position is already rotated in updateSelectionRing()
+  // patrolCircle, observationLine, targetMarker positions are already rotated in updatePatrolCircle()
   orbitLine.rotation.y = earthRotY;
 
   // Update weather animation
@@ -5806,6 +6823,17 @@ const tick = () => {
 
   // Update airport marker scales based on zoom
   updateAirportScales(cameraDistance);
+
+  // Update unit labels
+  // Assignment filtering is throttled (which units get labels)
+  // Position updates run every frame for smooth following
+  if (labelParams.enabled) {
+    if (elapsedTime - lastLabelUpdate > labelParams.updateInterval / 1000) {
+      updateLabelAssignments();
+      lastLabelUpdate = elapsedTime;
+    }
+    updateLabelPositions(); // Every frame for smooth label tracking
+  }
 
   // Update H3 grid if enabled
   updateH3Grid(cameraDistance, elapsedTime);
@@ -5863,6 +6891,12 @@ const tick = () => {
 
   // Render the scene from the camera's perspective
   renderer.render(scene, camera);
+
+  // Track frame time
+  const frameTime = performance.now() - _frameStartTime;
+  _frameTimes.push(frameTime);
+  if (_frameTimes.length > 60) _frameTimes.shift();
+  perfStats.frameMs = Math.round(_frameTimes.reduce((a, b) => a + b, 0) / _frameTimes.length * 10) / 10;
 
   // Update FPS counter for performance monitoring
   updateFpsCounter();
