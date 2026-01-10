@@ -3156,6 +3156,7 @@ const labelParams = {
   showShipLabels: true,
   showAircraftLabels: true,
   showDroneLabels: true,
+  showSatelliteLabels: true,
   debugMode: 0,               // 0=normal, 1=UV, 2=texture, 3=solid
   h3Resolution: 3,            // H3 resolution for spatial indexing (2-4 recommended)
 };
@@ -3170,6 +3171,7 @@ const labelVisibility = {
   shipIndices: [],        // Indices of ships in visible H3 cells
   aircraftIndices: [],    // Indices of aircraft in visible H3 cells
   droneIndices: [],       // Indices of drones in visible H3 cells
+  satelliteIndices: [],   // Indices of satellites in visible H3 cells
   lastQuery: 0,
   queryInterval: 200,     // Query worker every 200ms
   lastIndexBuild: -Infinity,  // Force first build immediately
@@ -3193,10 +3195,13 @@ const workerArrayPool = {
   aircraftLons: null,
   droneLats: null,
   droneLons: null,
+  satelliteLats: null,
+  satelliteLons: null,
   // Track current capacity to resize if needed
   shipCapacity: 0,
   aircraftCapacity: 0,
   droneCapacity: 0,
+  satelliteCapacity: 0,
 };
 
 /**
@@ -3206,6 +3211,7 @@ function ensureWorkerArrayCapacity() {
   const shipCount = shipSimState.length;
   const aircraftCount = aircraftSimState.length;
   const droneCount = droneSimState.length;
+  const satelliteCount = satelliteSimState.length;
 
   if (shipCount > workerArrayPool.shipCapacity) {
     // Allocate with 20% headroom to avoid frequent resizes
@@ -3227,6 +3233,13 @@ function ensureWorkerArrayCapacity() {
     workerArrayPool.droneLats = new Float32Array(newCapacity);
     workerArrayPool.droneLons = new Float32Array(newCapacity);
     workerArrayPool.droneCapacity = newCapacity;
+  }
+
+  if (satelliteCount > workerArrayPool.satelliteCapacity) {
+    const newCapacity = Math.ceil(satelliteCount * 1.2);
+    workerArrayPool.satelliteLats = new Float32Array(newCapacity);
+    workerArrayPool.satelliteLons = new Float32Array(newCapacity);
+    workerArrayPool.satelliteCapacity = newCapacity;
   }
 }
 
@@ -3299,9 +3312,10 @@ function requestLabelIndexBuild() {
   const shipCount = shipSimState.length;
   const aircraftCount = aircraftSimState.length;
   const droneCount = droneSimState.length;
+  const satelliteCount = satelliteSimState.length;
 
   // Fill pooled arrays (reusing existing memory)
-  const { shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons } = workerArrayPool;
+  const { shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons, satelliteLats, satelliteLons } = workerArrayPool;
 
   for (let i = 0; i < shipCount; i++) {
     shipLats[i] = shipSimState[i].lat;
@@ -3318,6 +3332,11 @@ function requestLabelIndexBuild() {
     droneLons[i] = droneSimState[i].lon;
   }
 
+  for (let i = 0; i < satelliteCount; i++) {
+    satelliteLats[i] = satelliteSimState[i].lat;
+    satelliteLons[i] = satelliteSimState[i].lon;
+  }
+
   // Send subarray views (no copy, just a view into the pooled buffer)
   h3Worker.postMessage({
     type: 'buildLabelIndex',
@@ -3329,6 +3348,8 @@ function requestLabelIndexBuild() {
       aircraftLons: aircraftLons.subarray(0, aircraftCount),
       droneLats: droneLats ? droneLats.subarray(0, droneCount) : null,
       droneLons: droneLons ? droneLons.subarray(0, droneCount) : null,
+      satelliteLats: satelliteLats ? satelliteLats.subarray(0, satelliteCount) : null,
+      satelliteLons: satelliteLons ? satelliteLons.subarray(0, satelliteCount) : null,
     }
   });
 
@@ -3359,6 +3380,7 @@ function requestVisibleUnits() {
       includeShips: labelParams.showShipLabels && unitCountParams.showShips,
       includeAircraft: labelParams.showAircraftLabels && unitCountParams.showAircraft,
       includeDrones: labelParams.showDroneLabels && unitCountParams.showDrones,
+      includeSatellites: labelParams.showSatelliteLabels && unitCountParams.showSatellites,
     }
   });
 
@@ -3778,6 +3800,21 @@ function formatDroneLabel(unit, index) {
   return line1 + line2;
 }
 
+/**
+ * Format satellite label text (2 lines)
+ * Line 1: Name (12 chars)
+ * Line 2: Orbit type + altitude (12 chars)
+ */
+function formatSatelliteLabel(unit) {
+  const name = (unit.name || 'UNKNOWN').substring(0, CHARS_PER_LINE).toUpperCase().padEnd(CHARS_PER_LINE);
+  // Altitude in km (convert from scene units)
+  const altKm = Math.round(unit.altitude * 6371 / EARTH_RADIUS);
+  const altStr = altKm >= 1000 ? Math.round(altKm / 1000) + 'KKM' : altKm + 'KM';
+  const orbit = unit.orbitTypeLabel || 'LEO';
+  const line2 = (orbit + ' ' + altStr).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
+  return name + line2;
+}
+
 // Track when labels were last rebuilt
 let _lastLabelRebuild = 0;
 let _lastVisibilityVersion = 0;
@@ -3786,16 +3823,56 @@ let _labelVisibilityVersion = 0;
 /**
  * Lightweight label update - only rebuilds when visibility changes
  * Called every frame but does minimal work
+ * Always shows label for selected unit even when labels are disabled
  */
 function updateLabelAssignments() {
-  if (!labelParams.enabled) {
+  // Check if we have a selected unit that should show a label
+  const hasSelectedLabelUnit = selectedUnit &&
+    (selectedUnit.type === 'ship' || selectedUnit.type === 'aircraft' || selectedUnit.type === 'drone' || selectedUnit.type === 'satellite');
+
+  // If labels disabled and no selected unit to show, hide all
+  if (!labelParams.enabled && !hasSelectedLabelUnit) {
     labelGeometry.instanceCount = 0;
+    labelAssignments.count = 0;
     return;
   }
 
   // Update camera distance uniform for GPU semantic zoom (cheap, do every frame)
   if (labelMaterial) {
     labelMaterial.uniforms.uCameraDistance.value = camera.position.length();
+  }
+
+  // If labels disabled but we have a selected unit, just show that one
+  if (!labelParams.enabled && hasSelectedLabelUnit) {
+    labelAssignments.count = 0;
+    let labelIdx = 0;
+
+    const unit = selectedUnit.data;
+    if (unit) {
+      if (selectedUnit.type === 'ship') {
+        labelAssignments.slots[labelIdx] = { type: 0, unitIndex: selectedUnit.index };
+        fillLabelBuffers(labelIdx, 0, unit);
+      } else if (selectedUnit.type === 'aircraft') {
+        labelAssignments.slots[labelIdx] = { type: 1, unitIndex: selectedUnit.index };
+        fillLabelBuffers(labelIdx, 1, unit);
+      } else if (selectedUnit.type === 'drone') {
+        labelAssignments.slots[labelIdx] = { type: 2, unitIndex: selectedUnit.index };
+        fillLabelBuffers(labelIdx, 2, unit, selectedUnit.index);
+      } else if (selectedUnit.type === 'satellite') {
+        labelAssignments.slots[labelIdx] = { type: 3, unitIndex: selectedUnit.index };
+        fillLabelBuffers(labelIdx, 3, unit, selectedUnit.index);
+      }
+      labelIdx++;
+    }
+
+    labelAssignments.count = labelIdx;
+    if (labelIdx > 0) {
+      labelGeometry.userData.uvAttr.needsUpdate = true;
+      labelGeometry.userData.colorAttr.needsUpdate = true;
+      labelGeometry.userData.scaleAttr.needsUpdate = true;
+    }
+    labelGeometry.instanceCount = labelIdx * MAX_LABEL_CHARS;
+    return;
   }
 
   const now = performance.now();
@@ -3827,9 +3904,10 @@ function updateLabelAssignments() {
   const shipCount = labelVisibility.shipIndices.length;
   const aircraftCount = labelVisibility.aircraftIndices.length;
   const droneCount = labelVisibility.droneIndices.length;
-  const totalAvailable = shipCount + aircraftCount + droneCount;
+  const satelliteCount = labelVisibility.satelliteIndices.length;
+  const totalAvailable = shipCount + aircraftCount + droneCount + satelliteCount;
 
-  if (totalAvailable === 0) {
+  if (totalAvailable === 0 && !hasSelectedLabelUnit) {
     labelGeometry.instanceCount = 0;
     return;
   }
@@ -3889,6 +3967,23 @@ function updateLabelAssignments() {
     }
   }
 
+  // Satellites (type 3)
+  if (labelParams.showSatelliteLabels && unitCountParams.showSatellites) {
+    const satelliteCount = labelVisibility.satelliteIndices.length;
+    const limit = Math.min(satelliteCount, maxLabels - labelIdx);
+    for (let j = 0; j < limit && labelIdx < maxLabels; j++) {
+      const i = labelVisibility.satelliteIndices[j];
+      const unit = satelliteSimState[i];
+      if (!unit) continue;
+
+      // Store assignment for per-frame position updates (type 3 = satellite)
+      labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
+
+      fillLabelBuffers(labelIdx, 3, unit, i);
+      labelIdx++;
+    }
+  }
+
   labelAssignments.count = labelIdx;
 
   // Update GPU buffers (NOT positions - those are updated every frame in updateLabelPositions)
@@ -3904,7 +3999,7 @@ function updateLabelAssignments() {
 /**
  * Fill label buffers for a single label (text, color, scale only - NOT position)
  * Position is updated separately in updateLabelPositions() every frame
- * unitType: 0=ship, 1=aircraft, 2=drone
+ * unitType: 0=ship, 1=aircraft, 2=drone, 3=satellite
  */
 function fillLabelBuffers(labelIdx, unitType, unit, unitIndex) {
   // Format text based on unit type
@@ -3913,21 +4008,28 @@ function fillLabelBuffers(labelIdx, unitType, unit, unitIndex) {
     text = formatShipLabel(unit);
   } else if (unitType === 1) {
     text = formatAircraftLabel(unit);
-  } else {
+  } else if (unitType === 2) {
     text = formatDroneLabel(unit, unitIndex || 0);
+  } else {
+    text = formatSatelliteLabel(unit);
   }
 
   // Encode text to UVs
   encodeTextToBuffer(text, labelIdx);
 
   // Color: teal for ships, amber for aircraft, lime green for drones
+  // Satellites: red/orange for military, cyan/blue for commercial
   let r, g, b;
   if (unitType === 0) {
     r = 0.18; g = 0.83; b = 0.75;  // Teal
   } else if (unitType === 1) {
     r = 0.98; g = 0.75; b = 0.14;  // Amber
-  } else {
+  } else if (unitType === 2) {
     r = 0.52; g = 0.80; b = 0.09;  // Lime green (#84cc16)
+  } else if (unit.isMilitary) {
+    r = 1.0; g = 0.35; b = 0.25;   // Red/orange for military satellites
+  } else {
+    r = 0.30; g = 0.70; b = 1.0;   // Cyan/blue for commercial satellites
   }
 
   // Scale (will be modified by GPU based on camera distance)
@@ -3953,7 +4055,8 @@ function fillLabelBuffers(labelIdx, unitType, unit, unitIndex) {
  * Offset to the right is handled by GPU shader (uLabelOffset uniform)
  */
 function updateLabelPositions() {
-  if (!labelParams.enabled || labelAssignments.count === 0) return;
+  // Only skip if no labels to update (don't check labelParams.enabled - selected unit needs positions)
+  if (labelAssignments.count === 0) return;
 
   const earthRotY = earth.rotation.y;
 
@@ -3961,7 +4064,7 @@ function updateLabelPositions() {
     const assignment = labelAssignments.slots[labelIdx];
     if (!assignment) continue;
 
-    // Get current unit position based on type (0=ship, 1=aircraft, 2=drone)
+    // Get current unit position based on type (0=ship, 1=aircraft, 2=drone, 3=satellite)
     let unit, altitude;
     if (assignment.type === 0) {
       unit = shipSimState[assignment.unitIndex];
@@ -3969,9 +4072,12 @@ function updateLabelPositions() {
     } else if (assignment.type === 1) {
       unit = aircraftSimState[assignment.unitIndex];
       altitude = AIRCRAFT_ALTITUDE;
-    } else {
+    } else if (assignment.type === 2) {
       unit = droneSimState[assignment.unitIndex];
       altitude = unit ? unit.altitude : AIRCRAFT_ALTITUDE;
+    } else {
+      unit = satelliteSimState[assignment.unitIndex];
+      altitude = unit ? unit.altitude : 0.1;
     }
     if (!unit) continue;
 
@@ -4002,6 +4108,7 @@ h3Worker.onmessage = function(e) {
     labelVisibility.shipIndices = data.shipIndices;
     labelVisibility.aircraftIndices = data.aircraftIndices;
     labelVisibility.droneIndices = data.droneIndices || [];
+    labelVisibility.satelliteIndices = data.satelliteIndices || [];
     labelVisibility.pendingQuery = false;
     _labelVisibilityVersion++; // Signal that data changed
   }
@@ -5036,7 +5143,7 @@ function shortestTurnDirection(current, target) {
  * Initialize simulation state for a satellite with orbital elements
  * Uses Keplerian orbital mechanics for realistic motion
  */
-function initSatelliteState(altitude, inclination, ascendingNode, phase) {
+function initSatelliteState(altitude, inclination, ascendingNode, phase, name, orbitTypeLabel, isMilitary) {
   // Orbital period scales with altitude (simplified Kepler's 3rd law)
   // LEO (~400km): ~90 min, MEO (~20000km): ~12 hrs, GEO (~36000km): ~24 hrs
   // Since our Earth radius is 2, we scale accordingly
@@ -5051,6 +5158,11 @@ function initSatelliteState(altitude, inclination, ascendingNode, phase) {
     ascendingNode,      // Longitude where orbit crosses equator northward (degrees)
     phase,              // Current position in orbit (0-360 degrees)
     orbitalPeriod,      // Time to complete one orbit (seconds)
+
+    // Satellite identity
+    name,               // Display name (e.g., "STARLINK-1547", "USA-224")
+    orbitTypeLabel,     // "LEO", "MEO", or "GEO"
+    isMilitary,         // true for military, false for commercial
 
     // Computed position (updated each frame)
     lat: 0,
@@ -5350,6 +5462,63 @@ function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount =
 }
 
 /**
+ * Generate a realistic satellite name based on type and military status
+ */
+function generateSatelliteName(orbitTypeLabel, isMilitary, index) {
+  if (isMilitary) {
+    // Military satellite names
+    const militaryTypes = [
+      { prefix: 'USA', numRange: [200, 350] },      // US military (NRO, etc.)
+      { prefix: 'NROL', numRange: [40, 120] },      // National Reconnaissance Office
+      { prefix: 'KEYHOLE', numRange: [11, 18] },    // Imaging satellites
+      { prefix: 'LACROSSE', numRange: [1, 6] },     // Radar imaging
+      { prefix: 'MENTOR', numRange: [1, 8] },       // SIGINT
+      { prefix: 'COSMOS', numRange: [2500, 2600] }, // Russian military
+    ];
+    const type = militaryTypes[index % militaryTypes.length];
+    const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
+    return `${type.prefix}-${num}`;
+  } else {
+    // Commercial satellite names by orbit type
+    if (orbitTypeLabel === 'LEO') {
+      const leoTypes = [
+        { prefix: 'STARLINK', numRange: [1000, 5000] },
+        { prefix: 'ONEWEB', numRange: [1, 600] },
+        { prefix: 'IRIDIUM', numRange: [100, 180] },
+        { prefix: 'PLANET', numRange: [1, 200] },
+        { prefix: 'SPIRE', numRange: [1, 150] },
+      ];
+      const type = leoTypes[index % leoTypes.length];
+      const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
+      return `${type.prefix}-${num}`;
+    } else if (orbitTypeLabel === 'MEO') {
+      const meoTypes = [
+        { prefix: 'GPS IIF', numRange: [1, 12] },
+        { prefix: 'GPS III', numRange: [1, 10] },
+        { prefix: 'GLONASS', numRange: [750, 800] },
+        { prefix: 'GALILEO', numRange: [201, 230] },
+        { prefix: 'BEIDOU', numRange: [40, 60] },
+      ];
+      const type = meoTypes[index % meoTypes.length];
+      const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
+      return `${type.prefix}-${num}`;
+    } else {
+      // GEO
+      const geoTypes = [
+        { prefix: 'GOES', numRange: [16, 19] },
+        { prefix: 'SES', numRange: [1, 20] },
+        { prefix: 'INTELSAT', numRange: [30, 40] },
+        { prefix: 'ECHOSTAR', numRange: [18, 24] },
+        { prefix: 'VIASAT', numRange: [1, 4] },
+      ];
+      const type = geoTypes[index % geoTypes.length];
+      const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
+      return `${type.prefix}-${num}`;
+    }
+  }
+}
+
+/**
  * Generate satellite constellation with realistic orbital distributions
  * Creates a mix of LEO, MEO, and GEO satellites
  */
@@ -5362,10 +5531,11 @@ function generateSatelliteData(count = unitCountParams.satelliteCount) {
     // 25% MEO (GPS, navigation)
     // 15% GEO (weather, communications)
     const orbitType = Math.random();
-    let altitude, inclination;
+    let altitude, inclination, orbitTypeLabel;
 
     if (orbitType < 0.60) {
       // LEO - Low Earth Orbit
+      orbitTypeLabel = 'LEO';
       altitude = SATELLITE_ALTITUDE_LEO.min +
         Math.random() * (SATELLITE_ALTITUDE_LEO.max - SATELLITE_ALTITUDE_LEO.min);
       // LEO inclinations vary widely: sun-synchronous (~98°), ISS (~51.6°), polar (~90°)
@@ -5379,15 +5549,23 @@ function generateSatelliteData(count = unitCountParams.satelliteCount) {
       }
     } else if (orbitType < 0.85) {
       // MEO - Medium Earth Orbit (GPS constellation at ~55° inclination)
+      orbitTypeLabel = 'MEO';
       altitude = SATELLITE_ALTITUDE_MEO.min +
         Math.random() * (SATELLITE_ALTITUDE_MEO.max - SATELLITE_ALTITUDE_MEO.min);
       inclination = 50 + Math.random() * 15; // GPS-like inclination
     } else {
       // GEO - Geostationary (0° inclination, appears stationary)
+      orbitTypeLabel = 'GEO';
       altitude = SATELLITE_ALTITUDE_GEO.min +
         Math.random() * (SATELLITE_ALTITUDE_GEO.max - SATELLITE_ALTITUDE_GEO.min);
       inclination = Math.random() * 5; // Near-equatorial
     }
+
+    // 25% of satellites are military
+    const isMilitary = Math.random() < 0.25;
+
+    // Generate realistic name based on orbit type and military status
+    const name = generateSatelliteName(orbitTypeLabel, isMilitary, i);
 
     // Random ascending node (longitude of orbit plane)
     const ascendingNode = Math.random() * 360;
@@ -5395,7 +5573,7 @@ function generateSatelliteData(count = unitCountParams.satelliteCount) {
     // Random starting phase (position in orbit)
     const phase = Math.random() * 360;
 
-    satelliteSimState.push(initSatelliteState(altitude, inclination, ascendingNode, phase));
+    satelliteSimState.push(initSatelliteState(altitude, inclination, ascendingNode, phase, name, orbitTypeLabel, isMilitary));
   }
 
   // Initialize positions
@@ -6151,10 +6329,7 @@ unitsFolder
 const labelsFolder = gui.addFolder("Unit Labels");
 labelsFolder
   .add(labelParams, "enabled")
-  .name("Show Labels")
-  .onChange((value) => {
-    if (labelMesh) labelMesh.visible = value;
-  });
+  .name("Show Labels");
 labelsFolder
   .add(labelParams, "maxLabels", 100, 1000, 50)
   .name("Max Labels");
@@ -6167,6 +6342,9 @@ labelsFolder
 labelsFolder
   .add(labelParams, "showDroneLabels")
   .name("Drone Labels");
+labelsFolder
+  .add(labelParams, "showSatelliteLabels")
+  .name("Satellite Labels");
 labelsFolder
   .add(labelParams, "fontSize", 0.005, 0.03, 0.001)
   .name("Label Scale");
@@ -6827,12 +7005,27 @@ const tick = () => {
   // Update unit labels
   // Assignment filtering is throttled (which units get labels)
   // Position updates run every frame for smooth following
-  if (labelParams.enabled) {
-    if (elapsedTime - lastLabelUpdate > labelParams.updateInterval / 1000) {
+  // Also run when labels disabled but unit is selected (shows selected unit's label)
+  const hasSelectedLabelUnit = selectedUnit &&
+    (selectedUnit.type === 'ship' || selectedUnit.type === 'aircraft' || selectedUnit.type === 'drone' || selectedUnit.type === 'satellite');
+
+  if (labelParams.enabled || hasSelectedLabelUnit) {
+    // Ensure labelMesh is visible (GUI may have hidden it)
+    if (labelMesh) labelMesh.visible = true;
+
+    // Throttle only when labels are fully enabled; selected-only mode updates every frame
+    const shouldUpdate = !labelParams.enabled ||
+      (elapsedTime - lastLabelUpdate > labelParams.updateInterval / 1000);
+
+    if (shouldUpdate) {
       updateLabelAssignments();
       lastLabelUpdate = elapsedTime;
     }
     updateLabelPositions(); // Every frame for smooth label tracking
+  } else {
+    // No labels and no selected unit - hide label mesh
+    if (labelMesh) labelMesh.visible = false;
+    if (labelGeometry) labelGeometry.instanceCount = 0;
   }
 
   // Update H3 grid if enabled

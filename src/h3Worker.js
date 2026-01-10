@@ -138,6 +138,7 @@ const labelIndex = {
   ships: new Map(),      // H3 cell -> array of indices
   aircraft: new Map(),   // H3 cell -> array of indices
   drones: new Map(),     // H3 cell -> array of indices
+  satellites: new Map(), // H3 cell -> array of indices
   resolution: 3,
 };
 
@@ -145,12 +146,13 @@ const labelIndex = {
  * Build the label spatial index from unit positions
  */
 function buildLabelIndex(data) {
-  const { resolution, shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons } = data;
+  const { resolution, shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons, satelliteLats, satelliteLons } = data;
 
   labelIndex.resolution = resolution;
   labelIndex.ships.clear();
   labelIndex.aircraft.clear();
   labelIndex.drones.clear();
+  labelIndex.satellites.clear();
 
   // Index ships
   if (shipLats && shipLons) {
@@ -200,13 +202,31 @@ function buildLabelIndex(data) {
     }
   }
 
+  // Index satellites
+  if (satelliteLats && satelliteLons) {
+    for (let i = 0; i < satelliteLats.length; i++) {
+      const lat = satelliteLats[i];
+      const lon = satelliteLons[i];
+      if (lat === 0 && lon === 0) continue;
+      try {
+        const cell = h3.latLngToCell(lat, lon, resolution);
+        if (!labelIndex.satellites.has(cell)) {
+          labelIndex.satellites.set(cell, []);
+        }
+        labelIndex.satellites.get(cell).push(i);
+      } catch (e) { /* Skip invalid */ }
+    }
+  }
+
   return {
     shipCells: labelIndex.ships.size,
     aircraftCells: labelIndex.aircraft.size,
     droneCells: labelIndex.drones.size,
+    satelliteCells: labelIndex.satellites.size,
     totalShips: shipLats ? shipLats.length : 0,
     totalAircraft: aircraftLats ? aircraftLats.length : 0,
     totalDrones: droneLats ? droneLats.length : 0,
+    totalSatellites: satelliteLats ? satelliteLats.length : 0,
   };
 }
 
@@ -215,12 +235,13 @@ function buildLabelIndex(data) {
  * Returns arrays of unit indices that are in visible H3 cells
  */
 function queryVisibleUnits(data) {
-  const { centerLat, centerLon, ringSize, includeShips, includeAircraft, includeDrones } = data;
+  const { centerLat, centerLon, ringSize, includeShips, includeAircraft, includeDrones, includeSatellites } = data;
   const resolution = labelIndex.resolution;
 
   const visibleShips = [];
   const visibleAircraft = [];
   const visibleDrones = [];
+  const visibleSatellites = [];
 
   try {
     // Get center cell and surrounding ring
@@ -255,14 +276,24 @@ function queryVisibleUnits(data) {
       }
     }
 
+    if (includeSatellites) {
+      for (const cell of visibleCells) {
+        const indices = labelIndex.satellites.get(cell);
+        if (indices) {
+          visibleSatellites.push(...indices);
+        }
+      }
+    }
+
     return {
       shipIndices: visibleShips,
       aircraftIndices: visibleAircraft,
       droneIndices: visibleDrones,
+      satelliteIndices: visibleSatellites,
       cellCount: visibleCells.length,
     };
   } catch (e) {
-    return { shipIndices: [], aircraftIndices: [], droneIndices: [], cellCount: 0, error: e.message };
+    return { shipIndices: [], aircraftIndices: [], droneIndices: [], satelliteIndices: [], cellCount: 0, error: e.message };
   }
 }
 
