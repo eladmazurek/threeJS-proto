@@ -1,0 +1,88 @@
+/**
+ * lil-gui SpaceX-style customization
+ */
+
+/* Main GUI container - minimal dark style */
+.lil-gui {
+  --background-color: rgba(0, 0, 0, 0.85) !important;
+  --widget-color: rgba(255, 255, 255, 0.1) !important;
+  --focus-color: rgba(255, 255, 255, 0.2) !important;
+  --hover-color: rgba(255, 255, 255, 0.15) !important;
+  --font-family: "Inter", "Helvetica Neue", Arial, sans-serif !important;
+  --font-size: 10px !important;
+  --number-color: #ffffff !important;
+  --string-color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Folder titles - minimal uppercase */
+.lil-gui .lil-title {
+  background: transparent !important;
+  color: #ffffff !important;
+  text-transform: uppercase !important;
+  font-weight: 500 !important;
+  letter-spacing: 2px !important;
+  font-size: 9px !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  padding: 8px 10px !important;
+}
+
+.lil-gui .lil-title:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Controller labels - gray uppercase */
+.lil-gui .lil-name {
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 9px !important;
+  font-weight: 400 !important;
+  letter-spacing: 1px !important;
+  text-transform: uppercase !important;
+}
+
+/* Sliders - minimal white */
+.lil-gui .slider {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.lil-gui .fill {
+  background: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Input fields */
+.lil-gui input {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #ffffff !important;
+}
+
+.lil-gui input:focus {
+  border-color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Checkboxes */
+.lil-gui input[type="checkbox"] {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.lil-gui input[type="checkbox"]:checked {
+  background: #ffffff !important;
+}
+
+/* Select dropdowns */
+.lil-gui select {
+  background: #1a1a1a !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #ffffff !important;
+}
+
+.lil-gui select option {
+  background: #1a1a1a !important;
+  color: #ffffff !important;
+}
+
+/* Controller rows */
+.lil-gui .controller {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}

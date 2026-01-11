@@ -1,0 +1,24 @@
+/**
+ * Google 3D Tiles Attribution
+ */
+
+#tiles-attribution {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.7);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 4px 8px;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  z-index: 100;
+  max-width: 300px;
+  backdrop-filter: blur(4px);
+}
+
+#tiles-attribution.hidden {
+  display: none;
+}

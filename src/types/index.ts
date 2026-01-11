@@ -1,0 +1,306 @@
+/**
+ * TypeScript Type Definitions
+ *
+ * Core interfaces for the Earth visualization application.
+ */
+
+import type * as THREE from "three";
+
+// =============================================================================
+// UNIT STATE TYPES
+// =============================================================================
+
+/** Base properties shared by all moving units */
+export interface BaseUnitState {
+  lat: number;
+  lon: number;
+  heading: number;
+  targetHeading: number;
+  baseSpeed: number;
+  baseTurnRate: number;
+  scale: number;
+  nextCourseChange: number;
+}
+
+/** Ship unit state */
+export interface ShipState extends BaseUnitState {
+  name: string;
+  mmsi: string;
+  sog: number; // Speed over ground
+}
+
+/** Aircraft unit state */
+export interface AircraftState extends BaseUnitState {
+  callsign: string;
+  altitude: number;
+  groundSpeed: number;
+  flightLevel: number;
+}
+
+/** Satellite unit state */
+export interface SatelliteState {
+  lat: number;
+  lon: number;
+  heading: number;
+  scale: number;
+  altitude: number;
+  inclination: number;
+  ascendingNode: number;
+  phase: number;
+  orbitalPeriod: number;
+  name: string;
+  orbitTypeLabel: string;
+  isMilitary: boolean;
+}
+
+/** Drone unit state */
+export interface DroneState {
+  lat: number;
+  lon: number;
+  heading: number;
+  altitude: number;
+  patrolCenterLat: number;
+  patrolCenterLon: number;
+  patrolRadius: number;
+  targetLat: number;
+  targetLon: number;
+  phase: number;
+  scale: number;
+  name: string;
+  orbitDirection: number;
+  orbitSpeed: number;
+}
+
+/** Union type for any unit state */
+export type UnitState = ShipState | AircraftState | SatelliteState | DroneState;
+
+/** Unit type identifier */
+export type UnitType = "ship" | "aircraft" | "satellite" | "drone" | "airport";
+
+/** Selected unit reference */
+export interface SelectedUnit {
+  type: UnitType;
+  index: number;
+}
+
+// =============================================================================
+// PARAMETER TYPES (GUI-controlled)
+// =============================================================================
+
+/** Earth rendering parameters */
+export interface EarthParameters {
+  sunDirectionX: number;
+  sunDirectionY: number;
+  sunDirectionZ: number;
+  atmosphereColor: string;
+  atmosphereIntensity: number;
+  cloudOpacity: number;
+  cloudSpeed: number;
+  oceanSpecular: number;
+}
+
+/** Weather overlay parameters */
+export interface WeatherParams {
+  enabled: boolean;
+  layer: number;
+  opacity: number;
+  animate: boolean;
+  speed: number;
+}
+
+/** H3 grid parameters */
+export interface H3Params {
+  enabled: boolean;
+  resolution: number;
+  opacity: number;
+  updateInterval: number;
+  showLines: boolean;
+}
+
+/** Unit label parameters */
+export interface LabelParams {
+  enabled: boolean;
+  maxLabels: number;
+  updateInterval: number;
+  showShipLabels: boolean;
+  showAircraftLabels: boolean;
+  fontSize: number;
+}
+
+/** Unit count and visibility parameters */
+export interface UnitCountParams {
+  shipCount: number;
+  aircraftCount: number;
+  satelliteCount: number;
+  droneCount: number;
+  showShips: boolean;
+  showAircraft: boolean;
+  showSatellites: boolean;
+  showDrones: boolean;
+  realisticRoutes: boolean;
+}
+
+/** Motion simulation parameters */
+export interface MotionParams {
+  baseSpeed: number;
+  speedVariation: number;
+  shipSpeedMultiplier: number;
+  aircraftSpeedMultiplier: number;
+  satelliteSpeedMultiplier: number;
+  turnRate: number;
+  updateInterval: number;
+}
+
+/** Trail rendering parameters */
+export interface TrailParams {
+  enabled: boolean;
+  opacity: number;
+  showShipTrails: boolean;
+  showAircraftTrails: boolean;
+}
+
+/** Airport display parameters */
+export interface AirportParams {
+  visible: boolean;
+  showLabels: boolean;
+  markerSize: number;
+}
+
+/** Camera parameters */
+export interface CameraParams {
+  tiltAngle: number;
+  autoRotate: boolean;
+  autoRotateSpeed: number;
+}
+
+/** Google 3D Tiles parameters */
+export interface TilesParams {
+  enabled: boolean;
+  transitionAltitude: number;
+}
+
+/** Icon scale parameters */
+export interface IconScaleParams {
+  multiplier: number;
+}
+
+// =============================================================================
+// H3 GRID TYPES
+// =============================================================================
+
+/** H3 cell density data */
+export interface H3CellData {
+  cellId: string;
+  count: number;
+  shipCount: number;
+  aircraftCount: number;
+  satelliteCount: number;
+}
+
+/** H3 grid build state for chunked processing */
+export interface H3BuildState {
+  cells: string[];
+  densityMap: Map<string, H3CellData>;
+  cellIndex: number;
+  vertices: Float32Array;
+  colors: Float32Array;
+  lineVertices: Float32Array;
+  complete: boolean;
+}
+
+// =============================================================================
+// LABEL SYSTEM TYPES
+// =============================================================================
+
+/** Label visibility data from worker */
+export interface LabelVisibility {
+  shipIndices: number[];
+  aircraftIndices: number[];
+  satelliteIndices: number[];
+  droneIndices: number[];
+}
+
+/** Label assignment mapping */
+export interface LabelAssignments {
+  [labelIndex: number]: {
+    type: UnitType;
+    unitIndex: number;
+  };
+}
+
+// =============================================================================
+// PERFORMANCE TYPES
+// =============================================================================
+
+/** Performance statistics */
+export interface PerfStats {
+  fps: number;
+  frameMs: number;
+  ships: number;
+  aircraft: number;
+  satellites: number;
+  drones: number;
+}
+
+/** Performance profiler data */
+export interface PerfProfiler {
+  enabled: boolean;
+  times: Record<string, number>;
+  lastLog: number;
+}
+
+// =============================================================================
+// CAMERA STATE TYPES
+// =============================================================================
+
+/** Camera movement tracking for change detection */
+export interface CameraState {
+  lastLat: number;
+  lastLon: number;
+  lastDist: number;
+  threshold: number;
+}
+
+// =============================================================================
+// THREE.JS OBJECT REFERENCES
+// =============================================================================
+
+/** References to Three.js objects for a unit mesh */
+export interface UnitMeshRefs {
+  geometry: THREE.InstancedBufferGeometry;
+  material: THREE.ShaderMaterial;
+  mesh: THREE.Mesh;
+  latAttr: THREE.InstancedBufferAttribute;
+  lonAttr: THREE.InstancedBufferAttribute;
+  headingAttr: THREE.InstancedBufferAttribute;
+  scaleAttr: THREE.InstancedBufferAttribute;
+}
+
+// =============================================================================
+// DATA TYPES
+// =============================================================================
+
+/** Shipping lane definition */
+export interface ShippingLane {
+  name: string;
+  weight: number;
+  latRange: [number, number];
+  lonRange: [number, number];
+}
+
+/** Flight corridor definition */
+export interface FlightCorridor {
+  name: string;
+  weight: number;
+  latRange: [number, number];
+  lonRange: [number, number];
+}
+
+/** Airport data */
+export interface Airport {
+  iata: string;
+  name: string;
+  lat: number;
+  lon: number;
+  size: "large" | "medium" | "small";
+}

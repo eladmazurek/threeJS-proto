@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    // Gradual adoption - lenient settings
+    "allowJs": true,
+    "checkJs": false,
+    "strict": false,
+    "noImplicitAny": false,
+
+    // Module settings
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    // Output settings (Vite handles actual compilation)
+    "noEmit": true,
+    "isolatedModules": true,
+
+    // Path resolution
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+
+    // Type checking improvements
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+
+    // Decorators (if needed later)
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.js",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
