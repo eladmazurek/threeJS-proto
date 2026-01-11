@@ -296,6 +296,9 @@ export interface FlightCorridor {
   lonRange: [number, number];
 }
 
+/** Raw airport data tuple (legacy format) */
+export type AirportTuple = [string, number, number, string];
+
 /** Airport data */
 export interface Airport {
   iata: string;
