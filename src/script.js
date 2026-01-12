@@ -29,6 +29,77 @@ import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
 import { TilesRenderer } from '3d-tiles-renderer';
 import { GoogleCloudAuthPlugin } from '3d-tiles-renderer/plugins';
 
+// =============================================================================
+// MODULE IMPORTS (Refactored code)
+// =============================================================================
+
+// Constants - imported from module
+import {
+  EARTH_RADIUS,
+  ATMOSPHERE_SCALE,
+  MAX_SHIPS,
+  MAX_AIRCRAFT,
+  SHIP_ALTITUDE,
+  AIRCRAFT_ALTITUDE,
+  SATELLITE_ALTITUDE_LEO,
+  SATELLITE_ALTITUDE_MEO,
+  SATELLITE_ALTITUDE_GEO,
+  MAX_SATELLITES,
+  MAX_DRONES,
+  DRONE_ALTITUDE_MIN,
+  DRONE_ALTITUDE_MAX,
+  DRONE_PATROL_RADIUS,
+  ORBIT_LINE_SEGMENTS,
+  PATROL_CIRCLE_SEGMENTS,
+  DEG_TO_RAD,
+} from "./constants";
+
+// Demo data utilities
+import {
+  SHIP_NAMES,
+  AIRLINE_CODES,
+  SHIPPING_LANES,
+  FLIGHT_CORRIDORS,
+  normalizeAngle,
+  shortestTurnDirection,
+  selectWeightedRegion,
+  randomInRegion,
+} from "./data/demo";
+
+// Coordinate utilities
+import {
+  latLonToPosition,
+  getCameraLatLon,
+} from "./utils/coordinates";
+
+// Trail constants
+import {
+  TRAIL_LENGTH,
+  MAX_TRAIL_POINTS,
+  TRAIL_UPDATE_INTERVAL,
+  MIN_TRAIL_DISTANCE,
+} from "./units/trails";
+
+// Label constants
+import {
+  MAX_LABEL_CHARS,
+  CHARS_PER_LINE,
+  CHAR_SET,
+  ATLAS_SIZE,
+  ATLAS_CHAR_SIZE,
+} from "./labels";
+
+// Weather constants
+import {
+  WEATHER_ALTITUDE,
+  WEATHER_LAYERS,
+} from "./scene/weather";
+
+// Cloud constants
+import { CLOUD_ALTITUDE } from "./scene/clouds";
+
+// Note: AIRPORTS remains in script.js (uses tuple format different from module)
+
 /**
  * =============================================================================
  * BASE SETUP
@@ -280,8 +351,7 @@ function updateTelemetry(cameraDistance, cameraPosition) {
   metValue.textContent = `${hours}:${minutes}:${seconds}`;
 }
 
-// Earth radius constant - must match the sphere geometry radius
-const EARTH_RADIUS = 2;
+// EARTH_RADIUS imported from ./constants
 
 /**
  * =============================================================================
@@ -517,7 +587,7 @@ scene.add(earth);
  * Creates the blue/red atmospheric rim visible at Earth's edges
  */
 
-const ATMOSPHERE_SCALE = 1.025; // Atmosphere extends 2.5% beyond Earth surface (thin rim)
+// ATMOSPHERE_SCALE imported from ./constants
 
 const atmosphereGeometry = new THREE.SphereGeometry(EARTH_RADIUS * ATMOSPHERE_SCALE, 64, 64);
 
@@ -806,7 +876,7 @@ function updateTilesAttribution() {
  * but aircraft appear above them.
  */
 
-const CLOUD_ALTITUDE = 0.008; // Slightly above ships (0.005) but below aircraft (0.02)
+// CLOUD_ALTITUDE imported from ./scene/clouds
 
 const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS + CLOUD_ALTITUDE, 64, 64);
 
@@ -866,7 +936,7 @@ earth.add(cloudMesh);
  * Supports multiple weather layers: clouds, precipitation, temperature, etc.
  */
 
-const WEATHER_ALTITUDE = 0.006; // Between surface and clouds
+// WEATHER_ALTITUDE imported from ./scene/weather
 
 // Weather overlay parameters
 const weatherParams = {
@@ -876,37 +946,7 @@ const weatherParams = {
   animate: true,
 };
 
-// Weather layer definitions with NASA GIBS tile URLs
-// Using NASA EOSDIS Global Imagery Browse Services
-const WEATHER_LAYERS = {
-  clouds: {
-    name: "Cloud Cover",
-    // NASA MODIS Terra Cloud imagery
-    url: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
-    layer: "MODIS_Terra_CorrectedReflectance_TrueColor",
-    color: new THREE.Color(0xffffff),
-    description: "Satellite cloud imagery",
-  },
-  precipitation: {
-    name: "Precipitation",
-    // IMERG precipitation data
-    layer: "IMERG_Precipitation_Rate",
-    color: new THREE.Color(0x00aaff),
-    description: "Global precipitation rate",
-  },
-  temperature: {
-    name: "Temperature",
-    layer: "MODIS_Terra_Land_Surface_Temp_Day",
-    color: new THREE.Color(0xff6600),
-    description: "Land surface temperature",
-  },
-  wind: {
-    name: "Wind Speed",
-    layer: "MERRA2_Wind_Speed_50m",
-    color: new THREE.Color(0x00ff88),
-    description: "Wind speed at 50m",
-  },
-};
+// WEATHER_LAYERS imported from ./scene/weather
 
 // Create weather overlay geometry (sphere slightly above surface)
 const weatherGeometry = new THREE.SphereGeometry(EARTH_RADIUS + WEATHER_ALTITUDE, 64, 64);
@@ -2278,46 +2318,14 @@ canvas.addEventListener('click', (event) => {
  * Each symbol type (ship/aircraft) has its own InstancedMesh.
  */
 
-// Constants
-const MAX_SHIPS = 250000; // Maximum number of ship instances
-const MAX_AIRCRAFT = 250000; // Maximum number of aircraft instances
-const SHIP_ALTITUDE = 0.005; // Height above Earth surface for ships
-const AIRCRAFT_ALTITUDE = 0.02; // Height above Earth surface for aircraft
-
-// Satellite altitude ranges (scaled to Earth radius of 2)
-const SATELLITE_ALTITUDE_LEO = { min: 0.06, max: 0.12 };  // Low Earth Orbit
-const SATELLITE_ALTITUDE_MEO = { min: 0.15, max: 0.25 };  // Medium Earth Orbit
-const SATELLITE_ALTITUDE_GEO = { min: 0.35, max: 0.40 };  // Geostationary
-const MAX_SATELLITES = 5000;
-
-// Drone/UAV constants
-const MAX_DRONES = 100;
-// Altitude range: 25,000-60,000 ft (7.6-18.3 km) converted to scene units
-const DRONE_ALTITUDE_MIN = 0.0024; // ~25,000 ft
-const DRONE_ALTITUDE_MAX = 0.0058; // ~60,000 ft
-const DRONE_PATROL_RADIUS = 0.08; // Radius of circular patrol pattern (in Earth radii)
+// Constants imported from ./constants:
+// MAX_SHIPS, MAX_AIRCRAFT, SHIP_ALTITUDE, AIRCRAFT_ALTITUDE,
+// SATELLITE_ALTITUDE_LEO, SATELLITE_ALTITUDE_MEO, SATELLITE_ALTITUDE_GEO,
+// MAX_SATELLITES, MAX_DRONES, DRONE_ALTITUDE_MIN, DRONE_ALTITUDE_MAX, DRONE_PATROL_RADIUS
 
 // Note: Matrix pooling removed - GPU now handles orientation calculations
 
-/**
- * Convert latitude/longitude to 3D position on Earth surface
- * @param {number} lat - Latitude in degrees (-90 to 90)
- * @param {number} lon - Longitude in degrees (-180 to 180)
- * @param {number} altitude - Height above surface (0 = on surface)
- * @returns {THREE.Vector3} Position in 3D space
- */
-function latLonToPosition(lat, lon, altitude = 0) {
-  const phi = (90 - lat) * (Math.PI / 180); // Convert to radians, offset from pole
-  const theta = (lon + 180) * (Math.PI / 180); // Convert to radians, offset for texture alignment
-
-  const radius = EARTH_RADIUS + altitude;
-
-  return new THREE.Vector3(
-    -radius * Math.sin(phi) * Math.cos(theta),
-    radius * Math.cos(phi),
-    radius * Math.sin(phi) * Math.sin(theta)
-  );
-}
+// latLonToPosition imported from ./utils/coordinates
 
 // Note: createInstanceMatrix removed - GPU vertex shader now handles orientation
 
@@ -2741,51 +2749,25 @@ const cameraState = {
   threshold: 2.0,  // Degrees of movement before re-query
 };
 
-/**
- * Get camera center in lat/lon (accounts for earth rotation)
- */
-function getCameraLatLon() {
-  const camPos = camera.position;
-  const camDist = camPos.length();
-  const earthRotY = earth.rotation.y;
-
-  // Undo earth rotation to get earth-fixed coordinates
-  const cosR = Math.cos(-earthRotY);
-  const sinR = Math.sin(-earthRotY);
-  const camX = camPos.x * cosR + camPos.z * sinR;
-  const camY = camPos.y;
-  const camZ = -camPos.x * sinR + camPos.z * cosR;
-
-  // Normalize to get point on earth surface
-  const len = Math.sqrt(camX * camX + camY * camY + camZ * camZ);
-  const x = (camX / len) * EARTH_RADIUS;
-  const y = (camY / len) * EARTH_RADIUS;
-  const z = (camZ / len) * EARTH_RADIUS;
-
-  // Convert to lat/lon
-  const lat = Math.asin(y / EARTH_RADIUS) * (180 / Math.PI);
-  const lon = ((Math.atan2(z, -x) * (180 / Math.PI) - 180 + 540) % 360) - 180;
-
-  return { lat, lon, dist: camDist };
-}
+// getCameraLatLon imported from ./utils/coordinates
 
 /**
  * Check if camera has moved enough to warrant a new query
  */
 function cameraMovedSignificantly() {
-  const { lat, lon, dist } = getCameraLatLon();
+  const { lat, lon, distance } = getCameraLatLon(camera, earth.rotation.y);
   const dLat = Math.abs(lat - cameraState.lastLat);
   const dLon = Math.abs(lon - cameraState.lastLon);
-  const dDist = Math.abs(dist - cameraState.lastDist);
+  const dDist = Math.abs(distance - cameraState.lastDist);
 
   // Threshold scales with zoom - when zoomed in, smaller movements matter more
-  const zoomScale = Math.max(0.5, dist / 5);
+  const zoomScale = Math.max(0.5, distance / 5);
   const threshold = cameraState.threshold * zoomScale;
 
   if (dLat > threshold || dLon > threshold || dDist > 0.5) {
     cameraState.lastLat = lat;
     cameraState.lastLon = lon;
-    cameraState.lastDist = dist;
+    cameraState.lastDist = distance;
     return true;
   }
   return false;
@@ -2852,11 +2834,11 @@ function requestLabelIndexBuild() {
 function requestVisibleUnits() {
   if (labelVisibility.pendingQuery) return;
 
-  const { lat, lon, dist } = getCameraLatLon();
+  const { lat, lon, distance } = getCameraLatLon(camera, earth.rotation.y);
 
   // Ring size based on zoom, with padding for screen edges
   // Without padding, units at frustum edges won't get labels
-  const zoomFactor = Math.max(0.1, (dist - EARTH_RADIUS) / EARTH_RADIUS);
+  const zoomFactor = Math.max(0.1, (distance - EARTH_RADIUS) / EARTH_RADIUS);
   const baseRing = Math.floor(zoomFactor * 15);
   const ringPadding = 4; // Extra rings to cover screen edges
   const ringSize = Math.max(4, Math.min(25, baseRing + ringPadding));
@@ -2878,11 +2860,7 @@ function requestVisibleUnits() {
   labelVisibility.lastQuery = performance.now();
 }
 
-// Constants
-const MAX_LABEL_CHARS = 24;
-const CHAR_SET = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ|.-/";
-const ATLAS_SIZE = 512;
-const ATLAS_CHAR_SIZE = 32;
+// MAX_LABEL_CHARS, CHAR_SET, ATLAS_SIZE, ATLAS_CHAR_SIZE imported from ./labels
 
 // Character lookup table - O(1) encoding (ASCII codes 0-127)
 const CHAR_TO_INDEX = new Uint8Array(128);
@@ -3240,8 +3218,7 @@ function encodeTextToBuffer(text, labelIdx) {
   }
 }
 
-// Label layout: 2 lines of 12 chars each
-const CHARS_PER_LINE = 12;
+// Label layout: 2 lines of 12 chars each (CHARS_PER_LINE imported from ./labels)
 
 /**
  * Format ship label text (2 lines)
@@ -3619,7 +3596,7 @@ let lastLabelUpdate = 0;
 // -----------------------------------------------------------------------------
 // Drone Patrol Circle Visualization
 // -----------------------------------------------------------------------------
-const PATROL_CIRCLE_SEGMENTS = 64;
+// PATROL_CIRCLE_SEGMENTS imported from ./constants
 
 const patrolCircleMaterial = new THREE.LineBasicMaterial({
   color: 0x84cc16, // Lime green to match drone
@@ -3834,7 +3811,7 @@ scene.add(selectionRing); // Added to scene so visible with 3D tiles
 // -----------------------------------------------------------------------------
 // Shows the full orbital path when a satellite is selected
 
-const ORBIT_LINE_SEGMENTS = 128; // Points around the orbit
+// ORBIT_LINE_SEGMENTS imported from ./constants
 
 const orbitLineMaterial = new THREE.LineBasicMaterial({
   color: 0xaa88ff, // Violet to match satellite color
@@ -3990,11 +3967,7 @@ function updateSelectionRing() {
 // -----------------------------------------------------------------------------
 // Unit Trails - Fading dot trails showing recent positions
 // -----------------------------------------------------------------------------
-
-const TRAIL_LENGTH = 6; // Number of trail points per unit
-const MAX_TRAIL_POINTS = 60000; // Total trail points (limits memory usage)
-const TRAIL_UPDATE_INTERVAL = 400; // ms between trail position captures
-const MIN_TRAIL_DISTANCE = 0.15; // Minimum distance (degrees) before adding new trail point
+// TRAIL_LENGTH, MAX_TRAIL_POINTS, TRAIL_UPDATE_INTERVAL, MIN_TRAIL_DISTANCE imported from ./units/trails
 
 // Trail parameters
 const trailParams = {
@@ -4560,19 +4533,7 @@ let droneSimState = [];
 let lastSimTime = 0;
 
 // Sample ship names for labels
-const SHIP_NAMES = [
-  "EVER GIVEN", "MAERSK ALABAMA", "MSC OSCAR", "EMMA MAERSK", "CSCL GLOBE",
-  "OOCL HONG KONG", "MOL TRIUMPH", "MADRID MAERSK", "HMM ALGECIRAS", "EVER ACE",
-  "MSC GULSUN", "CMA CGM MARCO POLO", "COSCO SHIPPING UNIVERSE", "YANGMING WITNESS",
-  "ONE APUS", "EVERGREEN EVER", "HAPAG LLOYD EXPRESS", "ZIM INTEGRATED", "PIL ASIA",
-  "PACIFIC VOYAGER", "ATLANTIC PIONEER", "NORDIC SPIRIT", "OCEAN CARRIER", "SEA GIANT",
-  "GLOBAL LEADER", "TRADE WIND", "CARGO MASTER", "FREIGHT KING", "WAVE RIDER",
-  "MARINE STAR", "HORIZON BLUE", "DEEP SEA", "SWIFT CURRENT", "NORTHERN LIGHT"
-];
-
-// Sample airline codes for aircraft labels
-const AIRLINE_CODES = ["UA", "AA", "DL", "SW", "BA", "LH", "AF", "EK", "QF", "SQ",
-  "CX", "NH", "JL", "KE", "TK", "QR", "EY", "VS", "IB", "KL"];
+// SHIP_NAMES and AIRLINE_CODES imported from ./data/demo
 
 /**
  * Initialize simulation state for a unit
@@ -4612,22 +4573,7 @@ function initUnitState(lat, lon, heading, isAircraft, index = 0) {
   return baseState;
 }
 
-/**
- * Normalize angle to 0-360 range
- */
-function normalizeAngle(angle) {
-  while (angle < 0) angle += 360;
-  while (angle >= 360) angle -= 360;
-  return angle;
-}
-
-/**
- * Calculate shortest turn direction between two angles
- */
-function shortestTurnDirection(current, target) {
-  const diff = normalizeAngle(target - current);
-  return diff <= 180 ? diff : diff - 360;
-}
+// normalizeAngle and shortestTurnDirection imported from ./data/demo
 
 /**
  * Initialize simulation state for a satellite with orbital elements
@@ -4840,69 +4786,7 @@ const unitCountParams = {
   showDrones: true,
 };
 
-// Realistic shipping lanes with concentration weights
-const SHIPPING_LANES = [
-  // High traffic areas
-  { latRange: [1, 8], lonRange: [103, 117], weight: 0.12, name: "South China Sea / Malacca" },
-  { latRange: [29, 32], lonRange: [32, 34], weight: 0.04, name: "Suez Canal approach" },
-  { latRange: [47, 49], lonRange: [-123, -122], weight: 0.03, name: "Puget Sound" },
-  { latRange: [50, 52], lonRange: [0, 2], weight: 0.04, name: "English Channel" },
-  { latRange: [35, 37], lonRange: [139, 141], weight: 0.04, name: "Tokyo Bay" },
-  { latRange: [22, 23], lonRange: [113, 115], weight: 0.04, name: "Hong Kong / Pearl River" },
-  { latRange: [1, 2], lonRange: [103, 104], weight: 0.04, name: "Singapore Strait" },
-  { latRange: [37, 38], lonRange: [-122, -121], weight: 0.03, name: "San Francisco Bay" },
-  { latRange: [40, 41], lonRange: [-74, -73], weight: 0.03, name: "New York Harbor" },
-  { latRange: [51, 54], lonRange: [3, 8], weight: 0.04, name: "Rotterdam / North Sea" },
-  // Medium traffic - major routes
-  { latRange: [30, 45], lonRange: [-80, -10], weight: 0.10, name: "North Atlantic" },
-  { latRange: [0, 25], lonRange: [50, 75], weight: 0.08, name: "Indian Ocean / Arabian Sea" },
-  { latRange: [10, 40], lonRange: [120, 145], weight: 0.10, name: "West Pacific" },
-  { latRange: [35, 50], lonRange: [-130, -120], weight: 0.06, name: "US West Coast" },
-  { latRange: [25, 45], lonRange: [-85, -75], weight: 0.06, name: "US East Coast" },
-  { latRange: [35, 42], lonRange: [-5, 15], weight: 0.05, name: "Mediterranean West" },
-  { latRange: [32, 38], lonRange: [15, 35], weight: 0.05, name: "Mediterranean East" },
-  { latRange: [55, 62], lonRange: [5, 25], weight: 0.05, name: "Baltic Sea" },
-];
-
-// Realistic flight corridors with concentration weights
-// Weights favor large corridor regions over small hub areas to avoid clustering
-const FLIGHT_CORRIDORS = [
-  // Major flight routes (high weight - most aircraft are en route, not at airports)
-  { latRange: [45, 65], lonRange: [-60, -10], weight: 0.15, name: "North Atlantic Track" },
-  { latRange: [35, 55], lonRange: [-130, -70], weight: 0.18, name: "US Domestic" },
-  { latRange: [35, 55], lonRange: [-10, 40], weight: 0.15, name: "European Airspace" },
-  { latRange: [20, 45], lonRange: [100, 145], weight: 0.15, name: "East Asian Routes" },
-  { latRange: [10, 35], lonRange: [70, 100], weight: 0.10, name: "South Asian Routes" },
-  { latRange: [-35, 5], lonRange: [115, 155], weight: 0.08, name: "Australia / Oceania" },
-  { latRange: [0, 30], lonRange: [-100, -60], weight: 0.06, name: "Central America / Caribbean" },
-  { latRange: [-40, 10], lonRange: [-70, -35], weight: 0.05, name: "South America" },
-  { latRange: [20, 40], lonRange: [-20, 40], weight: 0.04, name: "North Africa / Middle East" },
-  { latRange: [-35, 5], lonRange: [10, 45], weight: 0.04, name: "Sub-Saharan Africa" },
-];
-
-/**
- * Generate a random point within a region using uniform distribution
- */
-function randomInRegion(latRange, lonRange) {
-  // Uniform distribution across the entire region
-  const lat = latRange[0] + Math.random() * (latRange[1] - latRange[0]);
-  const lon = lonRange[0] + Math.random() * (lonRange[1] - lonRange[0]);
-  return { lat, lon };
-}
-
-/**
- * Select a random region based on weights
- */
-function selectWeightedRegion(regions) {
-  const totalWeight = regions.reduce((sum, r) => sum + r.weight, 0);
-  let random = Math.random() * totalWeight;
-
-  for (const region of regions) {
-    random -= region.weight;
-    if (random <= 0) return region;
-  }
-  return regions[regions.length - 1];
-}
+// SHIPPING_LANES, FLIGHT_CORRIDORS, randomInRegion, selectWeightedRegion imported from ./data/demo
 
 /**
  * Generate demo ships and aircraft with specified counts
