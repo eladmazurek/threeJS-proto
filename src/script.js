@@ -52,6 +52,16 @@ import {
   ORBIT_LINE_SEGMENTS,
   PATROL_CIRCLE_SEGMENTS,
   DEG_TO_RAD,
+  GRID_ALTITUDE,
+  GRID_SEGMENTS,
+  MAX_CANDIDATES,
+  TILES_SCALE_FACTOR,
+  TILES_TRANSITION_RANGE,
+  H3_PAN_THRESHOLD,
+  H3_MAX_CELLS,
+  H3_VERTS_PER_CELL,
+  H3_CELLS_PER_CHUNK,
+  POPUP_UPDATE_INTERVAL,
 } from "./constants";
 
 // Demo data utilities
@@ -80,23 +90,38 @@ import {
   MIN_TRAIL_DISTANCE,
 } from "./units/trails";
 
-// Label constants
+// Label constants and functions
 import {
   MAX_LABEL_CHARS,
   CHARS_PER_LINE,
   CHAR_SET,
   ATLAS_SIZE,
   ATLAS_CHAR_SIZE,
+  generateFontAtlas,
+  formatShipLabel,
+  formatAircraftLabel,
+  formatDroneLabel,
+  formatSatelliteLabel,
 } from "./labels";
 
 // Weather constants
 import {
   WEATHER_ALTITUDE,
   WEATHER_LAYERS,
+  WEATHER_LAYER_TYPES,
 } from "./scene/weather";
 
 // Cloud constants
 import { CLOUD_ALTITUDE } from "./scene/clouds";
+
+// Earth utilities
+import { loadTexture, TEXTURE_PRESETS } from "./scene/earth";
+
+// UI constants
+import { missionStartTime } from "./ui/overlays";
+
+// Selection constants
+import { SELECTION_COLORS } from "./selection";
 
 // Note: AIRPORTS remains in script.js (uses tuple format different from module)
 
@@ -299,8 +324,7 @@ function updateWeatherLegend(layerName, visible) {
   legendLabels.innerHTML = `<span>${config.labels[0]}</span><span>${config.labels[1]}</span>`;
 }
 
-// Mission start time for elapsed time calculation
-const missionStartTime = Date.now();
+// missionStartTime imported from ./ui/overlays
 
 /**
  * Update telemetry display with current values
@@ -362,13 +386,10 @@ function updateTelemetry(cameraDistance, cameraPosition) {
 // API key loaded from environment variable (set in .env.local)
 const GOOGLE_TILES_API_KEY = import.meta.env.VITE_GOOGLE_TILES_API_KEY;
 
-// Scale factor to convert real-world meters to scene units
-// Real Earth radius: 6,371,000 meters, Scene Earth radius: 2 units
-const TILES_SCALE_FACTOR = EARTH_RADIUS / 6371000;
+// TILES_SCALE_FACTOR, TILES_TRANSITION_RANGE imported from ./constants
 
 // Transition altitude in scene units
 let TILES_TRANSITION_ALTITUDE = 0.628; // ~2000km in scene units
-const TILES_TRANSITION_RANGE = 0.125; // ~400km crossfade range for smooth blend
 
 // Tiles parameters for GUI
 const tilesParams = {
@@ -383,9 +404,7 @@ const canvas = document.querySelector("canvas.webgl");
 // lights, and cameras
 const scene = new THREE.Scene();
 
-// Texture loader for loading image files as textures
-// Used for Earth day/night maps, clouds, etc.
-const textureLoader = new THREE.TextureLoader();
+// textureLoader now handled by ./scene/earth module
 
 /**
  * =============================================================================
@@ -393,87 +412,20 @@ const textureLoader = new THREE.TextureLoader();
  * =============================================================================
  */
 
-// Texture presets - different Earth imagery options
-// Users can add their own high-res textures to static/earth/ folder
-const texturePresets = {
-  "Standard": {
-    day: "earth/day.jpg",
-    night: "earth/night.jpg",
-    specularClouds: "earth/specularClouds.jpg",
-    description: "Default Earth textures",
-  },
-  "Black Marble (NASA)": {
-    // NASA Black Marble - 8K night imagery showing city lights
-    // Source: https://earthobservatory.nasa.gov/features/NightLights
-    day: "earth/blackmarble_night.jpg",  // Use night for both - city lights view
-    night: "earth/blackmarble_night.jpg",
-    specularClouds: "earth/specularClouds.jpg",
-    description: "NASA night imagery - city lights",
-  },
-  "Blue Marble (NASA)": {
-    // NASA Blue Marble - true color satellite imagery
-    // Source: https://visibleearth.nasa.gov/collection/1484/blue-marble
-    day: "earth/bluemarble_day.jpg",
-    night: "earth/night.jpg",
-    specularClouds: "earth/specularClouds.jpg",
-    description: "NASA true color day imagery",
-  },
-  "Topo + Bathymetry": {
-    // Topographic relief with ocean bathymetry
-    // Shows elevation data - great for tactical/military look
-    day: "earth/topo_bathymetry.jpg",
-    night: "earth/night.jpg",
-    specularClouds: "earth/specularClouds.jpg",
-    description: "Elevation + ocean depth",
-  },
-};
+// TEXTURE_PRESETS imported from ./scene/earth
 
 // Current texture preset selection
 const textureParams = {
   preset: "Standard",
 };
 
-// Texture cache to avoid reloading
-const textureCache = {};
-
-/**
- * Load a texture with caching
- */
-function loadTexture(path, isSRGB = true) {
-  if (textureCache[path]) {
-    return textureCache[path];
-  }
-
-  // Prepend base URL for GitHub Pages deployment
-  const fullPath = import.meta.env.BASE_URL + path;
-
-  const texture = textureLoader.load(
-    fullPath,
-    // onLoad
-    (tex) => {
-      console.log(`Loaded texture: ${path}`);
-    },
-    // onProgress
-    undefined,
-    // onError
-    (err) => {
-      console.warn(`Failed to load texture: ${path}. Using fallback.`);
-    }
-  );
-
-  if (isSRGB) {
-    texture.colorSpace = THREE.SRGBColorSpace;
-  }
-
-  textureCache[path] = texture;
-  return texture;
-}
+// loadTexture imported from ./scene/earth
 
 /**
  * Switch to a different texture preset
  */
 function switchTexturePreset(presetName) {
-  const preset = texturePresets[presetName];
+  const preset = TEXTURE_PRESETS[presetName];
   if (!preset) {
     console.warn(`Unknown texture preset: ${presetName}`);
     return;
@@ -1365,8 +1317,8 @@ earth.add(weatherMesh);
  * Update weather layer type
  */
 function setWeatherLayer(layerName) {
-  const layerTypes = { precipitation: 0, temperature: 1, wind: 2, pressure: 3 };
-  weatherMaterial.uniforms.uLayerType.value = layerTypes[layerName] || 0;
+  // WEATHER_LAYER_TYPES imported from ./scene/weather
+  weatherMaterial.uniforms.uLayerType.value = WEATHER_LAYER_TYPES[layerName] || 0;
   weatherParams.layer = layerName;
 }
 
@@ -1378,8 +1330,7 @@ function setWeatherLayer(layerName) {
  * Lines are added as children of the Earth mesh so they rotate with it.
  */
 
-const GRID_ALTITUDE = 0.002; // Slightly above surface to prevent z-fighting
-const GRID_SEGMENTS = 128; // Smoothness of curved lines
+// GRID_ALTITUDE, GRID_SEGMENTS imported from ./constants
 
 // Grid parameters (adjustable via GUI)
 const gridParameters = {
@@ -1579,12 +1530,9 @@ let h3LineGeometry = null;
 let lastH3Resolution = -1;
 let lastH3UpdateTime = 0;
 let lastH3ViewCenter = { lat: 0, lon: 0 };
-// H3_UPDATE_INTERVAL now controlled via h3Params.updateInterval
-const H3_PAN_THRESHOLD = 5; // Degrees of movement to trigger rebuild at high res
-const H3_MAX_CELLS = 8000;
+// H3 constants imported from ./constants: H3_PAN_THRESHOLD, H3_MAX_CELLS, H3_VERTS_PER_CELL
 
 // Pre-allocated buffers for H3 geometry (max cells * 6 triangles * 3 verts * 3 floats)
-const H3_VERTS_PER_CELL = 18; // 6 triangles * 3 vertices
 const h3PositionBuffer = new Float32Array(H3_MAX_CELLS * H3_VERTS_PER_CELL * 3);
 const h3ColorBuffer = new Float32Array(H3_MAX_CELLS * H3_VERTS_PER_CELL * 3);
 const h3LineBuffer = new Float32Array(H3_MAX_CELLS * 12 * 3); // 6 edges * 2 verts * 3 floats
@@ -1879,9 +1827,8 @@ function buildH3Geometry(allCells, densityMap, maxDensity) {
   return { vertexCount: posIdx / 3, lineVertexCount: lineIdx / 3 };
 }
 
-// Chunked geometry building state
+// Chunked geometry building state (H3_CELLS_PER_CHUNK imported from ./constants)
 let h3BuildState = null;
-const H3_CELLS_PER_CHUNK = 200; // Process 200 cells per frame to maintain 60fps
 
 /**
  * Start chunked H3 geometry building (non-blocking)
@@ -2262,10 +2209,9 @@ function refreshH3PopupIfVisible() {
   }
 }
 
-// Track last popup count for change detection
+// Track last popup count for change detection (POPUP_UPDATE_INTERVAL imported from ./constants)
 let lastPopupTotal = -1;
 let lastPopupUpdateTime = 0;
-const POPUP_UPDATE_INTERVAL = 0.5; // Check every 0.5 seconds
 
 /**
  * Lightweight periodic check for selected cell (called from tick loop)
@@ -2881,57 +2827,15 @@ for (let i = 0; i < CHAR_SET.length; i++) {
   CHAR_UV_V[i] = row * ATLAS_CHAR_SIZE / ATLAS_SIZE;
 }
 
-// Font atlas texture
-let fontAtlasTexture = null;
-
-/**
- * Generate font atlas texture
- */
-function generateFontAtlas() {
-  const canvas = document.createElement('canvas');
-  canvas.width = ATLAS_SIZE;
-  canvas.height = ATLAS_SIZE;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, ATLAS_SIZE, ATLAS_SIZE);
-
-  ctx.fillStyle = 'white';
-  ctx.font = `bold ${ATLAS_CHAR_SIZE - 4}px "SF Mono", Monaco, "Courier New", monospace`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  for (let i = 0; i < CHAR_SET.length; i++) {
-    const col = i % charsPerRow;
-    const row = Math.floor(i / charsPerRow);
-    const x = col * ATLAS_CHAR_SIZE + ATLAS_CHAR_SIZE / 2;
-    const y = row * ATLAS_CHAR_SIZE + ATLAS_CHAR_SIZE / 2;
-    ctx.fillText(CHAR_SET[i], x, y);
-  }
-
-  fontAtlasTexture = new THREE.CanvasTexture(canvas);
-  fontAtlasTexture.flipY = false; // Canvas Y=0 is top, we want UV V=0 to be top
-  fontAtlasTexture.minFilter = THREE.LinearFilter;
-  fontAtlasTexture.magFilter = THREE.LinearFilter;
-  fontAtlasTexture.needsUpdate = true;
-
-  // Debug: log atlas info
-  console.log('Font atlas generated:', ATLAS_SIZE + 'x' + ATLAS_SIZE, 'chars:', CHAR_SET.length);
-
-  // Debug: show atlas in corner of screen (uncomment to debug)
-  // canvas.style.cssText = 'position:fixed;bottom:10px;left:10px;width:128px;height:128px;border:1px solid white;z-index:1000;opacity:0.9;';
-  // canvas.id = 'debug-font-atlas';
-  // document.body.appendChild(canvas);
-}
-
-generateFontAtlas();
+// Font atlas texture (generateFontAtlas imported from ./labels)
+const fontAtlasTexture = generateFontAtlas();
 
 // =============================================================================
 // FLAT BUFFER DATA STRUCTURES
 // =============================================================================
 
 // Candidate buffer for spatial filtering (avoids object allocations)
-const MAX_CANDIDATES = 2000;
+// MAX_CANDIDATES imported from ./constants
 const candidateBuffer = {
   // Parallel arrays for candidate data
   type: new Uint8Array(MAX_CANDIDATES),        // 0=ship, 1=aircraft
@@ -3218,69 +3122,8 @@ function encodeTextToBuffer(text, labelIdx) {
   }
 }
 
-// Label layout: 2 lines of 12 chars each (CHARS_PER_LINE imported from ./labels)
-
-/**
- * Format ship label text (2 lines)
- * Line 1: Ship name (12 chars)
- * Line 2: Speed info (12 chars)
- */
-function formatShipLabel(unit) {
-  const name = (unit.name || 'UNKNOWN').substring(0, CHARS_PER_LINE).toUpperCase().padEnd(CHARS_PER_LINE);
-  const speed = unit.sog ? unit.sog.toFixed(1) + ' KT' : '0.0 KT';
-  const line2 = speed.padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
-  return name + line2;
-}
-
-/**
- * Format aircraft label text (2 lines)
- * Line 1: Callsign (12 chars)
- * Line 2: Alt + Speed (12 chars)
- */
-function formatAircraftLabel(unit) {
-  const callsign = (unit.callsign || 'N/A').substring(0, CHARS_PER_LINE).toUpperCase().padEnd(CHARS_PER_LINE);
-  const alt = unit.altitude ? Math.round(unit.altitude / 1000) + 'K' : '0K';
-  const spd = unit.groundSpeed ? unit.groundSpeed + 'KT' : '0KT';
-  const line2 = (alt + ' ' + spd).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
-  return callsign + line2;
-}
-
-/**
- * Format drone/UAV label text (2 lines) - tactical style
- * Line 1: Designation + status (12 chars)
- * Line 2: Alt + mission type (12 chars)
- */
-function formatDroneLabel(unit, index) {
-  // Tactical designation: MQ9-01, RQ4-02, etc.
-  const types = ['MQ9', 'RQ4', 'MQ1', 'RQ7'];
-  const type = types[index % types.length];
-  const num = String((index % 99) + 1).padStart(2, '0');
-  const status = 'ACTV';
-  const line1 = (type + '-' + num + ' ' + status).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
-
-  // Altitude in thousands + mission
-  const altFt = Math.round(unit.altitude * 6371 / EARTH_RADIUS * 3281);
-  const altK = Math.round(altFt / 1000) + 'K';
-  const mission = 'ISR';  // Intelligence, Surveillance, Reconnaissance
-  const line2 = ('FL' + altK + ' ' + mission).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
-
-  return line1 + line2;
-}
-
-/**
- * Format satellite label text (2 lines)
- * Line 1: Name (12 chars)
- * Line 2: Orbit type + altitude (12 chars)
- */
-function formatSatelliteLabel(unit) {
-  const name = (unit.name || 'UNKNOWN').substring(0, CHARS_PER_LINE).toUpperCase().padEnd(CHARS_PER_LINE);
-  // Altitude in km (convert from scene units)
-  const altKm = Math.round(unit.altitude * 6371 / EARTH_RADIUS);
-  const altStr = altKm >= 1000 ? Math.round(altKm / 1000) + 'KKM' : altKm + 'KM';
-  const orbit = unit.orbitTypeLabel || 'LEO';
-  const line2 = (orbit + ' ' + altStr).padEnd(CHARS_PER_LINE).substring(0, CHARS_PER_LINE);
-  return name + line2;
-}
+// Label format functions imported from ./labels:
+// formatShipLabel, formatAircraftLabel, formatDroneLabel, formatSatelliteLabel
 
 // Track when labels were last rebuilt
 let _lastLabelRebuild = 0;
@@ -3945,15 +3788,8 @@ function updateSelectionRing() {
   _ringQuat.setFromUnitVectors(_ringUp, surfaceNormal);
   selectionRing.quaternion.copy(_ringQuat);
 
-  // Set color based on unit type
-  const colors = {
-    ship: 0x00ffff,     // Teal
-    aircraft: 0xffa500, // Amber
-    satellite: 0xaa88ff, // Violet
-    drone: 0x84cc16,    // Lime green
-    airport: 0xffffff   // White for airports
-  };
-  selectionRingMaterial.uniforms.uColor.value.setHex(colors[type] || 0xffffff);
+  // Set color based on unit type (SELECTION_COLORS imported from ./selection)
+  selectionRingMaterial.uniforms.uColor.value.setHex(SELECTION_COLORS[type] || 0xffffff);
 
   // Scale ring to match icon scaling (including user multiplier)
   const cameraDistance = camera.position.length();
@@ -5351,7 +5187,7 @@ function setCameraTilt(degrees) {
 // Texture preset folder
 const textureFolder = gui.addFolder("Textures");
 textureFolder
-  .add(textureParams, "preset", Object.keys(texturePresets))
+  .add(textureParams, "preset", Object.keys(TEXTURE_PRESETS))
   .name("Preset")
   .onChange((value) => {
     switchTexturePreset(value);
