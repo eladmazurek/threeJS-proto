@@ -30,7 +30,7 @@ export const MIN_TRAIL_DISTANCE = 0.15;
 // =============================================================================
 
 /** Trail vertex shader - positions dots at lat/lon with altitude */
-const TRAIL_VERTEX_SHADER = `
+export const TRAIL_VERTEX_SHADER = `
   attribute float aLat;
   attribute float aLon;
   attribute float aOpacity;
@@ -67,7 +67,7 @@ const TRAIL_VERTEX_SHADER = `
 `;
 
 /** Trail fragment shader - renders circular dots */
-const TRAIL_FRAGMENT_SHADER = `
+export const TRAIL_FRAGMENT_SHADER = `
   uniform vec3 uColor;
   uniform float uBaseOpacity;
 

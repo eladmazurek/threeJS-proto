@@ -82,15 +82,17 @@ import {
   getCameraLatLon,
 } from "./utils/coordinates";
 
-// Trail constants
+// Trail constants and shaders
 import {
   TRAIL_LENGTH,
   MAX_TRAIL_POINTS,
   TRAIL_UPDATE_INTERVAL,
   MIN_TRAIL_DISTANCE,
+  TRAIL_VERTEX_SHADER,
+  TRAIL_FRAGMENT_SHADER,
 } from "./units/trails";
 
-// Label constants and functions
+// Label constants, functions, and shaders
 import {
   MAX_LABEL_CHARS,
   CHARS_PER_LINE,
@@ -102,6 +104,8 @@ import {
   formatAircraftLabel,
   formatDroneLabel,
   formatSatelliteLabel,
+  LABEL_VERTEX_SHADER,
+  LABEL_FRAGMENT_SHADER,
 } from "./labels";
 
 // Weather constants
@@ -122,6 +126,9 @@ import { missionStartTime } from "./ui/overlays";
 
 // Selection constants
 import { SELECTION_COLORS } from "./selection";
+
+// Centralized state
+import { state, config } from "./state";
 
 // Note: AIRPORTS remains in script.js (uses tuple format different from module)
 
@@ -611,7 +618,7 @@ scene.add(atmosphereMesh);
 
 let tilesRenderer = null;
 let tilesGroup = null; // Parent group for Y rotation (syncs with Earth's rotation)
-let tilesLoaded = false;
+// state.tilesLoaded uses state.state.tilesLoaded
 
 /**
  * Convert WGS84 lat/lon to scene coordinates
@@ -711,7 +718,7 @@ function initGoogleTiles(camera, renderer) {
 
   // Listen for root tileset load
   tilesRenderer.addEventListener('load-tileset', () => {
-    tilesLoaded = true;
+    state.tilesLoaded = true;
     console.log('Google 3D Tiles root tileset loaded');
   });
 
@@ -770,7 +777,7 @@ function updateTilesCrossfade() {
   earthMaterial.uniforms.uOpacity.value = 1.0 - factor;
 
   // Tiles visibility
-  if (factor > 0 && tilesLoaded) {
+  if (factor > 0 && state.tilesLoaded) {
     tilesGroup.visible = true;
 
     // Sync Y rotation with Earth's rotation on the parent group
@@ -1504,19 +1511,19 @@ const h3Params = {
 
 // Web Worker for background H3 calculations
 const h3Worker = new Worker(new URL('./h3Worker.js', import.meta.url), { type: 'module' });
-let h3WorkerBusy = false;
-let h3PendingUpdate = false; // Flag if update was requested while worker busy
+// state.h3.workerBusy uses state.h3.workerBusy
+// state.h3.pendingUpdate uses state.h3.pendingUpdate
 
 // Handle results from H3 worker
 h3Worker.onmessage = function(e) {
   const { type, data } = e.data;
   if (type === 'densityResult') {
-    h3WorkerBusy = false;
+    state.h3.workerBusy = false;
     applyH3DensityResult(data);
 
     // If another update was requested while we were busy, trigger it now
-    if (h3PendingUpdate) {
-      h3PendingUpdate = false;
+    if (state.h3.pendingUpdate) {
+      state.h3.pendingUpdate = false;
       requestH3Update();
     }
   }
@@ -1527,9 +1534,9 @@ let h3Mesh = null;
 let h3Geometry = null;
 let h3LineMesh = null;
 let h3LineGeometry = null;
-let lastH3Resolution = -1;
-let lastH3UpdateTime = 0;
-let lastH3ViewCenter = { lat: 0, lon: 0 };
+// state.h3.lastResolution uses state.h3.lastResolution
+// state.h3.lastUpdateTime uses state.h3.lastUpdateTime
+// state.h3.lastViewCenter uses state.h3.lastViewCenter
 // H3 constants imported from ./constants: H3_PAN_THRESHOLD, H3_MAX_CELLS, H3_VERTS_PER_CELL
 
 // Pre-allocated buffers for H3 geometry (max cells * 6 triangles * 3 verts * 3 floats)
@@ -1828,13 +1835,13 @@ function buildH3Geometry(allCells, densityMap, maxDensity) {
 }
 
 // Chunked geometry building state (H3_CELLS_PER_CHUNK imported from ./constants)
-let h3BuildState = null;
+// state.h3.buildState uses state.h3.buildState
 
 /**
  * Start chunked H3 geometry building (non-blocking)
  */
 function startChunkedH3Build(allCells, densityMap, maxDensity) {
-  h3BuildState = {
+  state.h3.buildState = {
     allCells,
     densityMap,
     maxDensity,
@@ -1851,10 +1858,10 @@ function startChunkedH3Build(allCells, densityMap, maxDensity) {
  * Returns true when complete
  */
 function processH3BuildChunk() {
-  if (!h3BuildState) return true;
+  if (!state.h3.buildState) return true;
 
-  const { allCells, densityMap, maxDensity, cellCount } = h3BuildState;
-  let { cellIndex, posIdx, colorIdx, lineIdx } = h3BuildState;
+  const { allCells, densityMap, maxDensity, cellCount } = state.h3.buildState;
+  let { cellIndex, posIdx, colorIdx, lineIdx } = state.h3.buildState;
 
   const endIndex = Math.min(cellIndex + H3_CELLS_PER_CHUNK, cellCount);
 
@@ -1919,10 +1926,10 @@ function processH3BuildChunk() {
   }
 
   // Save progress
-  h3BuildState.cellIndex = endIndex;
-  h3BuildState.posIdx = posIdx;
-  h3BuildState.colorIdx = colorIdx;
-  h3BuildState.lineIdx = lineIdx;
+  state.h3.buildState.cellIndex = endIndex;
+  state.h3.buildState.posIdx = posIdx;
+  state.h3.buildState.colorIdx = colorIdx;
+  state.h3.buildState.lineIdx = lineIdx;
 
   // Check if complete
   if (endIndex >= cellCount) {
@@ -1960,7 +1967,7 @@ function processH3BuildChunk() {
     h3Material.opacity = h3Params.opacity * 0.85;
     h3LineMaterial.opacity = h3Params.opacity * 0.4;
 
-    h3BuildState = null;
+    state.h3.buildState = null;
     return true;
   }
 
@@ -1976,8 +1983,8 @@ let pendingH3CameraDistance = 0;
  * Request H3 density calculation from worker (non-blocking)
  */
 function requestH3Update() {
-  if (h3WorkerBusy) {
-    h3PendingUpdate = true;
+  if (state.h3.workerBusy) {
+    state.h3.pendingUpdate = true;
     return;
   }
 
@@ -2004,7 +2011,7 @@ function requestH3Update() {
     satellites[i * 2 + 1] = satelliteSimState[i].lon;
   }
 
-  h3WorkerBusy = true;
+  state.h3.workerBusy = true;
   h3Worker.postMessage({
     type: 'calculateDensity',
     data: {
@@ -2062,8 +2069,8 @@ function updateH3Grid(cameraDistance, elapsedTime) {
 
   // Check if camera has panned significantly (for high res, rebuild on pan)
   const panDistance = Math.sqrt(
-    Math.pow(center.lat - lastH3ViewCenter.lat, 2) +
-    Math.pow(center.lon - lastH3ViewCenter.lon, 2)
+    Math.pow(center.lat - state.h3.lastViewCenter.lat, 2) +
+    Math.pow(center.lon - state.h3.lastViewCenter.lon, 2)
   );
   const panTriggersRebuild = resolution >= 3 && panDistance > H3_PAN_THRESHOLD;
 
@@ -2071,8 +2078,8 @@ function updateH3Grid(cameraDistance, elapsedTime) {
   const hasVisibleUnits = unitCountParams.showShips || unitCountParams.showAircraft || unitCountParams.showSatellites;
 
   // Rebuild if resolution changed, enough time passed (only with units), or camera panned (high res)
-  const timeSinceUpdate = elapsedTime - lastH3UpdateTime;
-  const resChanged = resolution !== lastH3Resolution;
+  const timeSinceUpdate = elapsedTime - state.h3.lastUpdateTime;
+  const resChanged = resolution !== state.h3.lastResolution;
   const timeTriggered = hasVisibleUnits && timeSinceUpdate > h3Params.updateInterval;
   const needsUpdate = resChanged || timeTriggered || panTriggersRebuild;
 
@@ -2087,10 +2094,10 @@ function updateH3Grid(cameraDistance, elapsedTime) {
     cellPointsCache.clear();
   }
 
-  lastH3Resolution = resolution;
-  lastH3UpdateTime = elapsedTime;
-  lastH3ViewCenter = { lat: center.lat, lon: center.lon };
-  currentH3Resolution = resolution; // Track for popup clicks
+  state.h3.lastResolution = resolution;
+  state.h3.lastUpdateTime = elapsedTime;
+  state.h3.lastViewCenter = { lat: center.lat, lon: center.lon };
+  state.h3.currentResolution = resolution; // Track for popup clicks
   pendingH3CameraDistance = cameraDistance;
 
   // Request H3 update from worker (all expensive work happens in worker)
@@ -2104,10 +2111,10 @@ function updateH3Grid(cameraDistance, elapsedTime) {
 const h3Popup = document.getElementById('h3-popup');
 const h3PopupClose = document.querySelector('.h3-popup-close');
 
-// Store current density data for click lookups (cached from grid build)
-let currentH3CellCounts = new Map(); // cellIndex -> {ships, aircraft, satellites, total}
-let currentH3Resolution = 1;
-let currentH3SelectedCell = null; // Track selected cell for live updates
+// Store current density data for click lookups - aliased from state module
+const currentH3CellCounts = state.h3.currentCellCounts;
+// state.h3.currentResolution uses state.h3.currentResolution
+// state.h3.currentSelectedCell uses state.h3.currentSelectedCell
 
 /**
  * Get H3 cell at screen coordinates
@@ -2139,7 +2146,7 @@ function getH3CellAtClick(clientX, clientY) {
 
   // Get H3 cell at this position
   try {
-    const cellIndex = h3.latLngToCell(lat, lon, currentH3Resolution);
+    const cellIndex = h3.latLngToCell(lat, lon, state.h3.currentResolution);
     return { cellIndex, lat, lon };
   } catch (e) {
     return null;
@@ -2173,8 +2180,8 @@ function updateH3PopupCounts(cellIndex) {
  * Show H3 cell popup at bottom right (next to unit info card)
  */
 function showH3Popup(cellIndex, lat, lon, clientX, clientY) {
-  currentH3SelectedCell = cellIndex; // Track for live updates
-  lastPopupTotal = -1; // Reset so periodic update triggers
+  state.h3.currentSelectedCell = cellIndex; // Track for live updates
+  state.h3.lastPopupTotal = -1; // Reset so periodic update triggers
   updateH3PopupCounts(cellIndex);
 
   // Update static content
@@ -2196,7 +2203,7 @@ function showH3Popup(cellIndex, lat, lon, clientX, clientY) {
  */
 function hideH3Popup() {
   h3Popup.classList.add('hidden');
-  currentH3SelectedCell = null;
+  state.h3.currentSelectedCell = null;
   updateH3CellHighlight(null); // Hide the highlight
 }
 
@@ -2204,29 +2211,29 @@ function hideH3Popup() {
  * Refresh popup counts if visible (call when unit visibility changes)
  */
 function refreshH3PopupIfVisible() {
-  if (currentH3SelectedCell && !h3Popup.classList.contains('hidden')) {
-    updateH3PopupCounts(currentH3SelectedCell);
+  if (state.h3.currentSelectedCell && !h3Popup.classList.contains('hidden')) {
+    updateH3PopupCounts(state.h3.currentSelectedCell);
   }
 }
 
 // Track last popup count for change detection (POPUP_UPDATE_INTERVAL imported from ./constants)
-let lastPopupTotal = -1;
-let lastPopupUpdateTime = 0;
+// state.h3.lastPopupTotal uses state.h3.state.h3.lastPopupTotal
+// state.h3.lastPopupUpdateTime uses state.h3.state.h3.lastPopupUpdateTime
 
 /**
  * Lightweight periodic check for selected cell (called from tick loop)
  */
 function updateH3PopupPeriodic(elapsedTime) {
-  if (!currentH3SelectedCell || h3Popup.classList.contains('hidden')) return;
+  if (!state.h3.currentSelectedCell || h3Popup.classList.contains('hidden')) return;
 
   // Only check periodically to avoid performance hit
-  if (elapsedTime - lastPopupUpdateTime < POPUP_UPDATE_INTERVAL) return;
-  lastPopupUpdateTime = elapsedTime;
+  if (elapsedTime - state.h3.lastPopupUpdateTime < POPUP_UPDATE_INTERVAL) return;
+  state.h3.lastPopupUpdateTime = elapsedTime;
 
   // Count units in selected cell and update if changed
-  const counts = countUnitsInCell(currentH3SelectedCell);
-  if (counts.total !== lastPopupTotal) {
-    lastPopupTotal = counts.total;
+  const counts = countUnitsInCell(state.h3.currentSelectedCell);
+  if (counts.total !== state.h3.lastPopupTotal) {
+    state.h3.lastPopupTotal = counts.total;
     document.getElementById('h3-total-units').textContent = counts.total.toLocaleString();
     document.getElementById('h3-ship-count').textContent = counts.ships.toLocaleString();
     document.getElementById('h3-aircraft-count').textContent = counts.aircraft.toLocaleString();
@@ -2918,108 +2925,11 @@ function initLabelSystem() {
 
   labelGeometry.userData = { posAttr, uvAttr, colorAttr, scaleAttr };
 
-  // Inline shaders to avoid import/caching issues
-  const inlineVertexShader = `
-    attribute vec3 aLabelPos;
-    attribute float aCharIndex;
-    attribute vec4 aCharUV;
-    attribute vec3 aColor;
-    attribute float aScale;
-
-    uniform float uCharWidth;
-    uniform float uCharHeight;
-    uniform float uCharsPerLine;  // For multi-line layout
-    uniform float uCameraDistance; // For GPU semantic zoom
-    uniform float uLabelOffset;   // Offset to the right of unit (screen-space)
-
-    varying vec2 vUV;
-    varying vec3 vColor;
-
-    void main() {
-      vColor = aColor;
-
-      // GPU Semantic Zoom: scale based on camera distance
-      // Closer = larger labels, farther = smaller
-      float zoomScale = clamp(uCameraDistance * 0.15, 0.3, 2.0);
-      float finalScale = aScale * zoomScale;
-
-      // Billboard vectors from view matrix
-      vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
-      vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
-
-      // Multi-line layout: which line and column is this character?
-      float lineNum = floor(aCharIndex / uCharsPerLine);
-      float colNum = mod(aCharIndex, uCharsPerLine);
-
-      // Character offset (left to right from viewer's perspective)
-      float charOffsetX = colNum * uCharWidth * finalScale;
-      float charOffsetY = -lineNum * uCharHeight * finalScale * 1.2; // Line spacing
-
-      // Quad position
-      float qx = position.x * uCharWidth * finalScale;
-      float qy = position.y * uCharHeight * finalScale;
-
-      // Position label to the right of unit in screen-space
-      vec3 worldPos = aLabelPos
-        + camRight * (qx + charOffsetX + uLabelOffset)
-        + camUp * (qy + charOffsetY);
-
-      // UV mapping - flip V to correct upside-down characters
-      vUV = aCharUV.xy + vec2(position.x + 0.5, 0.5 - position.y) * aCharUV.zw;
-
-      gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
-    }
-  `;
-
-  const inlineFragmentShader = `
-    precision highp float;
-    uniform sampler2D uAtlas;
-    uniform float uSmoothing;
-    uniform float uDebugMode; // 0=normal, 1=show UV, 2=show texture, 3=solid
-    varying vec2 vUV;
-    varying vec3 vColor;
-
-    void main() {
-      // Debug mode 3: solid color (geometry test)
-      if (uDebugMode > 2.5) {
-        gl_FragColor = vec4(vColor, 1.0);
-        return;
-      }
-
-      // Debug mode 1: visualize UV coordinates
-      if (uDebugMode > 0.5 && uDebugMode < 1.5) {
-        gl_FragColor = vec4(vUV.x, vUV.y, 0.0, 1.0);
-        return;
-      }
-
-      // Sample font atlas
-      vec4 texSample = texture2D(uAtlas, vUV);
-      float dist = texSample.r;
-
-      // Debug mode 2: visualize raw texture value
-      if (uDebugMode > 1.5 && uDebugMode < 2.5) {
-        gl_FragColor = vec4(dist, dist, dist, 1.0);
-        return;
-      }
-
-      // Normal rendering: threshold for canvas-rendered text
-      float alpha = smoothstep(0.1, 0.5, dist);
-
-      // Safety: if texture returns 0, show faint outline instead of discard
-      if (dist < 0.01) {
-        gl_FragColor = vec4(vColor * 0.3, 0.2);
-        return;
-      }
-
-      if (alpha < 0.01) discard;
-
-      gl_FragColor = vec4(vColor, alpha);
-    }
-  `;
+  // Label shaders imported from ./labels (LABEL_VERTEX_SHADER, LABEL_FRAGMENT_SHADER)
 
   labelMaterial = new THREE.ShaderMaterial({
-    vertexShader: inlineVertexShader,
-    fragmentShader: inlineFragmentShader,
+    vertexShader: LABEL_VERTEX_SHADER,
+    fragmentShader: LABEL_FRAGMENT_SHADER,
     uniforms: {
       uAtlas: { value: fontAtlasTexture },
       uCharWidth: { value: 0.7 },
@@ -3137,8 +3047,8 @@ let _labelVisibilityVersion = 0;
  */
 function updateLabelAssignments() {
   // Check if we have a selected unit that should show a label
-  const hasSelectedLabelUnit = selectedUnit &&
-    (selectedUnit.type === 'ship' || selectedUnit.type === 'aircraft' || selectedUnit.type === 'drone' || selectedUnit.type === 'satellite');
+  const hasSelectedLabelUnit = state.selectedUnit &&
+    (state.selectedUnit.type === 'ship' || state.selectedUnit.type === 'aircraft' || state.selectedUnit.type === 'drone' || state.selectedUnit.type === 'satellite');
 
   // If labels disabled and no selected unit to show, hide all
   if (!labelParams.enabled && !hasSelectedLabelUnit) {
@@ -3157,20 +3067,20 @@ function updateLabelAssignments() {
     labelAssignments.count = 0;
     let labelIdx = 0;
 
-    const unit = selectedUnit.data;
+    const unit = state.selectedUnit.data;
     if (unit) {
-      if (selectedUnit.type === 'ship') {
-        labelAssignments.slots[labelIdx] = { type: 0, unitIndex: selectedUnit.index };
+      if (state.selectedUnit.type === 'ship') {
+        labelAssignments.slots[labelIdx] = { type: 0, unitIndex: state.selectedUnit.index };
         fillLabelBuffers(labelIdx, 0, unit);
-      } else if (selectedUnit.type === 'aircraft') {
-        labelAssignments.slots[labelIdx] = { type: 1, unitIndex: selectedUnit.index };
+      } else if (state.selectedUnit.type === 'aircraft') {
+        labelAssignments.slots[labelIdx] = { type: 1, unitIndex: state.selectedUnit.index };
         fillLabelBuffers(labelIdx, 1, unit);
-      } else if (selectedUnit.type === 'drone') {
-        labelAssignments.slots[labelIdx] = { type: 2, unitIndex: selectedUnit.index };
-        fillLabelBuffers(labelIdx, 2, unit, selectedUnit.index);
-      } else if (selectedUnit.type === 'satellite') {
-        labelAssignments.slots[labelIdx] = { type: 3, unitIndex: selectedUnit.index };
-        fillLabelBuffers(labelIdx, 3, unit, selectedUnit.index);
+      } else if (state.selectedUnit.type === 'drone') {
+        labelAssignments.slots[labelIdx] = { type: 2, unitIndex: state.selectedUnit.index };
+        fillLabelBuffers(labelIdx, 2, unit, state.selectedUnit.index);
+      } else if (state.selectedUnit.type === 'satellite') {
+        labelAssignments.slots[labelIdx] = { type: 3, unitIndex: state.selectedUnit.index };
+        fillLabelBuffers(labelIdx, 3, unit, state.selectedUnit.index);
       }
       labelIdx++;
     }
@@ -3433,8 +3343,7 @@ h3Worker.onmessage = function(e) {
   }
 };
 
-// Throttle tracking (kept for compatibility)
-let lastLabelUpdate = 0;
+// state.lastLabelUpdate uses state.state.lastLabelUpdate
 
 // -----------------------------------------------------------------------------
 // Drone Patrol Circle Visualization
@@ -3719,12 +3628,12 @@ const _ringUp = new THREE.Vector3(0, 1, 0);
 const _ringQuat = new THREE.Quaternion();
 
 function updateSelectionRing() {
-  if (!selectedUnit) {
+  if (!state.selectedUnit) {
     selectionRing.visible = false;
     return;
   }
 
-  const { type, index } = selectedUnit;
+  const { type, index } = state.selectedUnit;
   let lat, lon, altitude;
 
   if (type === "ship") {
@@ -3813,63 +3722,9 @@ const trailParams = {
   opacity: 0.7,
 };
 
-// Trail vertex shader - positions dots at lat/lon with altitude
-const trailVertexShader = `
-  attribute float aLat;
-  attribute float aLon;
-  attribute float aOpacity;
-  attribute float aAltitude;
-
-  uniform float uEarthRadius;
-  uniform float uPointSize;
-
-  varying float vOpacity;
-
-  const float PI = 3.141592653589793;
-  const float DEG_TO_RAD = PI / 180.0;
-
-  void main() {
-    vOpacity = aOpacity;
-
-    // Convert lat/lon to 3D position
-    float phi = (90.0 - aLat) * DEG_TO_RAD;
-    float theta = (aLon + 180.0) * DEG_TO_RAD;
-    float radius = uEarthRadius + aAltitude;
-
-    vec3 worldPosition = vec3(
-      -radius * sin(phi) * cos(theta),
-      radius * cos(phi),
-      radius * sin(phi) * sin(theta)
-    );
-
-    vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0);
-    gl_Position = projectionMatrix * mvPosition;
-
-    // Scale with distance - smaller when zoomed out, larger when zoomed in
-    gl_PointSize = clamp(uPointSize * (6.0 / -mvPosition.z), 1.0, uPointSize);
-  }
-`;
-
-// Trail fragment shader - renders circular dots
-const trailFragmentShader = `
-  uniform vec3 uColor;
-  uniform float uBaseOpacity;
-
-  varying float vOpacity;
-
-  void main() {
-    // Circular point
-    vec2 center = gl_PointCoord - vec2(0.5);
-    float dist = length(center);
-    if (dist > 0.5) discard;
-
-    // Slight soft edge but mostly solid
-    float alpha = smoothstep(0.5, 0.35, dist);
-    alpha *= vOpacity * uBaseOpacity;
-
-    gl_FragColor = vec4(uColor, alpha);
-  }
-`;
+// Trail shaders imported from ./units/trails (TRAIL_VERTEX_SHADER, TRAIL_FRAGMENT_SHADER)
+const trailVertexShader = TRAIL_VERTEX_SHADER;
+const trailFragmentShader = TRAIL_FRAGMENT_SHADER;
 
 // Create trail geometry
 function createTrailGeometry(maxPoints) {
@@ -3942,12 +3797,12 @@ aircraftTrailMesh.frustumCulled = false;
 aircraftTrailMesh.renderOrder = 1.8; // Just below aircraft
 scene.add(aircraftTrailMesh); // Added to scene (not earth) so trails stay visible with 3D tiles
 
-// Trail history storage - ring buffers per unit
-let shipTrailHistory = []; // Array of arrays, one per ship
-let aircraftTrailHistory = []; // Array of arrays, one per aircraft
-let lastTrailUpdateTime = 0;
-let activeShipTrailCount = 0;
-let activeAircraftTrailCount = 0;
+// Trail history storage - aliased from state module
+const shipTrailHistory = state.trails.shipHistory;
+const aircraftTrailHistory = state.trails.aircraftHistory;
+// state.lastTrailUpdateTime uses state.state.lastTrailUpdateTime
+// state.trails.activeShipCount uses state.trails.activeShipCount
+// state.trails.activeAircraftCount uses state.trails.activeAircraftCount
 
 /**
  * Initialize trail history for units
@@ -3957,8 +3812,8 @@ function initTrailHistory() {
   const maxShipsWithTrails = Math.floor(MAX_TRAIL_POINTS / TRAIL_LENGTH / 2);
   const maxAircraftWithTrails = Math.floor(MAX_TRAIL_POINTS / TRAIL_LENGTH / 2);
 
-  shipTrailHistory = [];
-  aircraftTrailHistory = [];
+  shipTrailHistory.length = 0;
+  aircraftTrailHistory.length = 0;
 
   // Initialize ring buffers for ships (limited count)
   const shipCount = Math.min(shipSimState.length, maxShipsWithTrails);
@@ -3978,8 +3833,8 @@ function initTrailHistory() {
     });
   }
 
-  activeShipTrailCount = shipCount;
-  activeAircraftTrailCount = aircraftCount;
+  state.trails.activeShipCount = shipCount;
+  state.trails.activeAircraftCount = aircraftCount;
 }
 
 /**
@@ -4130,8 +3985,8 @@ function updateTrails() {
   if (!trailParams.enabled) return;
 
   const now = performance.now();
-  if (now - lastTrailUpdateTime < TRAIL_UPDATE_INTERVAL) return;
-  lastTrailUpdateTime = now;
+  if (now - state.lastTrailUpdateTime < TRAIL_UPDATE_INTERVAL) return;
+  state.lastTrailUpdateTime = now;
 
   // Reinitialize if unit counts changed significantly
   if (shipTrailHistory.length === 0 && shipSimState.length > 0) {
@@ -4146,8 +4001,7 @@ function updateTrails() {
 // Tracking Data Management (GPU-based)
 // -----------------------------------------------------------------------------
 
-// Store current icon scale for dynamic rescaling based on camera distance
-let currentIconScale = 1;
+// state.currentIconScale uses state.state.currentIconScale
 
 // User-adjustable icon scale multiplier (1 = default, max 3 = 3x larger)
 const iconScaleParams = {
@@ -4178,7 +4032,7 @@ function updateShipAttributes() {
     latArray[i] = ship.lat;
     lonArray[i] = ship.lon;
     headingArray[i] = ship.heading;
-    scaleArray[i] = ship.scale * currentIconScale;
+    scaleArray[i] = ship.scale * state.currentIconScale;
   }
 
   // Mark for partial update (only upload active units)
@@ -4202,7 +4056,7 @@ function updateAircraftAttributes() {
     latArray[i] = aircraft.lat;
     lonArray[i] = aircraft.lon;
     headingArray[i] = aircraft.heading;
-    scaleArray[i] = aircraft.scale * currentIconScale;
+    scaleArray[i] = aircraft.scale * state.currentIconScale;
   }
 
   // Mark for partial update (only upload active units)
@@ -4219,7 +4073,7 @@ function updateAircraftAttributes() {
  */
 function updateIconScale(cameraDistance) {
   const baseDistance = 13;
-  currentIconScale = (cameraDistance / baseDistance) * iconScaleParams.multiplier;
+  state.currentIconScale = (cameraDistance / baseDistance) * iconScaleParams.multiplier;
 }
 
 /**
@@ -4237,7 +4091,7 @@ function updateSatelliteAttributes() {
     // Encode altitude and display scale in a single float:
     // Integer part: display scale * 10 (includes camera scaling)
     // Fractional part: altitude / 0.5 (normalized to 0-1 range)
-    const scaledDisplay = sat.scale * currentIconScale;
+    const scaledDisplay = sat.scale * state.currentIconScale;
     const normalizedAlt = sat.altitude / 0.5; // altitude 0-0.5 -> 0-1
     scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
   }
@@ -4266,7 +4120,7 @@ function updateDroneAttributes() {
     // Encode scale and altitude like satellites do:
     // Integer part: display scale * 10 (includes camera scaling)
     // Fractional part: altitude / 0.5 (normalized to 0-1 range)
-    const scaledDisplay = drone.scale * currentIconScale;
+    const scaledDisplay = drone.scale * state.currentIconScale;
     const normalizedAlt = drone.altitude / 0.5;
     scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
   }
@@ -4358,15 +4212,14 @@ const motionParams = {
   motionUpdateInterval: 10, // Update motion every 10ms (~100 updates/sec)
 };
 
-// Throttle tracking
-let lastMotionUpdateTime = 0;
+// Throttle tracking - state.lastMotionUpdateTime uses state.state.lastMotionUpdateTime
 
-// Simulation state for all units
-let shipSimState = [];
-let aircraftSimState = [];
-let satelliteSimState = [];
-let droneSimState = [];
-let lastSimTime = 0;
+// Simulation state for all units - aliased from centralized state module
+const shipSimState = state.ships;
+const aircraftSimState = state.aircraft;
+const satelliteSimState = state.satellites;
+const droneSimState = state.drones;
+// Timing state uses state.lastSimTime
 
 // Sample ship names for labels
 // SHIP_NAMES and AIRLINE_CODES imported from ./data/demo
@@ -4553,15 +4406,15 @@ function updateUnitMotion(unit, deltaTime) {
  * Now uses GPU-based orientation - only uploads lat/lon/heading/scale (16 bytes vs 64 bytes)
  */
 function updateMotionSimulation(currentTime) {
-  const deltaTime = lastSimTime === 0 ? 0 : currentTime - lastSimTime;
-  lastSimTime = currentTime;
+  const deltaTime = state.lastSimTime === 0 ? 0 : currentTime - state.lastSimTime;
+  state.lastSimTime = currentTime;
 
   // Skip if deltaTime is too large (e.g., tab was inactive)
   if (deltaTime > 1) return;
 
   // Throttle: only update at specified interval
   const now = performance.now();
-  const timeSinceLastUpdate = now - lastMotionUpdateTime;
+  const timeSinceLastUpdate = now - state.lastMotionUpdateTime;
 
   if (motionParams.motionUpdateInterval > 0 && timeSinceLastUpdate < motionParams.motionUpdateInterval) {
     return; // Skip this frame
@@ -4572,7 +4425,7 @@ function updateMotionSimulation(currentTime) {
     ? timeSinceLastUpdate / 1000
     : deltaTime;
 
-  lastMotionUpdateTime = now;
+  state.lastMotionUpdateTime = now;
 
   // Update ship motion (CPU physics simulation)
   for (let i = 0; i < shipSimState.length; i++) {
@@ -4629,8 +4482,8 @@ const unitCountParams = {
  * Distributes units globally or along realistic routes based on setting
  */
 function generateDemoData(shipCount = unitCountParams.shipCount, aircraftCount = unitCountParams.aircraftCount) {
-  shipSimState = [];
-  aircraftSimState = [];
+  shipSimState.length = 0;
+  aircraftSimState.length = 0;
 
   if (unitCountParams.realisticRoutes) {
     // Generate ships along realistic shipping lanes
@@ -4733,7 +4586,7 @@ function generateSatelliteName(orbitTypeLabel, isMilitary, index) {
  * Creates a mix of LEO, MEO, and GEO satellites
  */
 function generateSatelliteData(count = unitCountParams.satelliteCount) {
-  satelliteSimState = [];
+  satelliteSimState.length = 0;
 
   for (let i = 0; i < count; i++) {
     // Distribute satellites across orbit types:
@@ -4801,7 +4654,7 @@ function generateSatelliteData(count = unitCountParams.satelliteCount) {
  * Generate drone/UAV patrol patterns over the Middle East
  */
 function generateDroneData(count = unitCountParams.droneCount) {
-  droneSimState = [];
+  droneSimState.length = 0;
 
   // Middle East patrol zones with targets
   const PATROL_ZONES = [
@@ -5313,7 +5166,7 @@ const h3Folder = gui.addFolder("H3 Hex Grid");
 h3Folder.close();
 h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
   if (h3Params.enabled) {
-    lastH3Resolution = -1; // Force rebuild
+    state.h3.lastResolution = -1; // Force rebuild
     // Hide flying units when H3 heatmap is shown
     shipMesh.visible = false;
     aircraftMesh.visible = false;
@@ -5338,7 +5191,7 @@ h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
 });
 h3Folder.add(h3Params, "resolution", 0, 4, 1).name("Resolution").onChange(() => {
   hideH3Popup(); // Hide popup when resolution changes
-  lastH3Resolution = -1; // Force rebuild on resolution change
+  state.h3.lastResolution = -1; // Force rebuild on resolution change
 });
 h3Folder.add(h3Params, "opacity", 0.2, 1.0, 0.1).name("Opacity").onChange(() => {
   h3Material.opacity = h3Params.opacity * 0.85;
@@ -5475,7 +5328,7 @@ unitsFolder
   .onChange((value) => {
     unitCountParams.totalCount = Math.round(value * 1000);
     updateUnitCounts();
-    lastH3Resolution = -1; // Force H3 rebuild
+    state.h3.lastResolution = -1; // Force H3 rebuild
   });
 unitsFolder
   .add(unitCountDisplay, "satelliteCountK", 0, 5, 0.05)
@@ -5483,21 +5336,21 @@ unitsFolder
   .onChange((value) => {
     unitCountParams.satelliteCount = Math.round(value * 1000);
     generateSatelliteData(unitCountParams.satelliteCount);
-    lastH3Resolution = -1; // Force H3 rebuild
+    state.h3.lastResolution = -1; // Force H3 rebuild
   });
 unitsFolder
   .add(unitCountParams, "realisticRoutes")
   .name("Cluster on Routes")
   .onChange(() => {
     updateUnitCounts();
-    lastH3Resolution = -1; // Force H3 rebuild
+    state.h3.lastResolution = -1; // Force H3 rebuild
   });
 unitsFolder
   .add(motionParams, "motionUpdateInterval", 0, 200, 10)
   .name("Update Interval (ms)")
   .onChange(() => {
     // Reset throttle timer when interval changes
-    lastMotionUpdateTime = 0;
+    state.lastMotionUpdateTime = 0;
   });
 unitsFolder
   .add(iconScaleParams, "multiplier", 1.0, 3.0, 0.1)
@@ -5508,7 +5361,7 @@ unitsFolder
   .onChange((value) => {
     shipMesh.visible = value && !h3Params.enabled;
     shipTrailMesh.visible = value && trailParams.enabled && trailParams.shipTrails && !h3Params.enabled;
-    lastH3Resolution = -1; // Force H3 rebuild
+    state.h3.lastResolution = -1; // Force H3 rebuild
     refreshH3PopupIfVisible();
   });
 unitsFolder
@@ -5517,7 +5370,7 @@ unitsFolder
   .onChange((value) => {
     aircraftMesh.visible = value && !h3Params.enabled;
     aircraftTrailMesh.visible = value && trailParams.enabled && trailParams.aircraftTrails && !h3Params.enabled;
-    lastH3Resolution = -1; // Force H3 rebuild
+    state.h3.lastResolution = -1; // Force H3 rebuild
     refreshH3PopupIfVisible();
   });
 unitsFolder
@@ -5525,7 +5378,7 @@ unitsFolder
   .name("Satellites")
   .onChange((value) => {
     satelliteMesh.visible = value && !h3Params.enabled;
-    lastH3Resolution = -1; // Force H3 rebuild
+    state.h3.lastResolution = -1; // Force H3 rebuild
     refreshH3PopupIfVisible();
   });
 unitsFolder
@@ -5575,8 +5428,8 @@ labelsFolder
 const perfStats = { fps: 0, ships: 0, aircraft: 0, frameMs: 0 };
 const statsDisplay = unitsFolder.add(perfStats, "fps").name("FPS").listen().disable();
 unitsFolder.add(perfStats, "frameMs").name("Frame (ms)").listen().disable();
-let frameCount = 0;
-let lastFpsTime = performance.now();
+// state.frameCount uses state.state.frameCount
+// state.lastFpsTime uses state.state.lastFpsTime
 
 // Frame timing profiler (toggle with perfProfiler.enabled)
 const perfProfiler = {
@@ -5614,14 +5467,14 @@ function profileLog() {
 }
 
 function updateFpsCounter() {
-  frameCount++;
+  state.frameCount++;
   const now = performance.now();
-  if (now - lastFpsTime >= 1000) {
-    perfStats.fps = Math.round(frameCount * 1000 / (now - lastFpsTime));
+  if (now - state.lastFpsTime >= 1000) {
+    perfStats.fps = Math.round(state.frameCount * 1000 / (now - state.lastFpsTime));
     perfStats.ships = shipSimState.length;
     perfStats.aircraft = aircraftSimState.length;
-    frameCount = 0;
-    lastFpsTime = now;
+    state.frameCount = 0;
+    state.lastFpsTime = now;
   }
 }
 
@@ -5708,8 +5561,7 @@ controls.maxPolarAngle = Math.PI; // Can look straight up at south pole
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-// Currently selected unit
-let selectedUnit = null;
+// state.selectedUnit is now state.state.selectedUnit (use state.state.selectedUnit directly)
 
 // DOM elements for unit info panel
 const unitInfoPanel = document.getElementById("unit-info");
@@ -5741,7 +5593,7 @@ unitCloseBtn?.addEventListener("click", () => {
  * Deselect current unit
  */
 function deselectUnit() {
-  selectedUnit = null;
+  state.selectedUnit = null;
   unitInfoPanel?.classList.add("hidden");
   droneFeedPanel?.classList.add("hidden");
   if (droneVideo) droneVideo.pause();
@@ -5787,7 +5639,7 @@ function selectUnit(type, index) {
 
   if (!unitData) return;
 
-  selectedUnit = { type, index, data: unitData };
+  state.selectedUnit = { type, index, data: unitData };
 
   // Update panel content
   unitTypeEl.textContent = typeLabel;
@@ -5837,9 +5689,9 @@ function selectUnit(type, index) {
  * Update selected unit info panel with current values
  */
 function updateSelectedUnitInfo() {
-  if (!selectedUnit) return;
+  if (!state.selectedUnit) return;
 
-  const { type, index } = selectedUnit;
+  const { type, index } = state.selectedUnit;
   let unitData;
   let altitude;
   let speed;
@@ -6216,8 +6068,8 @@ const tick = () => {
   // Assignment filtering is throttled (which units get labels)
   // Position updates run every frame for smooth following
   // Also run when labels disabled but unit is selected (shows selected unit's label)
-  const hasSelectedLabelUnit = selectedUnit &&
-    (selectedUnit.type === 'ship' || selectedUnit.type === 'aircraft' || selectedUnit.type === 'drone' || selectedUnit.type === 'satellite');
+  const hasSelectedLabelUnit = state.selectedUnit &&
+    (state.selectedUnit.type === 'ship' || state.selectedUnit.type === 'aircraft' || state.selectedUnit.type === 'drone' || state.selectedUnit.type === 'satellite');
 
   if (labelParams.enabled || hasSelectedLabelUnit) {
     // Ensure labelMesh is visible (GUI may have hidden it)
@@ -6225,11 +6077,11 @@ const tick = () => {
 
     // Throttle only when labels are fully enabled; selected-only mode updates every frame
     const shouldUpdate = !labelParams.enabled ||
-      (elapsedTime - lastLabelUpdate > labelParams.updateInterval / 1000);
+      (elapsedTime - state.lastLabelUpdate > labelParams.updateInterval / 1000);
 
     if (shouldUpdate) {
       updateLabelAssignments();
-      lastLabelUpdate = elapsedTime;
+      state.lastLabelUpdate = elapsedTime;
     }
     updateLabelPositions(); // Every frame for smooth label tracking
   } else {
