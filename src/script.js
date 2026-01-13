@@ -130,7 +130,33 @@ import { SELECTION_COLORS } from "./selection";
 // Centralized state
 import { state, config } from "./state";
 
-// Note: AIRPORTS remains in script.js (uses tuple format different from module)
+// Airport system
+import {
+  airportParams,
+  airportGroup,
+  initAirports,
+  buildAirportMarkers,
+  updateAirportLabels,
+  updateAirportScales,
+  setAirportRotation,
+} from "./scene/airports";
+
+// Airport data
+import { AIRPORTS } from "./data/airports";
+
+// Camera controls
+import {
+  cameraParams,
+  initCameraModule,
+  setCameraTilt,
+  tiltPresets,
+} from "./camera/controls";
+
+// Telemetry display
+import {
+  updateTelemetry,
+  updateWeatherLegend,
+} from "./ui/telemetry";
 
 /**
  * =============================================================================
@@ -273,116 +299,7 @@ gui.title("Controls");
   document.body.appendChild(overlay);
 })();
 
-// References to telemetry elements for updates
-const telAltitude = document.getElementById("tel-altitude");
-const telLat = document.getElementById("tel-lat");
-const telLon = document.getElementById("tel-lon");
-const telUnits = document.getElementById("tel-units");
-const telUtc = document.getElementById("tel-utc");
-const metValue = document.getElementById("met-value");
-
-// Weather legend elements
-const weatherLegend = document.getElementById("weather-legend");
-const legendTitle = document.getElementById("legend-title");
-const legendBar = document.getElementById("legend-bar");
-const legendLabels = document.getElementById("legend-labels");
-
-/**
- * Update weather legend based on current layer
- */
-function updateWeatherLegend(layerName, visible) {
-  if (!visible) {
-    weatherLegend.classList.add("hidden");
-    return;
-  }
-
-  weatherLegend.classList.remove("hidden");
-
-  // Remove all layer classes
-  legendBar.classList.remove("precipitation", "wind", "temperature", "pressure");
-
-  // Set title and gradient based on layer
-  const layerConfig = {
-    precipitation: {
-      title: "PRECIPITATION",
-      labels: ["LIGHT", "HEAVY"],
-      barClass: "precipitation"
-    },
-    wind: {
-      title: "WIND SPEED",
-      labels: ["SLOW", "JET STREAM"],
-      barClass: "wind"
-    },
-    temperature: {
-      title: "TEMPERATURE",
-      labels: ["COLD", "HOT"],
-      barClass: "temperature"
-    },
-    pressure: {
-      title: "PRESSURE",
-      labels: ["LOW", "HIGH"],
-      barClass: "pressure"
-    }
-  };
-
-  const config = layerConfig[layerName] || layerConfig.precipitation;
-  legendTitle.textContent = config.title;
-  legendBar.classList.add(config.barClass);
-  legendLabels.innerHTML = `<span>${config.labels[0]}</span><span>${config.labels[1]}</span>`;
-}
-
-// missionStartTime imported from ./ui/overlays
-
-/**
- * Update telemetry display with current values
- */
-function updateTelemetry(cameraDistance, cameraPosition) {
-  // Altitude (scaled - assuming Earth radius = 6371km, our radius = 2)
-  const scaleFactor = 6371 / EARTH_RADIUS;
-  const altitudeKm = ((cameraDistance - EARTH_RADIUS) * scaleFactor).toFixed(0);
-  telAltitude.textContent = altitudeKm.toLocaleString();
-
-  // Calculate view center lat/lon (accounts for Earth rotation)
-  // Raycast from camera to Earth center to find what we're looking at
-  const toEarth = new THREE.Vector3(0, 0, 0).sub(cameraPosition).normalize();
-  const raycaster = new THREE.Raycaster(cameraPosition.clone(), toEarth);
-  const intersects = raycaster.intersectObject(earth, false);
-
-  if (intersects.length > 0) {
-    const point = intersects[0].point;
-    // Apply inverse of Earth's rotation to get local coordinates
-    const localPoint = point.clone().applyMatrix4(earth.matrixWorld.clone().invert());
-
-    const r = localPoint.length();
-    const lat = 90 - Math.acos(localPoint.y / r) * (180 / Math.PI);
-    const lon = Math.atan2(localPoint.z, -localPoint.x) * (180 / Math.PI) - 180;
-    const normalizedLon = lon < -180 ? lon + 360 : (lon > 180 ? lon - 360 : lon);
-
-    telLat.textContent = lat.toFixed(2) + "°";
-    telLon.textContent = normalizedLon.toFixed(2) + "°";
-  }
-
-  // Unit counts (only visible units)
-  let totalUnits = 0;
-  if (unitCountParams.showShips) totalUnits += shipSimState.length;
-  if (unitCountParams.showAircraft) totalUnits += aircraftSimState.length;
-  if (unitCountParams.showSatellites) totalUnits += satelliteSimState.length;
-  if (unitCountParams.showDrones) totalUnits += droneSimState.length;
-  telUnits.textContent = totalUnits.toLocaleString();
-
-  // UTC time
-  const now = new Date();
-  telUtc.textContent = now.toISOString().substr(11, 8);
-
-  // Mission elapsed time
-  const elapsed = Math.floor((Date.now() - missionStartTime) / 1000);
-  const hours = Math.floor(elapsed / 3600).toString().padStart(2, "0");
-  const minutes = Math.floor((elapsed % 3600) / 60).toString().padStart(2, "0");
-  const seconds = (elapsed % 60).toString().padStart(2, "0");
-  metValue.textContent = `${hours}:${minutes}:${seconds}`;
-}
-
-// EARTH_RADIUS imported from ./constants
+// Telemetry functions imported from ./ui/telemetry
 
 /**
  * =============================================================================
@@ -3663,8 +3580,8 @@ function updateSelectionRing() {
   } else if (type === "airport") {
     const airport = AIRPORTS[index];
     if (!airport) { selectionRing.visible = false; return; }
-    lat = airport[1];
-    lon = airport[2];
+    lat = airport.lat;
+    lon = airport.lon;
     altitude = 0.008; // Same as airport markers
   } else {
     selectionRing.visible = false;
@@ -4722,264 +4639,8 @@ generateDroneData();
 // Build the lat/lon grid (now that latLonToPosition is defined)
 buildGrid();
 
-/**
- * =============================================================================
- * AIRPORT MARKERS
- * =============================================================================
- * Major world airports with IATA codes displayed in SpaceX minimal style
- */
-
-// Airport data: [IATA code, latitude, longitude, name]
-const AIRPORTS = [
-  // North America
-  ["JFK", 40.6413, -73.7781, "New York JFK"],
-  ["LAX", 33.9425, -118.4081, "Los Angeles"],
-  ["ORD", 41.9742, -87.9073, "Chicago O'Hare"],
-  ["ATL", 33.6407, -84.4277, "Atlanta"],
-  ["DFW", 32.8998, -97.0403, "Dallas"],
-  ["DEN", 39.8561, -104.6737, "Denver"],
-  ["SFO", 37.6213, -122.379, "San Francisco"],
-  ["SEA", 47.4502, -122.3088, "Seattle"],
-  ["MIA", 25.7959, -80.287, "Miami"],
-  ["YYZ", 43.6777, -79.6248, "Toronto"],
-  // Europe
-  ["LHR", 51.47, -0.4543, "London Heathrow"],
-  ["CDG", 49.0097, 2.5479, "Paris CDG"],
-  ["FRA", 50.0379, 8.5622, "Frankfurt"],
-  ["AMS", 52.3105, 4.7683, "Amsterdam"],
-  ["MAD", 40.4983, -3.5676, "Madrid"],
-  ["FCO", 41.8003, 12.2389, "Rome"],
-  ["MUC", 48.3537, 11.775, "Munich"],
-  ["ZRH", 47.4647, 8.5492, "Zurich"],
-  ["LGW", 51.1537, -0.1821, "London Gatwick"],
-  // Asia
-  ["HND", 35.5494, 139.7798, "Tokyo Haneda"],
-  ["NRT", 35.7653, 140.3856, "Tokyo Narita"],
-  ["PEK", 40.0799, 116.6031, "Beijing"],
-  ["PVG", 31.1443, 121.8083, "Shanghai"],
-  ["HKG", 22.308, 113.9185, "Hong Kong"],
-  ["SIN", 1.3644, 103.9915, "Singapore"],
-  ["ICN", 37.4602, 126.4407, "Seoul Incheon"],
-  ["BKK", 13.6900, 100.7501, "Bangkok"],
-  ["DEL", 28.5562, 77.1, "Delhi"],
-  ["DXB", 25.2532, 55.3657, "Dubai"],
-  // Oceania
-  ["SYD", -33.9399, 151.1753, "Sydney"],
-  ["MEL", -37.6733, 144.8433, "Melbourne"],
-  ["AKL", -37.0082, 174.7850, "Auckland"],
-  // South America
-  ["GRU", -23.4356, -46.4731, "São Paulo"],
-  ["EZE", -34.8222, -58.5358, "Buenos Aires"],
-  ["BOG", 4.7016, -74.1469, "Bogotá"],
-  ["SCL", -33.393, -70.7858, "Santiago"],
-  // Africa / Middle East
-  ["JNB", -26.1392, 28.246, "Johannesburg"],
-  ["CAI", 30.1219, 31.4056, "Cairo"],
-  ["CPT", -33.9715, 18.6021, "Cape Town"],
-  ["DOH", 25.2731, 51.6081, "Doha"],
-];
-
-// Airport display parameters
-const airportParams = {
-  visible: true,
-  showLabels: true,
-  markerSize: 0.06, // Default size (also controls label size)
-};
-
-// Group to hold all airport markers
-// Added to scene (not earth) so airports stay visible when 3D tiles are active
-const airportGroup = new THREE.Group();
-airportGroup.renderOrder = 5;
-scene.add(airportGroup);
-
-/**
- * Create airport marker sprite (small diamond shape)
- */
-function createAirportMarker(lat, lon, code) {
-  const group = new THREE.Group();
-
-  // Calculate position on globe
-  const phi = (90 - lat) * (Math.PI / 180);
-  const theta = (lon + 180) * (Math.PI / 180);
-  const radius = EARTH_RADIUS + 0.02; // Above surface (raised higher to clear 3D tiles terrain)
-
-  const x = -radius * Math.sin(phi) * Math.cos(theta);
-  const y = radius * Math.cos(phi);
-  const z = radius * Math.sin(phi) * Math.sin(theta);
-
-  // Create marker (small diamond/dot)
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  canvas.width = 32;
-  canvas.height = 32;
-
-  // Draw diamond shape
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-  ctx.beginPath();
-  ctx.moveTo(16, 4);   // top
-  ctx.lineTo(28, 16);  // right
-  ctx.lineTo(16, 28);  // bottom
-  ctx.lineTo(4, 16);   // left
-  ctx.closePath();
-  ctx.fill();
-
-  // Add subtle border
-  ctx.strokeStyle = "rgba(100, 200, 255, 0.8)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  const markerTexture = new THREE.CanvasTexture(canvas);
-  const markerMaterial = new THREE.SpriteMaterial({
-    map: markerTexture,
-    transparent: true,
-    depthWrite: false,
-  });
-
-  const marker = new THREE.Sprite(markerMaterial);
-  marker.position.set(x, y, z);
-  marker.scale.set(airportParams.markerSize, airportParams.markerSize, 1);
-  group.add(marker);
-
-  // Create label
-  const labelCanvas = document.createElement("canvas");
-  const labelCtx = labelCanvas.getContext("2d");
-  labelCanvas.width = 128;
-  labelCanvas.height = 48;
-
-  // Draw label background (subtle)
-  labelCtx.fillStyle = "rgba(0, 0, 0, 0.5)";
-  labelCtx.roundRect(10, 8, 108, 32, 4);
-  labelCtx.fill();
-
-  // Draw text
-  labelCtx.fillStyle = "rgba(255, 255, 255, 0.95)";
-  labelCtx.font = "bold 22px 'SF Mono', Monaco, monospace";
-  labelCtx.textAlign = "center";
-  labelCtx.textBaseline = "middle";
-  labelCtx.fillText(code, 64, 24);
-
-  const labelTexture = new THREE.CanvasTexture(labelCanvas);
-  const labelMaterial = new THREE.SpriteMaterial({
-    map: labelTexture,
-    transparent: true,
-    depthWrite: false,
-  });
-
-  const label = new THREE.Sprite(labelMaterial);
-  // Position label to the right of the marker (tangent to surface)
-  const normal = new THREE.Vector3(x, y, z).normalize();
-  const worldUp = new THREE.Vector3(0, 1, 0);
-  const right = new THREE.Vector3().crossVectors(worldUp, normal).normalize();
-  // Handle poles
-  if (right.length() < 0.001) {
-    right.set(1, 0, 0);
-  }
-  // Store base position and offset direction for dynamic positioning
-  const baseOffset = 0.06;
-  label.position.set(
-    x + right.x * baseOffset,
-    y + right.y * baseOffset,
-    z + right.z * baseOffset
-  );
-  label.scale.set(0.12, 0.045, 1); // Base size (3x increase to match marker)
-  label.userData.isLabel = true;
-  label.userData.baseScale = { x: 0.12, y: 0.045 };
-  label.userData.basePosition = { x, y, z }; // Marker position
-  label.userData.offsetDirection = { x: right.x, y: right.y, z: right.z };
-  label.userData.baseOffset = baseOffset;
-  group.add(label);
-
-  // Store marker base scale for dynamic sizing
-  marker.userData.baseScale = airportParams.markerSize;
-
-  return group;
-}
-
-/**
- * Build all airport markers
- */
-function buildAirportMarkers() {
-  // Clear existing markers
-  while (airportGroup.children.length > 0) {
-    const child = airportGroup.children[0];
-    child.traverse((obj) => {
-      if (obj.material) {
-        if (obj.material.map) obj.material.map.dispose();
-        obj.material.dispose();
-      }
-    });
-    airportGroup.remove(child);
-  }
-
-  // Create markers for each airport
-  for (const [code, lat, lon] of AIRPORTS) {
-    const marker = createAirportMarker(lat, lon, code);
-    airportGroup.add(marker);
-  }
-
-  // Update visibility
-  airportGroup.visible = airportParams.visible;
-  updateAirportLabels();
-}
-
-/**
- * Toggle airport label visibility
- */
-function updateAirportLabels() {
-  airportGroup.traverse((obj) => {
-    if (obj.userData && obj.userData.isLabel) {
-      obj.visible = airportParams.showLabels;
-    }
-  });
-}
-
-/**
- * Update airport marker and label scales based on camera distance
- * Keeps them at a consistent screen size regardless of zoom
- */
-function updateAirportScales(cameraDistance) {
-  // Scale factor: same as icons
-  const baseDistance = 13;
-  const scaleFactor = cameraDistance / baseDistance;
-
-  // Clamp scale to reasonable range
-  const clampedScale = Math.max(0.3, Math.min(2.0, scaleFactor));
-
-  // Use markerSize param as multiplier
-  const sizeMultiplier = airportParams.markerSize / 0.06; // Normalize to default size
-
-  airportGroup.traverse((obj) => {
-    if (obj.userData && obj.userData.baseScale) {
-      if (obj.userData.isLabel) {
-        // Labels scale with marker size and zoom
-        const labelScale = clampedScale * sizeMultiplier;
-        obj.scale.set(
-          obj.userData.baseScale.x * labelScale,
-          obj.userData.baseScale.y * labelScale,
-          1
-        );
-        // Also update label position to maintain constant visual distance from marker
-        if (obj.userData.basePosition && obj.userData.offsetDirection) {
-          const bp = obj.userData.basePosition;
-          const od = obj.userData.offsetDirection;
-          const scaledOffset = obj.userData.baseOffset * clampedScale;
-          obj.position.set(
-            bp.x + od.x * scaledOffset,
-            bp.y + od.y * scaledOffset,
-            bp.z + od.z * scaledOffset
-          );
-        }
-      } else {
-        // Markers
-        const size = airportParams.markerSize * clampedScale;
-        obj.scale.set(size, size, 1);
-      }
-    }
-  });
-}
-
-// Build initial airport markers
-buildAirportMarkers();
+// Initialize airport markers (imported from scene/airports module)
+initAirports(scene);
 
 // Export state and functions for external use (e.g., real AIS/FlightAware data)
 // External code can modify shipSimState/aircraftSimState/satelliteSimState arrays directly,
@@ -4993,43 +4654,7 @@ window.updateSatelliteAttributes = updateSatelliteAttributes;
 window.generateDemoData = generateDemoData;
 window.generateSatelliteData = generateSatelliteData;
 
-// Camera/view parameters (defined here for GUI access)
-const cameraParams = {
-  tiltAngle: 0, // Default tilt in degrees (0 = looking at center, 90 = looking at horizon)
-};
-
-/**
- * Set camera tilt angle (view angle)
- * 0 = looking straight at Earth center (default globe view)
- * 90 = looking toward horizon (good for watching aircraft fly by)
- *
- * Works by offsetting the OrbitControls target from Earth center
- */
-function setCameraTilt(degrees) {
-  // Clamp to valid range
-  const tilt = Math.max(0, Math.min(85, degrees));
-  cameraParams.tiltAngle = tilt;
-
-  // Calculate target offset based on tilt
-  // At tilt=0, look at center. At tilt=90, look at a point near surface level
-  const tiltFactor = tilt / 90;
-
-  // Get direction from Earth center to camera
-  const cameraDir = camera.position.clone().normalize();
-
-  // Calculate a "up" vector tangent to Earth surface at camera's ground point
-  const worldUp = new THREE.Vector3(0, 1, 0);
-  const right = new THREE.Vector3().crossVectors(worldUp, cameraDir).normalize();
-  const surfaceUp = new THREE.Vector3().crossVectors(cameraDir, right).normalize();
-
-  // Offset target upward (in surface tangent direction) based on tilt
-  // More tilt = look higher toward horizon
-  const targetOffset = surfaceUp.multiplyScalar(tiltFactor * EARTH_RADIUS * 1.5);
-
-  // Set new target
-  controls.target.copy(targetOffset);
-  controls.update();
-}
+// Camera parameters and functions imported from ./camera/controls
 
 /**
  * =============================================================================
@@ -5243,13 +4868,7 @@ cameraFolder
     setCameraTilt(value);
   });
 
-// Tilt presets
-const tiltPresets = {
-  "Center": () => setCameraTilt(0),
-  "Slight Tilt": () => setCameraTilt(30),
-  "Tracking": () => setCameraTilt(55),
-  "Horizon": () => setCameraTilt(80),
-};
+// Tilt presets (imported from camera/controls module)
 cameraFolder.add(tiltPresets, "Center").name("● Center (default)");
 cameraFolder.add(tiltPresets, "Slight Tilt").name("◢ Slight Tilt");
 cameraFolder.add(tiltPresets, "Tracking").name("→ Tracking View");
@@ -5551,6 +5170,9 @@ controls.maxDistance = 20; // Don't zoom too far out
 controls.minPolarAngle = 0; // Can look straight down at north pole
 controls.maxPolarAngle = Math.PI; // Can look straight up at south pole
 
+// Initialize camera module with references
+initCameraModule(camera, controls);
+
 /**
  * =============================================================================
  * UNIT SELECTION (Click to select)
@@ -5631,8 +5253,7 @@ function selectUnit(type, index) {
   } else if (type === "airport") {
     const airport = AIRPORTS[index];
     if (!airport) return;
-    const [code, lat, lon, name] = airport;
-    unitData = { lat, lon, heading: 0, code, name };
+    unitData = { lat: airport.lat, lon: airport.lon, heading: 0, code: airport.iata, name: airport.name };
     typeLabel = "AIRPORT";
     typeClass = "airport";
   }
@@ -5777,7 +5398,6 @@ function updateSelectedUnitInfo() {
   } else if (type === "airport") {
     const airport = AIRPORTS[index];
     if (!airport) { deselectUnit(); return; }
-    const [code, lat, lon, name] = airport;
 
     // Set airport-specific labels
     unitLabel1.textContent = "NAME";
@@ -5786,9 +5406,9 @@ function updateSelectedUnitInfo() {
     unitLabel4.textContent = "ELEV";
     unitLabel5.textContent = "TYPE";
 
-    unitLatEl.textContent = name;
-    unitLonEl.textContent = `${lat.toFixed(4)}°`;
-    unitHdgEl.textContent = `${lon.toFixed(4)}°`;
+    unitLatEl.textContent = airport.name;
+    unitLonEl.textContent = `${airport.lat.toFixed(4)}°`;
+    unitHdgEl.textContent = `${airport.lon.toFixed(4)}°`;
     unitSpdEl.textContent = "—"; // Elevation data not available
     unitAltEl.textContent = "INTL";
   }
@@ -5937,8 +5557,8 @@ function onCanvasClick(event) {
   // Check airports (if visible)
   if (airportParams.visible) {
     for (let i = 0; i < AIRPORTS.length; i++) {
-      const [code, lat, lon, name] = AIRPORTS[i];
-      const worldPos = latLonTo3D(lat, lon, 0.002);
+      const airport = AIRPORTS[i];
+      const worldPos = latLonTo3D(airport.lat, airport.lon, 0.002);
       worldPos.applyMatrix4(earth.matrixWorld);
 
       const screen = projectToScreen(worldPos);
@@ -6026,7 +5646,7 @@ const tick = () => {
   // Sync scene-level objects rotation with earth (since they're not parented to earth)
   // This keeps units, trails, overlays, and airports aligned with the globe as it rotates
   const earthRotY = earth.rotation.y;
-  airportGroup.rotation.y = earthRotY;
+  setAirportRotation(earthRotY);
   shipMesh.rotation.y = earthRotY;
   aircraftMesh.rotation.y = earthRotY;
   satelliteMesh.rotation.y = earthRotY;
@@ -6059,7 +5679,21 @@ const tick = () => {
   controls.panSpeed = 0.1 + zoomFactor * 0.9; // Also slow down panning
 
   // Update telemetry display
-  updateTelemetry(cameraDistance, camera.position);
+  updateTelemetry({
+    cameraDistance,
+    cameraPosition: camera.position,
+    earth,
+    unitCounts: {
+      ships: shipSimState.length,
+      aircraft: aircraftSimState.length,
+      satellites: satelliteSimState.length,
+      drones: droneSimState.length,
+      showShips: unitCountParams.showShips,
+      showAircraft: unitCountParams.showAircraft,
+      showSatellites: unitCountParams.showSatellites,
+      showDrones: unitCountParams.showDrones,
+    },
+  });
 
   // Update airport marker scales based on zoom
   updateAirportScales(cameraDistance);
