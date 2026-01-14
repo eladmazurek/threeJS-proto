@@ -25,10 +25,6 @@ import glassVertexShader from "./shaders/tracking/glass-vertex.glsl";
 import glassFragmentShader from "./shaders/tracking/glass-fragment.glsl";
 import satelliteVertexShader from "./shaders/tracking/satellite-vertex.glsl";
 
-// Import 3D Tiles Renderer for Google Photorealistic Tiles
-import { TilesRenderer } from '3d-tiles-renderer';
-import { GoogleCloudAuthPlugin } from '3d-tiles-renderer/plugins';
-
 // =============================================================================
 // MODULE IMPORTS (Refactored code)
 // =============================================================================
@@ -52,11 +48,7 @@ import {
   ORBIT_LINE_SEGMENTS,
   PATROL_CIRCLE_SEGMENTS,
   DEG_TO_RAD,
-  GRID_ALTITUDE,
-  GRID_SEGMENTS,
   MAX_CANDIDATES,
-  TILES_SCALE_FACTOR,
-  TILES_TRANSITION_RANGE,
   H3_PAN_THRESHOLD,
   H3_MAX_CELLS,
   H3_VERTS_PER_CELL,
@@ -157,6 +149,34 @@ import {
   updateTelemetry,
   updateWeatherLegend,
 } from "./ui/telemetry";
+
+// Grid system
+import {
+  gridParams,
+  gridGroup,
+  gridLineMaterial,
+  buildGrid,
+  initGrid,
+  updateGridVisibility,
+  updateGridOpacity,
+} from "./scene/grid";
+
+// 3D Tiles system
+import {
+  tilesParams,
+  tilesRenderer,
+  tilesGroup,
+  TILES_TRANSITION_ALTITUDE,
+  wgs84ToScene,
+  initGoogleTiles,
+  setTilesDependencies,
+  getCameraAltitudeForTiles,
+  getTilesTransitionFactor,
+  updateTilesCrossfade,
+  updateTilesAttribution,
+  setTransitionAltitude,
+  getTilesPreloadAltitude,
+} from "./scene/tiles";
 
 /**
  * =============================================================================
@@ -301,25 +321,8 @@ gui.title("Controls");
 
 // Telemetry functions imported from ./ui/telemetry
 
-/**
- * =============================================================================
- * GOOGLE PHOTOREALISTIC 3D TILES CONFIGURATION
- * =============================================================================
- */
-
-// API key loaded from environment variable (set in .env.local)
+// Google Tiles API key loaded from environment variable (set in .env.local)
 const GOOGLE_TILES_API_KEY = import.meta.env.VITE_GOOGLE_TILES_API_KEY;
-
-// TILES_SCALE_FACTOR, TILES_TRANSITION_RANGE imported from ./constants
-
-// Transition altitude in scene units
-let TILES_TRANSITION_ALTITUDE = 0.628; // ~2000km in scene units
-
-// Tiles parameters for GUI
-const tilesParams = {
-  enabled: false,
-  transitionAltitude: 2000, // km, for GUI display
-};
 
 // Get reference to the WebGL canvas element defined in index.html
 const canvas = document.querySelector("canvas.webgl");
@@ -526,223 +529,7 @@ const atmosphereMaterial = new THREE.ShaderMaterial({
 const atmosphereMesh = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
 scene.add(atmosphereMesh);
 
-/**
- * =============================================================================
- * GOOGLE PHOTOREALISTIC 3D TILES
- * =============================================================================
- * Streams Google's 3D tile data when zoomed in for high-resolution terrain
- */
-
-let tilesRenderer = null;
-let tilesGroup = null; // Parent group for Y rotation (syncs with Earth's rotation)
-// state.tilesLoaded uses state.state.tilesLoaded
-
-/**
- * Convert WGS84 lat/lon to scene coordinates
- * Handles ECEF (Z-up) to Three.js (Y-up) transformation
- * @param {number} lat - Latitude in degrees
- * @param {number} lon - Longitude in degrees
- * @param {number} altitude - Altitude in scene units (default 0)
- * @returns {THREE.Vector3} Position in scene coordinates
- */
-function wgs84ToScene(lat, lon, altitude = 0) {
-  const phi = (90 - lat) * (Math.PI / 180);
-  const theta = (lon + 180) * (Math.PI / 180);
-  const radius = EARTH_RADIUS + altitude;
-
-  // Standard spherical to cartesian (Y-up)
-  const x = -radius * Math.sin(phi) * Math.cos(theta);
-  const y = radius * Math.cos(phi);
-  const z = radius * Math.sin(phi) * Math.sin(theta);
-
-  return new THREE.Vector3(x, y, z);
-}
-
-/**
- * Initialize Google Photorealistic 3D Tiles
- * Handles coordinate transformation from ECEF (Z-up) to Three.js (Y-up)
- */
-function initGoogleTiles(camera, renderer) {
-  if (!GOOGLE_TILES_API_KEY) {
-    console.warn('Google Tiles API key not found. Set VITE_GOOGLE_TILES_API_KEY in .env.local');
-    return;
-  }
-
-  // Create tiles renderer
-  tilesRenderer = new TilesRenderer();
-
-  // Register Google authentication plugin for session management
-  tilesRenderer.registerPlugin(new GoogleCloudAuthPlugin({
-    apiToken: GOOGLE_TILES_API_KEY,
-    autoRefreshToken: true,
-  }));
-
-  // Configure renderer with camera and resolution
-  tilesRenderer.setCamera(camera);
-  tilesRenderer.setResolutionFromRenderer(camera, renderer);
-
-  // =========================================================================
-  // COORDINATE TRANSFORMATION: ECEF (Z-up) -> Three.js (Y-up)
-  // =========================================================================
-  // Use two nested groups to handle rotations correctly:
-  // - Parent group (tilesGroup): Y rotation to sync with Earth's rotation
-  // - Child group (tilesRenderer.group): X rotation for ECEF to Y-up conversion
-  // This avoids Euler angle order issues.
-  // =========================================================================
-
-  // Create parent group for Y rotation (syncs with Earth's rotation)
-  tilesGroup = new THREE.Group();
-  tilesGroup.name = "tilesRotationGroup";
-  scene.add(tilesGroup);
-
-  // Add tiles renderer group as child
-  tilesGroup.add(tilesRenderer.group);
-
-  // Apply X rotation on the inner group: -90° to convert ECEF Z-up to Y-up
-  tilesRenderer.group.rotation.x = -Math.PI / 2;
-
-  // Apply uniform scale from meters to scene units on the inner group
-  tilesRenderer.group.scale.setScalar(TILES_SCALE_FACTOR);
-
-  // =========================================================================
-  // RENDERER SETTINGS FOR TINY SCALE
-  // =========================================================================
-  // At our tiny scale (1:3,185,500), we need to adjust several settings:
-  // - Error thresholds for LOD selection
-  // - Frustum culling behavior
-  // - Memory management for tile caching
-  // =========================================================================
-
-  // Error target in pixels - lower = sharper/higher detail tiles (default is 6)
-  tilesRenderer.errorTarget = 10;
-
-  // Don't use errorMultiplier with scale - it's already factored into screen-space error
-  // The renderer calculates screen-space error which accounts for camera distance
-
-  // Increase max depth to allow loading more detailed tiles
-  tilesRenderer.maxDepth = 30;
-
-  // Load more tiles in parallel for better coverage
-  tilesRenderer.downloadQueue.maxJobs = 10;
-  tilesRenderer.parseQueue.maxJobs = 4;
-
-  // Increase cache size for smoother navigation
-  tilesRenderer.lruCache.maxSize = 800;
-  tilesRenderer.lruCache.minSize = 400;
-
-  // Initially hidden until transition threshold
-  tilesGroup.visible = false;
-
-  // Listen for root tileset load
-  tilesRenderer.addEventListener('load-tileset', () => {
-    state.tilesLoaded = true;
-    console.log('Google 3D Tiles root tileset loaded');
-  });
-
-  // Error handling
-  tilesRenderer.addEventListener('load-error', (error) => {
-    console.error('Google 3D Tiles load error:', error);
-  });
-
-  console.log('Google 3D Tiles initialized with ECEF->Y-up transformation');
-}
-
-/**
- * Get camera altitude above Earth surface in scene units
- */
-function getCameraAltitudeForTiles() {
-  return camera.position.length() - EARTH_RADIUS;
-}
-
-/**
- * Calculate transition factor for crossfade (0 = globe texture, 1 = tiles)
- * Uses quintic smoothstep for gradual, smooth blending
- */
-function getTilesTransitionFactor() {
-  const altitude = getCameraAltitudeForTiles();
-
-  // Above transition + range: show globe texture (factor 0)
-  // Below transition: show tiles (factor 1)
-  const transitionStart = TILES_TRANSITION_ALTITUDE + TILES_TRANSITION_RANGE;
-  const transitionEnd = TILES_TRANSITION_ALTITUDE;
-
-  if (altitude >= transitionStart) return 0;
-  if (altitude <= transitionEnd) return 1;
-
-  // Linear interpolation
-  const t = 1 - (altitude - transitionEnd) / TILES_TRANSITION_RANGE;
-
-  // Quintic smoothstep: 6t⁵ - 15t⁴ + 10t³ (zero velocity & acceleration at endpoints)
-  return t * t * t * (t * (t * 6 - 15) + 10);
-}
-
-/**
- * Update crossfade between globe texture and 3D tiles
- */
-function updateTilesCrossfade() {
-  if (!tilesParams.enabled || !tilesRenderer) {
-    // Tiles disabled - show full globe
-    earthMaterial.uniforms.uOpacity.value = 1.0;
-    if (tilesGroup) tilesGroup.visible = false;
-    earth.visible = true;
-    return;
-  }
-
-  const factor = getTilesTransitionFactor();
-
-  // Globe texture opacity (inverse of transition)
-  earthMaterial.uniforms.uOpacity.value = 1.0 - factor;
-
-  // Tiles visibility
-  if (factor > 0 && state.tilesLoaded) {
-    tilesGroup.visible = true;
-
-    // Sync Y rotation with Earth's rotation on the parent group
-    // This keeps tiles aligned with the globe as it rotates
-    tilesGroup.rotation.y = earth.rotation.y;
-  } else {
-    tilesGroup.visible = false;
-  }
-
-  // Hide globe mesh completely when tiles are fully visible (optimization)
-  earth.visible = factor < 1.0;
-
-  // Fade out overlays when tiles are dominant to prevent z-fighting
-  if (typeof cloudMesh !== 'undefined') {
-    cloudMesh.visible = factor < 0.5;
-  }
-  atmosphereMesh.visible = factor < 0.8;
-}
-
-/**
- * Update Google Tiles attribution display
- */
-function updateTilesAttribution() {
-  const attributionEl = document.getElementById('tiles-attribution');
-  const textEl = document.getElementById('tiles-attribution-text');
-
-  if (!attributionEl || !textEl) return;
-
-  if (tilesParams.enabled && tilesGroup && tilesGroup.visible) {
-    // Get attributions from tiles renderer
-    const attributions = tilesRenderer ? tilesRenderer.getAttributions() : [];
-
-    if (attributions && attributions.length > 0) {
-      // Combine attribution strings
-      const text = attributions
-        .filter(attr => attr.type === 'string' || typeof attr === 'string')
-        .map(attr => typeof attr === 'string' ? attr : attr.value)
-        .join(' | ');
-
-      textEl.textContent = text || 'Google';
-    } else {
-      textEl.textContent = 'Google';
-    }
-    attributionEl.classList.remove('hidden');
-  } else {
-    attributionEl.classList.add('hidden');
-  }
-}
+// Google 3D Tiles - now in ./scene/tiles module
 
 /**
  * =============================================================================
@@ -1254,161 +1041,8 @@ function setWeatherLayer(layerName) {
  * Lines are added as children of the Earth mesh so they rotate with it.
  */
 
-// GRID_ALTITUDE, GRID_SEGMENTS imported from ./constants
-
-// Grid parameters (adjustable via GUI)
-const gridParameters = {
-  visible: true,
-  opacity: 0.3,
-  latInterval: 30, // Degrees between latitude lines
-  lonInterval: 30, // Degrees between longitude lines
-};
-
-// Container for all grid elements (for easy visibility toggling)
-const gridGroup = new THREE.Group();
-gridGroup.name = "latLonGrid";
-earth.add(gridGroup);
-
-// Material for grid lines - subtle and semi-transparent
-const gridLineMaterial = new THREE.LineBasicMaterial({
-  color: 0xffffff,
-  transparent: true,
-  opacity: gridParameters.opacity,
-  depthWrite: false,
-});
-
-/**
- * Create a latitude line (circle parallel to equator)
- * @param {number} lat - Latitude in degrees (-90 to 90)
- */
-function createLatitudeLine(lat) {
-  const points = [];
-  const phi = (90 - lat) * (Math.PI / 180);
-  const radius = (EARTH_RADIUS + GRID_ALTITUDE) * Math.sin(phi);
-  const y = (EARTH_RADIUS + GRID_ALTITUDE) * Math.cos(phi);
-
-  for (let i = 0; i <= GRID_SEGMENTS; i++) {
-    const theta = (i / GRID_SEGMENTS) * Math.PI * 2;
-    points.push(
-      new THREE.Vector3(
-        radius * Math.cos(theta),
-        y,
-        radius * Math.sin(theta)
-      )
-    );
-  }
-
-  const geometry = new THREE.BufferGeometry().setFromPoints(points);
-  const line = new THREE.Line(geometry, gridLineMaterial);
-  return line;
-}
-
-/**
- * Create a longitude line (great circle from pole to pole)
- * @param {number} lon - Longitude in degrees (-180 to 180)
- */
-function createLongitudeLine(lon) {
-  const points = [];
-  const theta = (lon + 180) * (Math.PI / 180);
-
-  for (let i = 0; i <= GRID_SEGMENTS; i++) {
-    const phi = (i / GRID_SEGMENTS) * Math.PI;
-    const radius = EARTH_RADIUS + GRID_ALTITUDE;
-    points.push(
-      new THREE.Vector3(
-        -radius * Math.sin(phi) * Math.cos(theta),
-        radius * Math.cos(phi),
-        radius * Math.sin(phi) * Math.sin(theta)
-      )
-    );
-  }
-
-  const geometry = new THREE.BufferGeometry().setFromPoints(points);
-  const line = new THREE.Line(geometry, gridLineMaterial);
-  return line;
-}
-
-/**
- * Create a text sprite for lat/lon labels
- * @param {string} text - Label text
- * @param {THREE.Vector3} position - Position on the globe
- */
-function createTextLabel(text, position) {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  canvas.width = 128;
-  canvas.height = 64;
-
-  // Draw text
-  context.fillStyle = "rgba(255, 255, 255, 0.6)";
-  context.font = "bold 24px Arial";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(text, 64, 32);
-
-  // Create sprite
-  const texture = new THREE.CanvasTexture(canvas);
-  const material = new THREE.SpriteMaterial({
-    map: texture,
-    transparent: true,
-    depthWrite: false,
-  });
-
-  const sprite = new THREE.Sprite(material);
-  sprite.position.copy(position);
-  sprite.scale.set(0.15, 0.075, 1);
-
-  return sprite;
-}
-
-/**
- * Build the complete grid with lines and labels
- */
-function buildGrid() {
-  // Clear existing grid
-  while (gridGroup.children.length > 0) {
-    const child = gridGroup.children[0];
-    if (child.geometry) child.geometry.dispose();
-    if (child.material) {
-      if (child.material.map) child.material.map.dispose();
-      child.material.dispose();
-    }
-    gridGroup.remove(child);
-  }
-
-  const latInterval = gridParameters.latInterval;
-  const lonInterval = gridParameters.lonInterval;
-
-  // Create latitude lines
-  for (let lat = -90 + latInterval; lat < 90; lat += latInterval) {
-    const line = createLatitudeLine(lat);
-    gridGroup.add(line);
-
-    // Add label at prime meridian (lon = 0)
-    const labelPos = latLonToPosition(lat, 0, GRID_ALTITUDE + 0.02);
-    const label = createTextLabel(`${lat}°`, labelPos);
-    gridGroup.add(label);
-  }
-
-  // Create longitude lines
-  for (let lon = -180; lon < 180; lon += lonInterval) {
-    const line = createLongitudeLine(lon);
-    gridGroup.add(line);
-
-    // Add label at equator
-    if (lon !== 0) { // Skip 0° to avoid overlap with lat labels
-      const labelPos = latLonToPosition(0, lon, GRID_ALTITUDE + 0.02);
-      const label = createTextLabel(`${lon}°`, labelPos);
-      gridGroup.add(label);
-    }
-  }
-
-  // Add equator label
-  const equatorLabel = createTextLabel("0°", latLonToPosition(0, 0, GRID_ALTITUDE + 0.02));
-  gridGroup.add(equatorLabel);
-}
-
-// Note: buildGrid() is called after latLonToPosition is defined (below)
+// Initialize grid system (lat/lon lines)
+initGrid(earth);
 
 /**
  * =============================================================================
@@ -4773,16 +4407,16 @@ function updateSunDirection() {
 // Grid folder
 const gridFolder = gui.addFolder("Lat/Lon Grid");
 gridFolder.close();
-gridFolder.add(gridParameters, "visible").name("Show Grid").onChange(() => {
-  gridGroup.visible = gridParameters.visible;
+gridFolder.add(gridParams, "visible").name("Show Grid").onChange(() => {
+  updateGridVisibility();
 });
-gridFolder.add(gridParameters, "opacity", 0.05, 0.8, 0.01).name("Opacity").onChange(() => {
-  gridLineMaterial.opacity = gridParameters.opacity;
+gridFolder.add(gridParams, "opacity", 0.05, 0.8, 0.01).name("Opacity").onChange(() => {
+  updateGridOpacity();
 });
-gridFolder.add(gridParameters, "latInterval", [10, 15, 30, 45]).name("Lat Interval").onChange(() => {
+gridFolder.add(gridParams, "latInterval", [10, 15, 30, 45]).name("Lat Interval").onChange(() => {
   buildGrid();
 });
-gridFolder.add(gridParameters, "lonInterval", [10, 15, 30, 45]).name("Lon Interval").onChange(() => {
+gridFolder.add(gridParams, "lonInterval", [10, 15, 30, 45]).name("Lon Interval").onChange(() => {
   buildGrid();
 });
 
@@ -4894,8 +4528,7 @@ tilesFolder
   .add(tilesParams, "transitionAltitude", 100, 2000, 50)
   .name("Transition Alt (km)")
   .onChange((value) => {
-    // Convert km to scene units (km * EARTH_RADIUS / 6371)
-    TILES_TRANSITION_ALTITUDE = value * (EARTH_RADIUS / 6371);
+    setTransitionAltitude(value);
   });
 
 // Add debug controls for tile loading (only if tilesRenderer exists)
@@ -5609,7 +5242,16 @@ earthNightTexture.anisotropy = maxAnisotropy;
 earthSpecularCloudsTexture.anisotropy = maxAnisotropy;
 
 // Initialize Google 3D Tiles after renderer is ready
-initGoogleTiles(camera, renderer);
+initGoogleTiles(scene, camera, renderer, GOOGLE_TILES_API_KEY);
+
+// Set dependencies for tiles module (earth, clouds, atmosphere)
+setTilesDependencies({
+  earth,
+  earthMaterial,
+  cloud: cloudMesh,
+  atmosphere: atmosphereMesh,
+  camera,
+});
 
 /**
  * =============================================================================
@@ -5749,9 +5391,7 @@ const tick = () => {
     const altitude = camera.position.length() - EARTH_RADIUS;
     // Pre-load tiles well before the visual transition starts
     // This prevents the "stuck" feeling when zooming in/out of tile zone
-    const tilesPreloadAltitude = TILES_TRANSITION_ALTITUDE + TILES_TRANSITION_RANGE + 0.3; // ~1000km buffer
-
-    if (altitude < tilesPreloadAltitude) {
+    if (altitude < getTilesPreloadAltitude()) {
       camera.updateMatrixWorld();
       tilesRenderer.update();
     }

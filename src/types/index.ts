@@ -179,6 +179,14 @@ export interface TilesParams {
   transitionAltitude: number;
 }
 
+/** Lat/Lon Grid parameters */
+export interface GridParams {
+  visible: boolean;
+  opacity: number;
+  latInterval: number;
+  lonInterval: number;
+}
+
 /** Icon scale parameters */
 export interface IconScaleParams {
   multiplier: number;
