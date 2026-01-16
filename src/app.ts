@@ -189,9 +189,14 @@ function main() {
         // Adjust rotation speed based on zoom level
         const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
         // specific non-linear curve for smoother close-range control
-        const controlScale = zoomFactor * zoomFactor; 
-        controls.rotateSpeed = 0.05 + controlScale * 0.95; 
-        controls.panSpeed = 0.01 + controlScale * 0.99;
+        const controlScale = zoomFactor * zoomFactor;
+
+        // Additional slowdown below 1500km altitude (proportional, capped at 50%)
+        const lowAltFactor = altitudeKm < 1500 ? 0.5 + (altitudeKm / 1500) * 0.5 : 1.0;
+
+        controls.rotateSpeed = (0.05 + controlScale * 0.95) * lowAltFactor;
+        controls.panSpeed = (0.01 + controlScale * 0.99) * lowAltFactor;
+        controls.zoomSpeed = lowAltFactor;
 
         controls.update();
         updateTelemetry({ cameraDistance, cameraPosition: camera.position, earth: earthRefs.mesh, unitCounts: unitCountParams as any });

@@ -314,13 +314,13 @@ const MIN_ALTITUDE_WITHOUT_TILES = 1000 * (EARTH_RADIUS / 6371); // ~0.314 scene
 
 /**
  * Get minimum camera altitude based on tiles state
- * Returns very small value when tiles can be shown, 1000km otherwise
+ * Returns very small value when tiles are enabled, 1000km otherwise
  */
 export function getMinCameraAltitude(): number {
-  if (tilesParams.enabled && tilesParams.forceShow) {
-    // Tiles enabled with forceShow - allow close approach
+  if (tilesParams.enabled) {
+    // Tiles enabled - allow close approach (tiles handle close-up rendering)
     return 0.00015; // ~1km, existing minimum
   }
-  // Tiles disabled or altitude-based - restrict to 1000km
+  // Tiles disabled - restrict to 1000km
   return MIN_ALTITUDE_WITHOUT_TILES;
 }
