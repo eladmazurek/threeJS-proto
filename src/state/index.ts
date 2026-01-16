@@ -215,6 +215,25 @@ export const state = {
     satellites: 0,
     drones: 0,
   } as PerfStats,
+
+  // -------------------------------------------------------------------------
+  // Earth Rotation State (synced from mesh each frame)
+  // -------------------------------------------------------------------------
+
+  earthRotation: {
+    y: 0,
+  },
+
+  // -------------------------------------------------------------------------
+  // Unit Visibility (mirrors unitCountParams for easy access)
+  // -------------------------------------------------------------------------
+
+  unitCounts: {
+    showShips: true,
+    showAircraft: true,
+    showSatellites: true,
+    showDrones: true,
+  },
 };
 
 // =============================================================================

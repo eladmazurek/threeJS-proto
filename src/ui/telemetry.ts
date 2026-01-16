@@ -101,6 +101,14 @@ export function updateWeatherLegend(layerName: string, visible: boolean): void {
 // TELEMETRY UPDATE
 // =============================================================================
 
+// Reusable raycaster to avoid GC pressure
+const _raycaster = new THREE.Raycaster();
+const _toEarth = new THREE.Vector3();
+
+// Throttle telemetry updates (no need to update 60x/sec)
+let _lastTelemetryUpdate = 0;
+const TELEMETRY_UPDATE_INTERVAL = 100; // ms
+
 /** Dependencies for telemetry update */
 export interface TelemetryDeps {
   cameraDistance: number;
@@ -122,6 +130,11 @@ export interface TelemetryDeps {
  * Update telemetry display with current values
  */
 export function updateTelemetry(deps: TelemetryDeps): void {
+  // Throttle updates - telemetry doesn't need 60fps refresh
+  const now = performance.now();
+  if (now - _lastTelemetryUpdate < TELEMETRY_UPDATE_INTERVAL) return;
+  _lastTelemetryUpdate = now;
+
   getTelemetryElements();
   if (!telAltitude || !telLat || !telLon || !telUnits || !telUtc || !metValue) return;
 
@@ -134,9 +147,9 @@ export function updateTelemetry(deps: TelemetryDeps): void {
 
   // Calculate view center lat/lon (accounts for Earth rotation)
   // Raycast from camera to Earth center to find what we're looking at
-  const toEarth = new THREE.Vector3(0, 0, 0).sub(cameraPosition).normalize();
-  const raycaster = new THREE.Raycaster(cameraPosition.clone(), toEarth);
-  const intersects = raycaster.intersectObject(earth, false);
+  _toEarth.set(0, 0, 0).sub(cameraPosition).normalize();
+  _raycaster.set(cameraPosition, _toEarth);
+  const intersects = _raycaster.intersectObject(earth, false);
 
   if (intersects.length > 0) {
     const point = intersects[0].point;
@@ -161,8 +174,8 @@ export function updateTelemetry(deps: TelemetryDeps): void {
   telUnits.textContent = totalUnits.toLocaleString();
 
   // UTC time
-  const now = new Date();
-  telUtc.textContent = now.toISOString().substr(11, 8);
+  const nowDate = new Date();
+  telUtc.textContent = nowDate.toISOString().substr(11, 8);
 
   // Mission elapsed time
   const elapsed = Math.floor((Date.now() - missionStartTime) / 1000);

@@ -262,15 +262,32 @@ function updateH3CellHighlight(cellIndex: string | null): void {
 // CAMERA VIEW UTILITIES
 // =============================================================================
 
+// Reusable objects to avoid GC pressure
+const _h3Raycaster = new THREE.Raycaster();
+const _h3ToEarth = new THREE.Vector3();
+const _h3CamPos = new THREE.Vector3();
+
+// Cache for view center (avoid raycast every frame)
+let _cachedViewCenter = { lat: 0, lon: 0 };
+let _lastViewCenterTime = 0;
+const VIEW_CENTER_CACHE_MS = 50; // Only recalc every 50ms
+
 function getCameraViewCenter(): { lat: number; lon: number } {
   if (!deps) return { lat: 0, lon: 0 };
 
+  // Return cached value if recent
+  const now = performance.now();
+  if (now - _lastViewCenterTime < VIEW_CENTER_CACHE_MS) {
+    return _cachedViewCenter;
+  }
+  _lastViewCenterTime = now;
+
   const camera = deps.getCamera();
   const earth = deps.getEarth();
-  const camWorldPos = camera.position.clone();
-  const toEarth = new THREE.Vector3(0, 0, 0).sub(camWorldPos).normalize();
-  const raycaster = new THREE.Raycaster(camWorldPos, toEarth);
-  const intersects = raycaster.intersectObject(earth, false);
+  _h3CamPos.copy(camera.position);
+  _h3ToEarth.set(0, 0, 0).sub(_h3CamPos).normalize();
+  _h3Raycaster.set(_h3CamPos, _h3ToEarth);
+  const intersects = _h3Raycaster.intersectObject(earth, false);
 
   if (intersects.length > 0) {
     const point = intersects[0].point;
@@ -281,7 +298,8 @@ function getCameraViewCenter(): { lat: number; lon: number } {
     const lat = 90 - Math.acos(localPoint.y / r) * (180 / Math.PI);
     const lon =
       Math.atan2(localPoint.z, -localPoint.x) * (180 / Math.PI) - 180;
-    return { lat, lon };
+    _cachedViewCenter = { lat, lon };
+    return _cachedViewCenter;
   }
 
   return { lat: 0, lon: 0 };

@@ -428,12 +428,64 @@ export function updateAircraftTrailAttributes(
   geometryRefs.geometry.setDrawRange(0, pointIndex);
 }
 
+// =============================================================================
+// TRAIL PARAMETERS
+// =============================================================================
+
+export const trailParams: TrailParams = {
+  enabled: true,
+  shipTrails: true,
+  aircraftTrails: true,
+  opacity: 0.7,
+};
+
+// =============================================================================
+// MAIN UPDATE FUNCTION
+// =============================================================================
+
+let lastTrailUpdateTime = 0;
+
 /**
- * Set trail opacity.
+ * Update trails (called from animation loop, throttled).
  */
-export function setTrailOpacity(
-  material: THREE.ShaderMaterial,
-  opacity: number
-): void {
-  material.uniforms.uBaseOpacity.value = opacity;
+export function update(
+  historyState: TrailHistoryState,
+  ships: ShipState[],
+  aircraft: AircraftState[],
+  shipTrailRefs: TrailMeshRefs,
+  aircraftTrailRefs: TrailMeshRefs
+) {
+  if (!trailParams.enabled) {
+    shipTrailRefs.geometryRefs.geometry.setDrawRange(0, 0);
+    aircraftTrailRefs.geometryRefs.geometry.setDrawRange(0, 0);
+    return;
+  }
+
+  const now = performance.now();
+  if (now - lastTrailUpdateTime < TRAIL_UPDATE_INTERVAL) return;
+  lastTrailUpdateTime = now;
+
+  // Reinitialize if unit counts changed significantly
+  if (historyState.shipHistory.length === 0 && ships.length > 0) {
+    const newState = initTrailHistory(ships.length, aircraft.length);
+    historyState.shipHistory = newState.shipHistory;
+    historyState.aircraftHistory = newState.aircraftHistory;
+    historyState.activeShipCount = newState.activeShipCount;
+    historyState.activeAircraftCount = newState.activeAircraftCount;
+  }
+
+  captureTrailPositions(historyState, ships, aircraft);
+  updateShipTrailAttributes(
+    shipTrailRefs.geometryRefs,
+    historyState,
+    trailParams.enabled,
+    trailParams.shipTrails
+  );
+  updateAircraftTrailAttributes(
+    aircraftTrailRefs.geometryRefs,
+    historyState,
+    trailParams.enabled,
+    trailParams.aircraftTrails
+  );
 }
+

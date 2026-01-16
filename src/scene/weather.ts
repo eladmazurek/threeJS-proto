@@ -15,6 +15,14 @@ import { EARTH_RADIUS } from "../constants";
 /** Weather overlay altitude above Earth surface */
 export const WEATHER_ALTITUDE = 0.006;
 
+/** Weather parameters (GUI-controlled) */
+export const weatherParams = {
+  enabled: false,
+  layer: 'precipitation' as keyof typeof WEATHER_LAYER_TYPES,
+  opacity: 0.6,
+  animate: true,
+};
+
 // =============================================================================
 // WEATHER LAYER DEFINITIONS
 // =============================================================================
@@ -473,9 +481,9 @@ export function createWeatherOverlay(
 }
 
 /**
- * Set the weather layer type.
+ * Set the weather layer type on a material.
  */
-export function setWeatherLayer(
+export function setWeatherLayerOnMaterial(
   material: THREE.ShaderMaterial,
   layerName: WeatherLayerName
 ): void {
@@ -510,4 +518,29 @@ export function syncWeatherSun(
   sunDirection: THREE.Vector3
 ): void {
   material.uniforms.uSunDirection.value = sunDirection.clone().normalize();
+}
+
+// =============================================================================
+// ALIASES FOR BACKWARD COMPATIBILITY
+// =============================================================================
+
+// Store material reference for simplified setWeatherLayer
+let _weatherMaterial: THREE.ShaderMaterial | null = null;
+
+/** Alias for createWeatherOverlay with default sun direction */
+export function createWeather(): WeatherMeshRefs {
+  const refs = createWeatherOverlay(new THREE.Vector3(1, 1, 0), weatherParams.opacity);
+  _weatherMaterial = refs.material;
+  return refs;
+}
+
+/**
+ * Simplified setWeatherLayer that takes just the layer name.
+ * Uses internal material reference set by createWeather.
+ */
+export function setWeatherLayer(layerName: string): void {
+  if (_weatherMaterial) {
+    _weatherMaterial.uniforms.uLayerType.value = WEATHER_LAYER_TYPES[layerName as keyof typeof WEATHER_LAYER_TYPES] || 0;
+  }
+  weatherParams.layer = layerName as keyof typeof WEATHER_LAYER_TYPES;
 }
