@@ -19,7 +19,7 @@ import { initAirports, setAirportRotation, updateAirportScales, airportParams } 
 import { state } from './state';
 import { updateIconScale, setAttributeDependencies, updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes, iconScaleParams } from './units/attributes';
 import { initSelectionVisuals, setVisualsDependencies, updateSelectionRing, setOrbitLineRotation, selectionRingMaterial } from './selection/visuals';
-import { initGoogleTiles, updateTilesCrossfade, updateTilesAttribution, getTilesPreloadAltitude, tilesRenderer, tilesParams } from './scene/tiles';
+import { initGoogleTiles, updateTilesCrossfade, updateTilesAttribution, getTilesPreloadAltitude, tilesRenderer, tilesParams, setTilesDependencies } from './scene/tiles';
 import { updateTelemetry, updateWeatherLegend } from './ui/telemetry';
 import { h3Params, setH3Dependencies, initH3ClickHandler, updateH3Grid, processH3BuildChunk, updateH3PopupPeriodic, getH3HighlightMesh, setH3MeshVisibility, hideH3Popup } from './scene/h3-grid';
 import { EARTH_RADIUS } from "./constants.js";
@@ -83,6 +83,7 @@ function main() {
 
     const GOOGLE_TILES_API_KEY = import.meta.env.VITE_GOOGLE_TILES_API_KEY;
     initGoogleTiles(scene, camera, renderer, GOOGLE_TILES_API_KEY);
+    setTilesDependencies({ earth: earthRefs.mesh, earthMaterial: earthRefs.material, cloud: cloudRefs.mesh, atmosphere: atmosphereRefs.mesh, camera });
 
     generateDemoData();
     generateDroneData();
@@ -202,13 +203,14 @@ function main() {
         selectionRingMaterial.uniforms.uTime.value = elapsedTime;
         
         if (tilesRenderer && tilesParams.enabled) {
+            updateTilesCrossfade();
+            updateTilesAttribution();
+            
             const altitude = camera.position.length() - EARTH_RADIUS;
             if (altitude < getTilesPreloadAltitude()) {
               camera.updateMatrixWorld();
               tilesRenderer.update();
             }
-            updateTilesCrossfade();
-            updateTilesAttribution();
         }
 
         renderer.render(scene, camera);

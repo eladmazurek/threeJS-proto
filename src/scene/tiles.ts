@@ -238,6 +238,7 @@ export function updateTilesCrossfade(): void {
       // This keeps tiles aligned with the globe as it rotates
       if (earthMesh) {
         tilesGroup.rotation.y = earthMesh.rotation.y;
+        tilesGroup.updateMatrixWorld(true);
       }
     }
   } else {
