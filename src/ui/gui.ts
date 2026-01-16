@@ -250,16 +250,12 @@ export function createGui(params) {
   tilesFolder.close();
   tilesFolder
     .add(tilesParams, "enabled")
-    .name("Enable Tiles")
-    .onChange((value) => {
-      if (!value) {
-        // Reset to full globe when disabled
-        earthMaterial.uniforms.uOpacity.value = 1.0;
-        if (tilesRenderer) tilesRenderer.dispose();
-        params.earth.visible = true;
-        params.atmosphereMesh.visible = true;
-        if (params.cloudMesh) params.cloudMesh.visible = true;
-      }
+    .name("Enable Tiles");
+  tilesFolder
+    .add(tilesParams, "forceShow")
+    .name("Force Show (any alt)")
+    .onChange(() => {
+      // Force an immediate crossfade update when toggled
     });
   tilesFolder
     .add(tilesParams, "transitionAltitude", 100, 2000, 50)

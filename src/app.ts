@@ -19,7 +19,7 @@ import { initAirports, setAirportRotation, updateAirportScales, airportParams } 
 import { state } from './state';
 import { updateIconScale, setAttributeDependencies, updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes, iconScaleParams } from './units/attributes';
 import { initSelectionVisuals, setVisualsDependencies, updateSelectionRing, setOrbitLineRotation, selectionRingMaterial } from './selection/visuals';
-import { initGoogleTiles, updateTilesCrossfade, updateTilesAttribution, getTilesPreloadAltitude, tilesRenderer, tilesParams, setTilesDependencies } from './scene/tiles';
+import { initGoogleTiles, updateTilesCrossfade, updateTilesAttribution, getTilesPreloadAltitude, getMinCameraAltitude, tilesRenderer, tilesParams, setTilesDependencies } from './scene/tiles';
 import { updateTelemetry, updateWeatherLegend } from './ui/telemetry';
 import { h3Params, setH3Dependencies, initH3ClickHandler, updateH3Grid, processH3BuildChunk, updateH3PopupPeriodic, getH3HighlightMesh, setH3MeshVisibility, hideH3Popup } from './scene/h3-grid';
 import { EARTH_RADIUS } from "./constants.js";
@@ -212,19 +212,23 @@ function main() {
         updateSelectionRing();
         selectionRingMaterial.uniforms.uTime.value = elapsedTime;
         
+        // Always update crossfade - it handles restoring globe when tiles are disabled
+        updateTilesCrossfade();
+
         if (tilesRenderer && tilesParams.enabled) {
-            updateTilesCrossfade();
             updateTilesAttribution();
-            
+
             const altitude = camera.position.length() - EARTH_RADIUS;
-            if (altitude < getTilesPreloadAltitude()) {
+            // Always update tiles when forceShow is true, otherwise only below preload altitude
+            if (tilesParams.forceShow || altitude < getTilesPreloadAltitude()) {
               camera.updateMatrixWorld();
               tilesRenderer.update();
             }
         }
 
-        // Enforce minimum distance from Earth center (not just from target)
-        const minDistanceFromCenter = EARTH_RADIUS + 0.00015;
+        // Enforce minimum distance from Earth center based on tiles state
+        // When tiles are disabled, restrict to 1000km altitude
+        const minDistanceFromCenter = EARTH_RADIUS + getMinCameraAltitude();
         const distanceFromCenter = camera.position.length();
         if (distanceFromCenter < minDistanceFromCenter) {
             camera.position.normalize().multiplyScalar(minDistanceFromCenter);

@@ -20,6 +20,7 @@ import type { TilesParams } from "../types";
 export const tilesParams: TilesParams = {
   enabled: false,
   transitionAltitude: 2000, // km, for GUI display
+  forceShow: false, // When true, show tiles at any altitude
 };
 
 /** Transition altitude in scene units (derived from tilesParams.transitionAltitude) */
@@ -219,10 +220,14 @@ export function updateTilesCrossfade(): void {
     if (earthMaterial) earthMaterial.uniforms.uOpacity.value = 1.0;
     if (tilesGroup) tilesGroup.visible = false;
     if (earthMesh) earthMesh.visible = true;
+    if (cloudMesh) cloudMesh.visible = true;
+    if (atmosphereMesh) atmosphereMesh.visible = true;
     return;
   }
 
-  const factor = getTilesTransitionFactor();
+  // When forceShow is true, instantly show tiles (factor = 1)
+  // Otherwise use altitude-based transition
+  const factor = tilesParams.forceShow ? 1.0 : getTilesTransitionFactor();
 
   // Globe texture opacity (inverse of transition)
   if (earthMaterial) {
@@ -302,4 +307,20 @@ export function setTransitionAltitude(altitudeKm: number): void {
  */
 export function getTilesPreloadAltitude(): number {
   return TILES_TRANSITION_ALTITUDE + TILES_TRANSITION_RANGE + 0.3; // ~1000km buffer
+}
+
+/** Minimum altitude when tiles are disabled (1000km in scene units) */
+const MIN_ALTITUDE_WITHOUT_TILES = 1000 * (EARTH_RADIUS / 6371); // ~0.314 scene units
+
+/**
+ * Get minimum camera altitude based on tiles state
+ * Returns very small value when tiles can be shown, 1000km otherwise
+ */
+export function getMinCameraAltitude(): number {
+  if (tilesParams.enabled && tilesParams.forceShow) {
+    // Tiles enabled with forceShow - allow close approach
+    return 0.00015; // ~1km, existing minimum
+  }
+  // Tiles disabled or altitude-based - restrict to 1000km
+  return MIN_ALTITUDE_WITHOUT_TILES;
 }

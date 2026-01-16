@@ -187,6 +187,8 @@ export interface CameraParams {
 export interface TilesParams {
   enabled: boolean;
   transitionAltitude: number;
+  /** When true, show tiles at any altitude (bypass altitude-based transition) */
+  forceShow: boolean;
 }
 
 /** Lat/Lon Grid parameters */
