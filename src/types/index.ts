@@ -207,13 +207,14 @@ export interface H3CellData {
 
 /** H3 grid build state for chunked processing */
 export interface H3BuildState {
-  cells: string[];
-  densityMap: Map<string, H3CellData>;
+  allCells: string[];
+  densityMap: Map<string, number>;
+  maxDensity: number;
   cellIndex: number;
-  vertices: Float32Array;
-  colors: Float32Array;
-  lineVertices: Float32Array;
-  complete: boolean;
+  posIdx: number;
+  colorIdx: number;
+  lineIdx: number;
+  cellCount: number;
 }
 
 // =============================================================================

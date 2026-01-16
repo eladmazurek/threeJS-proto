@@ -9,7 +9,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import GUI from "lil-gui";
-import * as h3 from "h3-js";
 
 // Import custom GLSL shaders for the Earth material
 // These are compiled by vite-plugin-glsl at build time
@@ -45,15 +44,8 @@ import {
   DRONE_ALTITUDE_MIN,
   DRONE_ALTITUDE_MAX,
   DRONE_PATROL_RADIUS,
-  ORBIT_LINE_SEGMENTS,
-  PATROL_CIRCLE_SEGMENTS,
   DEG_TO_RAD,
   MAX_CANDIDATES,
-  H3_PAN_THRESHOLD,
-  H3_MAX_CELLS,
-  H3_VERTS_PER_CELL,
-  H3_CELLS_PER_CHUNK,
-  POPUP_UPDATE_INTERVAL,
 } from "./constants";
 
 // Demo data utilities
@@ -119,6 +111,24 @@ import { missionStartTime } from "./ui/overlays";
 // Selection constants
 import { SELECTION_COLORS } from "./selection";
 
+// Selection visuals
+import {
+  patrolCircle,
+  observationLine,
+  targetMarker,
+  selectionRing,
+  selectionRingMaterial,
+  orbitLine,
+  setVisualsDependencies,
+  initSelectionVisuals,
+  hideAllSelectionVisuals,
+  updatePatrolCircle,
+  updateObservationLine,
+  updateOrbitLine,
+  updateSelectionRing,
+  setOrbitLineRotation,
+} from "./selection/visuals";
+
 // Centralized state
 import { state, config } from "./state";
 
@@ -177,6 +187,37 @@ import {
   setTransitionAltitude,
   getTilesPreloadAltitude,
 } from "./scene/tiles";
+
+// Unit attributes system
+import {
+  iconScaleParams,
+  setAttributeDependencies,
+  updateIconScale,
+  updateShipAttributes,
+  updateAircraftAttributes,
+  updateSatelliteAttributes,
+  updateDroneAttributes,
+  updateAllAttributes,
+} from "./units/attributes";
+
+// H3 grid system
+import {
+  h3Params,
+  h3Material,
+  h3LineMaterial,
+  setH3Dependencies,
+  updateH3Grid,
+  processH3BuildChunk,
+  hideH3Popup,
+  refreshH3PopupIfVisible,
+  updateH3PopupPeriodic,
+  initH3ClickHandler,
+  getH3Mesh,
+  getH3LineMesh,
+  getH3HighlightMesh,
+  setH3MeshVisibility,
+  getH3Worker,
+} from "./scene/h3-grid";
 
 /**
  * =============================================================================
@@ -1044,775 +1085,8 @@ function setWeatherLayer(layerName) {
 // Initialize grid system (lat/lon lines)
 initGrid(earth);
 
-/**
- * =============================================================================
- * H3 HEXAGONAL GRID OVERLAY
- * =============================================================================
- * Uses Uber's H3 library for hierarchical hexagonal grid visualization.
- * Supports dynamic LOD based on camera distance and density heatmap coloring.
- */
-
-const h3Params = {
-  enabled: false,
-  showDensity: true,
-  opacity: 0.6,
-  resolution: 1, // Default resolution
-  updateInterval: 2.0, // Seconds between density recalculations
-};
-
-// Web Worker for background H3 calculations
-const h3Worker = new Worker(new URL('./h3Worker.js', import.meta.url), { type: 'module' });
-// state.h3.workerBusy uses state.h3.workerBusy
-// state.h3.pendingUpdate uses state.h3.pendingUpdate
-
-// Handle results from H3 worker
-h3Worker.onmessage = function(e) {
-  const { type, data } = e.data;
-  if (type === 'densityResult') {
-    state.h3.workerBusy = false;
-    applyH3DensityResult(data);
-
-    // If another update was requested while we were busy, trigger it now
-    if (state.h3.pendingUpdate) {
-      state.h3.pendingUpdate = false;
-      requestH3Update();
-    }
-  }
-};
-
-// Merged geometry mesh for H3 hexes (actual cell boundaries)
-let h3Mesh = null;
-let h3Geometry = null;
-let h3LineMesh = null;
-let h3LineGeometry = null;
-// state.h3.lastResolution uses state.h3.lastResolution
-// state.h3.lastUpdateTime uses state.h3.lastUpdateTime
-// state.h3.lastViewCenter uses state.h3.lastViewCenter
-// H3 constants imported from ./constants: H3_PAN_THRESHOLD, H3_MAX_CELLS, H3_VERTS_PER_CELL
-
-// Pre-allocated buffers for H3 geometry (max cells * 6 triangles * 3 verts * 3 floats)
-const h3PositionBuffer = new Float32Array(H3_MAX_CELLS * H3_VERTS_PER_CELL * 3);
-const h3ColorBuffer = new Float32Array(H3_MAX_CELLS * H3_VERTS_PER_CELL * 3);
-const h3LineBuffer = new Float32Array(H3_MAX_CELLS * 12 * 3); // 6 edges * 2 verts * 3 floats
-
-// Shared material for H3
-const h3Material = new THREE.MeshBasicMaterial({
-  vertexColors: true,
-  transparent: true,
-  opacity: 0.85,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-
-const h3LineMaterial = new THREE.LineBasicMaterial({
-  color: 0xffffff,
-  transparent: true,
-  opacity: 0.25,
-});
-
-// H3 Cell Selection Highlight
-let h3HighlightMesh = null;
-let h3HighlightGeometry = null;
-const h3HighlightMaterial = new THREE.LineBasicMaterial({
-  color: 0xffffff,
-  transparent: true,
-  opacity: 1.0,
-  depthTest: false, // Always render on top to avoid z-fighting
-});
-
-// Color gradient for density (blue -> cyan -> green -> yellow -> red)
-// Empty cells get a dim base color
-const EMPTY_CELL_COLOR = new THREE.Color(0x2a3a5e); // Dark blue-gray (visible)
-
-function getDensityColor(density, maxDensity) {
-  if (density === 0) return EMPTY_CELL_COLOR;
-
-  // Use logarithmic scale for better color distribution
-  // This gives good differentiation across a wide range of densities
-  // 1-2: blue, 3-10: cyan, 11-50: green, 51-200: yellow, 200+: red
-  const logDensity = Math.log10(density + 1); // +1 to handle density=1
-  const t = Math.min(logDensity / 2.5, 1); // log10(300) ≈ 2.5, so 300+ is max
-
-  if (t < 0.25) {
-    return new THREE.Color(0x1e40af).lerp(new THREE.Color(0x06b6d4), t * 4);
-  } else if (t < 0.5) {
-    return new THREE.Color(0x06b6d4).lerp(new THREE.Color(0x22c55e), (t - 0.25) * 4);
-  } else if (t < 0.75) {
-    return new THREE.Color(0x22c55e).lerp(new THREE.Color(0xeab308), (t - 0.5) * 4);
-  } else {
-    return new THREE.Color(0xeab308).lerp(new THREE.Color(0xef4444), (t - 0.75) * 4);
-  }
-}
-
-/**
- * Cache for H3 cell 3D points (boundaries never change)
- */
-const cellPointsCache = new Map();
-
-/**
- * Convert H3 cell boundary to 3D points on sphere (cached)
- * Handles antimeridian-crossing cells by normalizing longitudes
- */
-function cellTo3DPoints(cellIndex) {
-  // Check cache first
-  if (cellPointsCache.has(cellIndex)) {
-    return cellPointsCache.get(cellIndex);
-  }
-
-  const boundary = h3.cellToBoundary(cellIndex);
-
-  // Fix antimeridian crossing: normalize longitudes to be continuous
-  // If any adjacent pair has a jump > 180°, the cell crosses the date line
-  const lngs = boundary.map(([, lng]) => lng);
-  let needsNormalization = false;
-  for (let i = 0; i < lngs.length; i++) {
-    const nextI = (i + 1) % lngs.length;
-    if (Math.abs(lngs[nextI] - lngs[i]) > 180) {
-      needsNormalization = true;
-      break;
-    }
-  }
-
-  // Normalize longitudes to be continuous (shift negative values to positive)
-  const normalizedBoundary = needsNormalization
-    ? boundary.map(([lat, lng]) => [lat, lng < 0 ? lng + 360 : lng])
-    : boundary;
-
-  const points = normalizedBoundary.map(([lat, lng]) => {
-    const phi = (90 - lat) * (Math.PI / 180);
-    const theta = (lng + 180) * (Math.PI / 180);
-    const radius = EARTH_RADIUS + 0.003;
-    return new THREE.Vector3(
-      -radius * Math.sin(phi) * Math.cos(theta),
-      radius * Math.cos(phi),
-      radius * Math.sin(phi) * Math.sin(theta)
-    );
-  });
-
-  // Cache for future use (limit cache size to prevent memory bloat)
-  if (cellPointsCache.size < 50000) {
-    cellPointsCache.set(cellIndex, points);
-  }
-
-  return points;
-}
-
-/**
- * Update H3 cell selection highlight
- * Creates a thick white border around the selected cell
- */
-function updateH3CellHighlight(cellIndex) {
-  if (!cellIndex) {
-    // Hide highlight if no cell selected
-    if (h3HighlightMesh) {
-      h3HighlightMesh.visible = false;
-    }
-    return;
-  }
-
-  try {
-    const points = cellTo3DPoints(cellIndex);
-    if (!points || points.length < 3) return;
-
-    // Create multiple line layers at different altitudes for thickness effect
-    const linePositions = [];
-    const altitudeOffsets = [0.008, 0.010, 0.012]; // Multiple layers for visibility
-
-    for (const altitudeOffset of altitudeOffsets) {
-      for (let i = 0; i < points.length; i++) {
-        const p1 = points[i].clone().normalize().multiplyScalar(EARTH_RADIUS + altitudeOffset);
-        const p2 = points[(i + 1) % points.length].clone().normalize().multiplyScalar(EARTH_RADIUS + altitudeOffset);
-        linePositions.push(p1.x, p1.y, p1.z);
-        linePositions.push(p2.x, p2.y, p2.z);
-      }
-    }
-
-    // Update or create geometry
-    if (!h3HighlightGeometry) {
-      h3HighlightGeometry = new THREE.BufferGeometry();
-    }
-    h3HighlightGeometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(linePositions, 3)
-    );
-
-    // Create or update mesh
-    if (!h3HighlightMesh) {
-      h3HighlightMesh = new THREE.LineSegments(h3HighlightGeometry, h3HighlightMaterial);
-      h3HighlightMesh.renderOrder = 10; // Render on top
-      earth.add(h3HighlightMesh);
-    }
-
-    h3HighlightMesh.visible = true;
-  } catch (e) {
-    console.warn('Error updating H3 highlight:', e);
-  }
-}
-
-/**
- * Get the center lat/lon of current camera view on Earth
- */
-function getCameraViewCenter() {
-  // Get camera position in world space (accounting for Earth rotation)
-  const camWorldPos = camera.position.clone();
-
-  // Direction from camera to Earth center
-  const toEarth = new THREE.Vector3(0, 0, 0).sub(camWorldPos).normalize();
-
-  // Intersect with Earth sphere to get view center
-  const raycaster = new THREE.Raycaster(camWorldPos, toEarth);
-  const intersects = raycaster.intersectObject(earth, false);
-
-  if (intersects.length > 0) {
-    // Convert intersection point to lat/lon
-    const point = intersects[0].point;
-    // Account for Earth's rotation by applying inverse matrix
-    const localPoint = point.clone().applyMatrix4(earth.matrixWorld.clone().invert());
-
-    const r = localPoint.length();
-    const lat = 90 - Math.acos(localPoint.y / r) * (180 / Math.PI);
-    const lon = Math.atan2(localPoint.z, -localPoint.x) * (180 / Math.PI) - 180;
-
-    return { lat, lon };
-  }
-
-  return { lat: 0, lon: 0 };
-}
-
-/**
- * Check if a point is within visible range of camera center
- */
-function isInVisibleRange(lat, lon, centerLat, centerLon, maxDist) {
-  // Simple great-circle distance approximation
-  const dLat = (lat - centerLat) * Math.PI / 180;
-  const dLon = (lon - centerLon) * Math.PI / 180;
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(centerLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *
-            Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  const dist = c * 180 / Math.PI; // Distance in degrees
-  return dist < maxDist;
-}
-
-/**
- * Check if longitude is within range (handles date line wrapping)
- */
-function isLonInRange(lon, minLon, maxLon) {
-  if (minLon <= maxLon) {
-    // Normal case: range doesn't cross date line
-    return lon >= minLon && lon <= maxLon;
-  } else {
-    // Range crosses date line (e.g., minLon=170, maxLon=-170)
-    return lon >= minLon || lon <= maxLon;
-  }
-}
-
-// Note: H3 density calculation moved to h3Worker.js for background processing
-
-/**
- * Build H3 geometry into pre-allocated buffers using actual cell boundaries
- * Returns vertex counts for draw ranges
- */
-function buildH3Geometry(allCells, densityMap, maxDensity) {
-  let posIdx = 0;
-  let colorIdx = 0;
-  let lineIdx = 0;
-  const cellCount = Math.min(allCells.length, H3_MAX_CELLS);
-
-  for (let c = 0; c < cellCount; c++) {
-    const cellIndex = allCells[c];
-    const density = densityMap.get(cellIndex) || 0;
-    const points = cellTo3DPoints(cellIndex);
-    const color = getDensityColor(density, maxDensity);
-
-    // Calculate center for fan triangulation
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < points.length; i++) {
-      cx += points[i].x;
-      cy += points[i].y;
-      cz += points[i].z;
-    }
-    cx /= points.length;
-    cy /= points.length;
-    cz /= points.length;
-
-    // Normalize center to sphere surface (important for large cells at low resolution)
-    const centerLen = Math.sqrt(cx * cx + cy * cy + cz * cz);
-    if (centerLen > 0) {
-      const targetRadius = points[0] ? Math.sqrt(points[0].x ** 2 + points[0].y ** 2 + points[0].z ** 2) : 1;
-      cx = (cx / centerLen) * targetRadius;
-      cy = (cy / centerLen) * targetRadius;
-      cz = (cz / centerLen) * targetRadius;
-    }
-
-    // Create triangle fan from center to each edge
-    for (let i = 0; i < points.length; i++) {
-      const p1 = points[i];
-      const p2 = points[(i + 1) % points.length];
-
-      // Triangle: center, p1, p2
-      h3PositionBuffer[posIdx++] = cx;
-      h3PositionBuffer[posIdx++] = cy;
-      h3PositionBuffer[posIdx++] = cz;
-      h3PositionBuffer[posIdx++] = p1.x;
-      h3PositionBuffer[posIdx++] = p1.y;
-      h3PositionBuffer[posIdx++] = p1.z;
-      h3PositionBuffer[posIdx++] = p2.x;
-      h3PositionBuffer[posIdx++] = p2.y;
-      h3PositionBuffer[posIdx++] = p2.z;
-
-      // Same color for all 3 vertices
-      h3ColorBuffer[colorIdx++] = color.r;
-      h3ColorBuffer[colorIdx++] = color.g;
-      h3ColorBuffer[colorIdx++] = color.b;
-      h3ColorBuffer[colorIdx++] = color.r;
-      h3ColorBuffer[colorIdx++] = color.g;
-      h3ColorBuffer[colorIdx++] = color.b;
-      h3ColorBuffer[colorIdx++] = color.r;
-      h3ColorBuffer[colorIdx++] = color.g;
-      h3ColorBuffer[colorIdx++] = color.b;
-
-      // Line segment for border
-      h3LineBuffer[lineIdx++] = p1.x;
-      h3LineBuffer[lineIdx++] = p1.y;
-      h3LineBuffer[lineIdx++] = p1.z;
-      h3LineBuffer[lineIdx++] = p2.x;
-      h3LineBuffer[lineIdx++] = p2.y;
-      h3LineBuffer[lineIdx++] = p2.z;
-    }
-  }
-
-  return { vertexCount: posIdx / 3, lineVertexCount: lineIdx / 3 };
-}
-
-// Chunked geometry building state (H3_CELLS_PER_CHUNK imported from ./constants)
-// state.h3.buildState uses state.h3.buildState
-
-/**
- * Start chunked H3 geometry building (non-blocking)
- */
-function startChunkedH3Build(allCells, densityMap, maxDensity) {
-  state.h3.buildState = {
-    allCells,
-    densityMap,
-    maxDensity,
-    cellIndex: 0,
-    posIdx: 0,
-    colorIdx: 0,
-    lineIdx: 0,
-    cellCount: Math.min(allCells.length, H3_MAX_CELLS)
-  };
-}
-
-/**
- * Process a chunk of H3 cells (called each frame)
- * Returns true when complete
- */
-function processH3BuildChunk() {
-  if (!state.h3.buildState) return true;
-
-  const { allCells, densityMap, maxDensity, cellCount } = state.h3.buildState;
-  let { cellIndex, posIdx, colorIdx, lineIdx } = state.h3.buildState;
-
-  const endIndex = Math.min(cellIndex + H3_CELLS_PER_CHUNK, cellCount);
-
-  for (let c = cellIndex; c < endIndex; c++) {
-    const cell = allCells[c];
-    const density = densityMap.get(cell) || 0;
-    const points = cellTo3DPoints(cell);
-    const color = getDensityColor(density, maxDensity);
-
-    // Calculate center for fan triangulation
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < points.length; i++) {
-      cx += points[i].x;
-      cy += points[i].y;
-      cz += points[i].z;
-    }
-    cx /= points.length;
-    cy /= points.length;
-    cz /= points.length;
-
-    // Normalize center to sphere surface
-    const centerLen = Math.sqrt(cx * cx + cy * cy + cz * cz);
-    if (centerLen > 0) {
-      const targetRadius = points[0] ? Math.sqrt(points[0].x ** 2 + points[0].y ** 2 + points[0].z ** 2) : 1;
-      cx = (cx / centerLen) * targetRadius;
-      cy = (cy / centerLen) * targetRadius;
-      cz = (cz / centerLen) * targetRadius;
-    }
-
-    // Create triangle fan from center to each edge
-    for (let i = 0; i < points.length; i++) {
-      const p1 = points[i];
-      const p2 = points[(i + 1) % points.length];
-
-      h3PositionBuffer[posIdx++] = cx;
-      h3PositionBuffer[posIdx++] = cy;
-      h3PositionBuffer[posIdx++] = cz;
-      h3PositionBuffer[posIdx++] = p1.x;
-      h3PositionBuffer[posIdx++] = p1.y;
-      h3PositionBuffer[posIdx++] = p1.z;
-      h3PositionBuffer[posIdx++] = p2.x;
-      h3PositionBuffer[posIdx++] = p2.y;
-      h3PositionBuffer[posIdx++] = p2.z;
-
-      h3ColorBuffer[colorIdx++] = color.r;
-      h3ColorBuffer[colorIdx++] = color.g;
-      h3ColorBuffer[colorIdx++] = color.b;
-      h3ColorBuffer[colorIdx++] = color.r;
-      h3ColorBuffer[colorIdx++] = color.g;
-      h3ColorBuffer[colorIdx++] = color.b;
-      h3ColorBuffer[colorIdx++] = color.r;
-      h3ColorBuffer[colorIdx++] = color.g;
-      h3ColorBuffer[colorIdx++] = color.b;
-
-      h3LineBuffer[lineIdx++] = p1.x;
-      h3LineBuffer[lineIdx++] = p1.y;
-      h3LineBuffer[lineIdx++] = p1.z;
-      h3LineBuffer[lineIdx++] = p2.x;
-      h3LineBuffer[lineIdx++] = p2.y;
-      h3LineBuffer[lineIdx++] = p2.z;
-    }
-  }
-
-  // Save progress
-  state.h3.buildState.cellIndex = endIndex;
-  state.h3.buildState.posIdx = posIdx;
-  state.h3.buildState.colorIdx = colorIdx;
-  state.h3.buildState.lineIdx = lineIdx;
-
-  // Check if complete
-  if (endIndex >= cellCount) {
-    // Finalize geometry - only update GPU buffers once when complete
-    if (!h3Geometry) {
-      h3Geometry = new THREE.BufferGeometry();
-      h3Geometry.setAttribute('position', new THREE.BufferAttribute(h3PositionBuffer, 3));
-      h3Geometry.setAttribute('color', new THREE.BufferAttribute(h3ColorBuffer, 3));
-    }
-    h3Geometry.setDrawRange(0, posIdx / 3);
-    h3Geometry.attributes.position.needsUpdate = true;
-    h3Geometry.attributes.color.needsUpdate = true;
-
-    if (!h3LineGeometry) {
-      h3LineGeometry = new THREE.BufferGeometry();
-      h3LineGeometry.setAttribute('position', new THREE.BufferAttribute(h3LineBuffer, 3));
-    }
-    h3LineGeometry.setDrawRange(0, lineIdx / 3);
-    h3LineGeometry.attributes.position.needsUpdate = true;
-
-    if (!h3Mesh) {
-      h3Mesh = new THREE.Mesh(h3Geometry, h3Material);
-      h3Mesh.renderOrder = 4;
-      earth.add(h3Mesh);
-    }
-    h3Mesh.visible = true;
-
-    if (!h3LineMesh) {
-      h3LineMesh = new THREE.LineSegments(h3LineGeometry, h3LineMaterial);
-      h3LineMesh.renderOrder = 5;
-      earth.add(h3LineMesh);
-    }
-    h3LineMesh.visible = true;
-
-    h3Material.opacity = h3Params.opacity * 0.85;
-    h3LineMaterial.opacity = h3Params.opacity * 0.4;
-
-    state.h3.buildState = null;
-    return true;
-  }
-
-  // Don't update geometry during build - wait until complete to avoid flicker
-  return false;
-}
-
-// State for pending H3 worker update
-let pendingH3Cells = null;
-let pendingH3CameraDistance = 0;
-
-/**
- * Request H3 density calculation from worker (non-blocking)
- */
-function requestH3Update() {
-  if (state.h3.workerBusy) {
-    state.h3.pendingUpdate = true;
-    return;
-  }
-
-  const resolution = h3Params.resolution;
-  const center = getCameraViewCenter();
-  const visibleRadius = Math.min(90, pendingH3CameraDistance * 12);
-
-  // Extract unit positions as flat arrays for efficient transfer
-  const ships = new Float32Array(shipSimState.length * 2);
-  for (let i = 0; i < shipSimState.length; i++) {
-    ships[i * 2] = shipSimState[i].lat;
-    ships[i * 2 + 1] = shipSimState[i].lon;
-  }
-
-  const aircraft = new Float32Array(aircraftSimState.length * 2);
-  for (let i = 0; i < aircraftSimState.length; i++) {
-    aircraft[i * 2] = aircraftSimState[i].lat;
-    aircraft[i * 2 + 1] = aircraftSimState[i].lon;
-  }
-
-  const satellites = new Float32Array(satelliteSimState.length * 2);
-  for (let i = 0; i < satelliteSimState.length; i++) {
-    satellites[i * 2] = satelliteSimState[i].lat;
-    satellites[i * 2 + 1] = satelliteSimState[i].lon;
-  }
-
-  state.h3.workerBusy = true;
-  h3Worker.postMessage({
-    type: 'calculateDensity',
-    data: {
-      resolution,
-      ships,
-      aircraft,
-      satellites,
-      showShips: unitCountParams.showShips,
-      showAircraft: unitCountParams.showAircraft,
-      showSatellites: unitCountParams.showSatellites,
-      viewCenter: center,
-      visibleRadius
-    }
-  }, [ships.buffer, aircraft.buffer, satellites.buffer]); // Transfer buffers for performance
-}
-
-/**
- * Apply density results from worker and start chunked geometry build
- */
-function applyH3DensityResult(data) {
-  const { densityEntries, cellCountEntries, allCells } = data;
-
-  // Rebuild Maps from arrays
-  const densityMap = new Map(densityEntries);
-  currentH3CellCounts = new Map(cellCountEntries);
-
-  // Use cells from worker
-  pendingH3Cells = allCells;
-  if (!allCells || allCells.length === 0) {
-    if (h3Mesh) h3Mesh.visible = false;
-    if (h3LineMesh) h3LineMesh.visible = false;
-    return;
-  }
-
-  const maxDensity = densityMap.size > 0 ? Math.max(...Array.from(densityMap.values()), 1) : 1;
-
-  // Start chunked geometry building (processed in tick loop)
-  startChunkedH3Build(allCells, densityMap, maxDensity);
-}
-
-/**
- * Update H3 grid visualization using actual cell boundaries
- */
-function updateH3Grid(cameraDistance, elapsedTime) {
-  if (!h3Params.enabled) {
-    if (h3Mesh) h3Mesh.visible = false;
-    if (h3LineMesh) h3LineMesh.visible = false;
-    if (h3HighlightMesh) h3HighlightMesh.visible = false;
-    return;
-  }
-
-  // Use manual resolution from GUI
-  const resolution = h3Params.resolution;
-  const center = getCameraViewCenter();
-
-  // Check if camera has panned significantly (for high res, rebuild on pan)
-  const panDistance = Math.sqrt(
-    Math.pow(center.lat - state.h3.lastViewCenter.lat, 2) +
-    Math.pow(center.lon - state.h3.lastViewCenter.lon, 2)
-  );
-  const panTriggersRebuild = resolution >= 3 && panDistance > H3_PAN_THRESHOLD;
-
-  // Check if any units are visible (only need time-based updates when tracking units)
-  const hasVisibleUnits = unitCountParams.showShips || unitCountParams.showAircraft || unitCountParams.showSatellites;
-
-  // Rebuild if resolution changed, enough time passed (only with units), or camera panned (high res)
-  const timeSinceUpdate = elapsedTime - state.h3.lastUpdateTime;
-  const resChanged = resolution !== state.h3.lastResolution;
-  const timeTriggered = hasVisibleUnits && timeSinceUpdate > h3Params.updateInterval;
-  const needsUpdate = resChanged || timeTriggered || panTriggersRebuild;
-
-  if (!needsUpdate) {
-    if (h3Mesh) h3Mesh.visible = true;
-    if (h3LineMesh) h3LineMesh.visible = true;
-    return;
-  }
-
-  // Clear boundary cache when resolution changes (different cells, fresh computation)
-  if (resChanged) {
-    cellPointsCache.clear();
-  }
-
-  state.h3.lastResolution = resolution;
-  state.h3.lastUpdateTime = elapsedTime;
-  state.h3.lastViewCenter = { lat: center.lat, lon: center.lon };
-  state.h3.currentResolution = resolution; // Track for popup clicks
-  pendingH3CameraDistance = cameraDistance;
-
-  // Request H3 update from worker (all expensive work happens in worker)
-  requestH3Update();
-}
-
-// =============================================================================
-// H3 CELL POPUP
-// =============================================================================
-
-const h3Popup = document.getElementById('h3-popup');
-const h3PopupClose = document.querySelector('.h3-popup-close');
-
-// Store current density data for click lookups - aliased from state module
-const currentH3CellCounts = state.h3.currentCellCounts;
-// state.h3.currentResolution uses state.h3.currentResolution
-// state.h3.currentSelectedCell uses state.h3.currentSelectedCell
-
-/**
- * Get H3 cell at screen coordinates
- */
-function getH3CellAtClick(clientX, clientY) {
-  if (!h3Params.enabled) return null;
-
-  // Convert to normalized device coordinates
-  const rect = canvas.getBoundingClientRect();
-  const mouse = new THREE.Vector2(
-    ((clientX - rect.left) / rect.width) * 2 - 1,
-    -((clientY - rect.top) / rect.height) * 2 + 1
-  );
-
-  // Raycast to Earth
-  const raycaster = new THREE.Raycaster();
-  raycaster.setFromCamera(mouse, camera);
-  const intersects = raycaster.intersectObject(earth, false);
-
-  if (intersects.length === 0) return null;
-
-  // Convert intersection point to lat/lon (accounting for Earth rotation)
-  const point = intersects[0].point;
-  const localPoint = point.clone().applyMatrix4(earth.matrixWorld.clone().invert());
-
-  const r = localPoint.length();
-  const lat = 90 - Math.acos(localPoint.y / r) * (180 / Math.PI);
-  const lon = Math.atan2(localPoint.z, -localPoint.x) * (180 / Math.PI) - 180;
-
-  // Get H3 cell at this position
-  try {
-    const cellIndex = h3.latLngToCell(lat, lon, state.h3.currentResolution);
-    return { cellIndex, lat, lon };
-  } catch (e) {
-    return null;
-  }
-}
-
-/**
- * Count units in a specific H3 cell (uses cached data from grid build)
- */
-function countUnitsInCell(cellIndex) {
-  // Use cached counts from calculateH3Density - O(1) lookup instead of O(n) iteration
-  const cached = currentH3CellCounts.get(cellIndex);
-  if (cached) {
-    return { ...cached }; // Return copy to avoid mutation
-  }
-  return { ships: 0, aircraft: 0, satellites: 0, total: 0 };
-}
-
-/**
- * Update just the counts in the popup (for live updates)
- */
-function updateH3PopupCounts(cellIndex) {
-  const counts = countUnitsInCell(cellIndex);
-  document.getElementById('h3-total-units').textContent = counts.total.toLocaleString();
-  document.getElementById('h3-ship-count').textContent = counts.ships.toLocaleString();
-  document.getElementById('h3-aircraft-count').textContent = counts.aircraft.toLocaleString();
-  document.getElementById('h3-satellite-count').textContent = counts.satellites.toLocaleString();
-}
-
-/**
- * Show H3 cell popup at bottom right (next to unit info card)
- */
-function showH3Popup(cellIndex, lat, lon, clientX, clientY) {
-  state.h3.currentSelectedCell = cellIndex; // Track for live updates
-  state.h3.lastPopupTotal = -1; // Reset so periodic update triggers
-  updateH3PopupCounts(cellIndex);
-
-  // Update static content
-  const cellCenter = h3.cellToLatLng(cellIndex);
-  const shortId = cellIndex.slice(2, 7).toUpperCase();
-  document.getElementById('h3-popup-title').textContent = `CELL ${shortId}`;
-  document.getElementById('h3-cell-center').textContent =
-    `${cellCenter[0].toFixed(2)}°, ${cellCenter[1].toFixed(2)}°`;
-
-  // Update the highlight on the globe
-  updateH3CellHighlight(cellIndex);
-
-  // Fixed position at bottom right (CSS handles positioning)
-  h3Popup.classList.remove('hidden');
-}
-
-/**
- * Hide H3 cell popup
- */
-function hideH3Popup() {
-  h3Popup.classList.add('hidden');
-  state.h3.currentSelectedCell = null;
-  updateH3CellHighlight(null); // Hide the highlight
-}
-
-/**
- * Refresh popup counts if visible (call when unit visibility changes)
- */
-function refreshH3PopupIfVisible() {
-  if (state.h3.currentSelectedCell && !h3Popup.classList.contains('hidden')) {
-    updateH3PopupCounts(state.h3.currentSelectedCell);
-  }
-}
-
-// Track last popup count for change detection (POPUP_UPDATE_INTERVAL imported from ./constants)
-// state.h3.lastPopupTotal uses state.h3.state.h3.lastPopupTotal
-// state.h3.lastPopupUpdateTime uses state.h3.state.h3.lastPopupUpdateTime
-
-/**
- * Lightweight periodic check for selected cell (called from tick loop)
- */
-function updateH3PopupPeriodic(elapsedTime) {
-  if (!state.h3.currentSelectedCell || h3Popup.classList.contains('hidden')) return;
-
-  // Only check periodically to avoid performance hit
-  if (elapsedTime - state.h3.lastPopupUpdateTime < POPUP_UPDATE_INTERVAL) return;
-  state.h3.lastPopupUpdateTime = elapsedTime;
-
-  // Count units in selected cell and update if changed
-  const counts = countUnitsInCell(state.h3.currentSelectedCell);
-  if (counts.total !== state.h3.lastPopupTotal) {
-    state.h3.lastPopupTotal = counts.total;
-    document.getElementById('h3-total-units').textContent = counts.total.toLocaleString();
-    document.getElementById('h3-ship-count').textContent = counts.ships.toLocaleString();
-    document.getElementById('h3-aircraft-count').textContent = counts.aircraft.toLocaleString();
-    document.getElementById('h3-satellite-count').textContent = counts.satellites.toLocaleString();
-  }
-}
-
-// Close button handler
-h3PopupClose?.addEventListener('click', hideH3Popup);
-
-// Click handler for H3 cells
-canvas.addEventListener('click', (event) => {
-  // Only handle H3 clicks when H3 grid is enabled
-  if (!h3Params.enabled) {
-    hideH3Popup();
-    return;
-  }
-
-  const cellData = getH3CellAtClick(event.clientX, event.clientY);
-  if (cellData) {
-    showH3Popup(cellData.cellIndex, cellData.lat, cellData.lon, event.clientX, event.clientY);
-  } else {
-    hideH3Popup();
-  }
-});
-
-// Hide popup when H3 grid is disabled
-// (This is handled in the existing onChange handler, but we also track resolution)
+// H3 Grid system is now imported from ./scene/h3-grid.ts
+// Dependencies will be set after camera is created
 
 /**
  * =============================================================================
@@ -2144,6 +1418,29 @@ droneMesh.frustumCulled = false;
 droneMesh.renderOrder = 2; // Same level as aircraft
 scene.add(droneMesh); // Added to scene (not earth) so units stay visible with 3D tiles
 
+// Set up attribute dependencies for GPU buffer updates
+setAttributeDependencies({
+  shipGeometry,
+  aircraftGeometry,
+  satelliteGeometry,
+  droneGeometry,
+  getShipSimState: () => shipSimState,
+  getAircraftSimState: () => aircraftSimState,
+  getSatelliteSimState: () => satelliteSimState,
+  getDroneSimState: () => droneSimState,
+});
+
+// Initialize selection visuals (patrol circle, orbit line, selection ring, etc.)
+initSelectionVisuals(scene);
+setVisualsDependencies({
+  getEarthRotationY: () => earth.rotation.y,
+  getCameraDistance: () => camera.position.length(),
+  getShipState: (index) => shipSimState[index],
+  getAircraftState: (index) => aircraftSimState[index],
+  getSatelliteState: (index) => satelliteSimState[index],
+  getDroneState: (index) => droneSimState[index],
+});
+
 // -----------------------------------------------------------------------------
 // UNIT LABELS - GPU-instanced SDF text rendering (Flat Buffer Architecture)
 // -----------------------------------------------------------------------------
@@ -2314,7 +1611,7 @@ function requestLabelIndexBuild() {
   }
 
   // Send subarray views (no copy, just a view into the pooled buffer)
-  h3Worker.postMessage({
+  getH3Worker().postMessage({
     type: 'buildLabelIndex',
     data: {
       resolution: labelParams.h3Resolution,
@@ -2347,7 +1644,7 @@ function requestVisibleUnits() {
   const ringPadding = 4; // Extra rings to cover screen edges
   const ringSize = Math.max(4, Math.min(25, baseRing + ringPadding));
 
-  h3Worker.postMessage({
+  getH3Worker().postMessage({
     type: 'queryVisibleUnits',
     data: {
       centerLat: lat,
@@ -2871,8 +2168,9 @@ function updateLabelPositions() {
 }
 
 // Increment version when worker returns new data
-const _origWorkerHandler = h3Worker.onmessage;
-h3Worker.onmessage = function(e) {
+const _h3Worker = getH3Worker();
+const _origWorkerHandler = _h3Worker.onmessage;
+_h3Worker.onmessage = function(e) {
   const { type, data } = e.data;
 
   if (type === 'visibleUnitsResult') {
@@ -2888,377 +2186,15 @@ h3Worker.onmessage = function(e) {
     // Index built - data.shipCells, data.aircraftCells available for debugging
   }
 
-  // Forward density results
+  // Forward density results to H3 module handler
   if (type === 'densityResult' && _origWorkerHandler) {
-    _origWorkerHandler.call(h3Worker, e);
+    _origWorkerHandler.call(_h3Worker, e);
   }
 };
 
 // state.lastLabelUpdate uses state.state.lastLabelUpdate
 
-// -----------------------------------------------------------------------------
-// Drone Patrol Circle Visualization
-// -----------------------------------------------------------------------------
-// PATROL_CIRCLE_SEGMENTS imported from ./constants
-
-const patrolCircleMaterial = new THREE.LineBasicMaterial({
-  color: 0x84cc16, // Lime green to match drone
-  transparent: true,
-  opacity: 0.7,
-  depthWrite: false,
-});
-
-const patrolCircleGeometry = new THREE.BufferGeometry();
-const patrolCirclePositions = new Float32Array(PATROL_CIRCLE_SEGMENTS * 3);
-patrolCircleGeometry.setAttribute('position', new THREE.BufferAttribute(patrolCirclePositions, 3));
-
-const patrolCircle = new THREE.LineLoop(patrolCircleGeometry, patrolCircleMaterial);
-patrolCircle.visible = false;
-patrolCircle.renderOrder = 5;
-scene.add(patrolCircle); // Added to scene so visible with 3D tiles
-
-// Observation line (from drone to ground target)
-const observationLineMaterial = new THREE.LineDashedMaterial({
-  color: 0xff4444, // Red for target lock
-  transparent: true,
-  opacity: 0.8,
-  dashSize: 0.01,
-  gapSize: 0.005,
-  depthTest: false, // Always visible, even through Earth
-  depthWrite: false,
-});
-
-const observationLineGeometry = new THREE.BufferGeometry();
-const observationLinePositions = new Float32Array(6); // 2 points
-observationLineGeometry.setAttribute('position', new THREE.BufferAttribute(observationLinePositions, 3));
-
-const observationLine = new THREE.Line(observationLineGeometry, observationLineMaterial);
-observationLine.visible = false;
-observationLine.renderOrder = 5;
-scene.add(observationLine); // Added to scene so visible with 3D tiles
-
-// Ground target marker (small pulsing diamond on ground)
-const targetMarkerGeometry = new THREE.RingGeometry(0.008, 0.012, 4);
-targetMarkerGeometry.rotateX(-Math.PI / 2);
-targetMarkerGeometry.rotateZ(Math.PI / 4); // Rotate to diamond orientation
-
-const targetMarkerMaterial = new THREE.MeshBasicMaterial({
-  color: 0xff4444,
-  transparent: true,
-  opacity: 0.9,
-  side: THREE.DoubleSide,
-  depthTest: false, // Always visible
-  depthWrite: false,
-});
-
-const targetMarker = new THREE.Mesh(targetMarkerGeometry, targetMarkerMaterial);
-targetMarker.visible = false;
-targetMarker.renderOrder = 6;
-scene.add(targetMarker); // Added to scene so visible with 3D tiles
-
-/**
- * Update drone patrol circle visualization
- */
-function updatePatrolCircle(drone) {
-  if (!drone) {
-    patrolCircle.visible = false;
-    observationLine.visible = false;
-    targetMarker.visible = false;
-    return;
-  }
-
-  const positions = patrolCircleGeometry.attributes.position.array;
-  const centerLat = drone.patrolCenterLat;
-  const centerLon = drone.patrolCenterLon;
-  const radius = drone.patrolRadius;
-
-  // Get earth rotation for position transformation
-  const earthRotY = earth.rotation.y;
-  const cosR = Math.cos(earthRotY);
-  const sinR = Math.sin(earthRotY);
-
-  // Generate circle points around patrol center
-  for (let i = 0; i < PATROL_CIRCLE_SEGMENTS; i++) {
-    const angle = (i / PATROL_CIRCLE_SEGMENTS) * Math.PI * 2;
-
-    // Offset in lat/lon (approximate for small circles)
-    const latOffset = Math.sin(angle) * radius * (180 / Math.PI) / EARTH_RADIUS;
-    const lonOffset = Math.cos(angle) * radius * (180 / Math.PI) / EARTH_RADIUS / Math.cos(centerLat * Math.PI / 180);
-
-    const lat = centerLat + latOffset;
-    const lon = centerLon + lonOffset;
-
-    // Convert to 3D (unrotated)
-    const phi = (90 - lat) * (Math.PI / 180);
-    const theta = (lon + 180) * (Math.PI / 180);
-    const r = EARTH_RADIUS + drone.altitude;
-
-    const x = -r * Math.sin(phi) * Math.cos(theta);
-    const y = r * Math.cos(phi);
-    const z = r * Math.sin(phi) * Math.sin(theta);
-
-    // Apply earth rotation
-    positions[i * 3] = x * cosR + z * sinR;
-    positions[i * 3 + 1] = y;
-    positions[i * 3 + 2] = -x * sinR + z * cosR;
-  }
-
-  patrolCircleGeometry.attributes.position.needsUpdate = true;
-  patrolCircle.visible = true;
-
-  // Update observation line (from drone to target)
-  updateObservationLine(drone);
-}
-
-/**
- * Update observation line from drone to ground target
- */
-function updateObservationLine(drone) {
-  if (!drone) return;
-
-  const positions = observationLineGeometry.attributes.position.array;
-  const earthRotY = earth.rotation.y;
-  const cosR = Math.cos(earthRotY);
-  const sinR = Math.sin(earthRotY);
-
-  // Drone position (unrotated)
-  const dronePhi = (90 - drone.lat) * (Math.PI / 180);
-  const droneTheta = (drone.lon + 180) * (Math.PI / 180);
-  const droneR = EARTH_RADIUS + drone.altitude;
-
-  let droneX = -droneR * Math.sin(dronePhi) * Math.cos(droneTheta);
-  const droneY = droneR * Math.cos(dronePhi);
-  let droneZ = droneR * Math.sin(dronePhi) * Math.sin(droneTheta);
-
-  // Apply earth rotation to drone position
-  positions[0] = droneX * cosR + droneZ * sinR;
-  positions[1] = droneY;
-  positions[2] = -droneX * sinR + droneZ * cosR;
-
-  // Target position (on ground at patrol center)
-  const targetLat = drone.targetLat;
-  const targetLon = drone.targetLon;
-  const targetPhi = (90 - targetLat) * (Math.PI / 180);
-  const targetTheta = (targetLon + 180) * (Math.PI / 180);
-  const targetR = EARTH_RADIUS + 0.001; // Just above surface
-
-  let targetX = -targetR * Math.sin(targetPhi) * Math.cos(targetTheta);
-  const targetY = targetR * Math.cos(targetPhi);
-  let targetZ = targetR * Math.sin(targetPhi) * Math.sin(targetTheta);
-
-  // Apply earth rotation to target position
-  positions[3] = targetX * cosR + targetZ * sinR;
-  positions[4] = targetY;
-  positions[5] = -targetX * sinR + targetZ * cosR;
-
-  observationLineGeometry.attributes.position.needsUpdate = true;
-  observationLine.computeLineDistances(); // Required for dashed lines
-  observationLine.visible = true;
-
-  // Update target marker position (rotated)
-  targetMarker.position.set(positions[3], positions[4], positions[5]);
-
-  // Orient marker to face outward from Earth
-  const surfaceNormal = targetMarker.position.clone().normalize();
-  const up = new THREE.Vector3(0, 1, 0);
-  const quat = new THREE.Quaternion().setFromUnitVectors(up, surfaceNormal);
-  targetMarker.quaternion.copy(quat);
-
-  targetMarker.visible = true;
-}
-
-// -----------------------------------------------------------------------------
-// Selection Highlight Ring - Shows which unit is selected
-// -----------------------------------------------------------------------------
-
-const selectionRingGeometry = new THREE.RingGeometry(0.025, 0.032, 32);
-selectionRingGeometry.rotateX(-Math.PI / 2); // Lay flat on surface
-
-const selectionRingMaterial = new THREE.ShaderMaterial({
-  uniforms: {
-    uColor: { value: new THREE.Color(0xffffff) },
-    uTime: { value: 0 },
-  },
-  vertexShader: `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: `
-    uniform vec3 uColor;
-    uniform float uTime;
-    varying vec2 vUv;
-    void main() {
-      // Pulsing glow effect
-      float pulse = 0.7 + 0.3 * sin(uTime * 4.0);
-      // Radial gradient for soft edges
-      float dist = length(vUv - 0.5) * 2.0;
-      float alpha = pulse * smoothstep(1.0, 0.5, dist);
-      gl_FragColor = vec4(uColor, alpha);
-    }
-  `,
-  transparent: true,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-
-const selectionRing = new THREE.Mesh(selectionRingGeometry, selectionRingMaterial);
-selectionRing.visible = false;
-selectionRing.renderOrder = 10; // Render on top
-scene.add(selectionRing); // Added to scene so visible with 3D tiles
-
-// -----------------------------------------------------------------------------
-// SATELLITE ORBIT LINE
-// -----------------------------------------------------------------------------
-// Shows the full orbital path when a satellite is selected
-
-// ORBIT_LINE_SEGMENTS imported from ./constants
-
-const orbitLineMaterial = new THREE.LineBasicMaterial({
-  color: 0xaa88ff, // Violet to match satellite color
-  transparent: true,
-  opacity: 0.6,
-  depthWrite: false,
-});
-
-const orbitLineGeometry = new THREE.BufferGeometry();
-const orbitLinePositions = new Float32Array(ORBIT_LINE_SEGMENTS * 3);
-orbitLineGeometry.setAttribute('position', new THREE.BufferAttribute(orbitLinePositions, 3));
-
-const orbitLine = new THREE.LineLoop(orbitLineGeometry, orbitLineMaterial);
-orbitLine.visible = false;
-orbitLine.renderOrder = 5;
-scene.add(orbitLine); // Added to scene so visible with 3D tiles
-
-/**
- * Compute orbital path points for a satellite
- * Uses the same orbital mechanics as updateSatelliteMotion
- */
-function updateOrbitLine(sat) {
-  if (!sat) {
-    orbitLine.visible = false;
-    return;
-  }
-
-  const positions = orbitLineGeometry.attributes.position.array;
-  const inclinationRad = sat.inclination * (Math.PI / 180);
-  const radius = EARTH_RADIUS + sat.altitude;
-
-  for (let i = 0; i < ORBIT_LINE_SEGMENTS; i++) {
-    const phase = (i / ORBIT_LINE_SEGMENTS) * 360;
-    const phaseRad = phase * (Math.PI / 180);
-
-    // Same calculations as updateSatelliteMotion
-    const xOrbit = Math.cos(phaseRad);
-    const yOrbit = Math.sin(phaseRad);
-
-    // Compute lat/lon
-    const lat = Math.asin(yOrbit * Math.sin(inclinationRad)) * (180 / Math.PI);
-    const lonInOrbit = Math.atan2(yOrbit * Math.cos(inclinationRad), xOrbit) * (180 / Math.PI);
-    const lon = sat.ascendingNode + lonInOrbit;
-
-    // Convert to 3D position
-    const phi = (90 - lat) * (Math.PI / 180);
-    const theta = (lon + 180) * (Math.PI / 180);
-
-    positions[i * 3] = -radius * Math.sin(phi) * Math.cos(theta);
-    positions[i * 3 + 1] = radius * Math.cos(phi);
-    positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
-  }
-
-  orbitLineGeometry.attributes.position.needsUpdate = true;
-  orbitLine.visible = true;
-}
-
-/**
- * Update selection ring position to follow selected unit
- */
-const _ringUp = new THREE.Vector3(0, 1, 0);
-const _ringQuat = new THREE.Quaternion();
-
-function updateSelectionRing() {
-  if (!state.selectedUnit) {
-    selectionRing.visible = false;
-    return;
-  }
-
-  const { type, index } = state.selectedUnit;
-  let lat, lon, altitude;
-
-  if (type === "ship") {
-    const unitData = shipSimState[index];
-    if (!unitData) { selectionRing.visible = false; return; }
-    lat = unitData.lat;
-    lon = unitData.lon;
-    altitude = SHIP_ALTITUDE;
-  } else if (type === "aircraft") {
-    const unitData = aircraftSimState[index];
-    if (!unitData) { selectionRing.visible = false; return; }
-    lat = unitData.lat;
-    lon = unitData.lon;
-    altitude = AIRCRAFT_ALTITUDE;
-  } else if (type === "satellite") {
-    const unitData = satelliteSimState[index];
-    if (!unitData) { selectionRing.visible = false; return; }
-    lat = unitData.lat;
-    lon = unitData.lon;
-    altitude = unitData.altitude;
-  } else if (type === "drone") {
-    const unitData = droneSimState[index];
-    if (!unitData) { selectionRing.visible = false; return; }
-    lat = unitData.lat;
-    lon = unitData.lon;
-    altitude = unitData.altitude;
-  } else if (type === "airport") {
-    const airport = AIRPORTS[index];
-    if (!airport) { selectionRing.visible = false; return; }
-    lat = airport.lat;
-    lon = airport.lon;
-    altitude = 0.008; // Same as airport markers
-  } else {
-    selectionRing.visible = false;
-    return;
-  }
-
-  // Convert lat/lon to 3D position (same formula as shader)
-  const phi = (90 - lat) * (Math.PI / 180);
-  const theta = (lon + 180) * (Math.PI / 180);
-  const radius = EARTH_RADIUS + altitude;
-
-  let x = -radius * Math.sin(phi) * Math.cos(theta);
-  const y = radius * Math.cos(phi);
-  let z = radius * Math.sin(phi) * Math.sin(theta);
-
-  // Apply earth rotation to position (rotate around world Y axis)
-  const earthRotY = earth.rotation.y;
-  const cosR = Math.cos(earthRotY);
-  const sinR = Math.sin(earthRotY);
-  const rx = x * cosR + z * sinR;
-  const rz = -x * sinR + z * cosR;
-
-  selectionRing.position.set(rx, y, rz);
-
-  // Orient ring perpendicular to surface (face outward from Earth center)
-  // Surface normal points from origin to position
-  const surfaceNormal = selectionRing.position.clone().normalize();
-
-  // Use quaternion to rotate from default up (0,1,0) to surface normal
-  _ringQuat.setFromUnitVectors(_ringUp, surfaceNormal);
-  selectionRing.quaternion.copy(_ringQuat);
-
-  // Set color based on unit type (SELECTION_COLORS imported from ./selection)
-  selectionRingMaterial.uniforms.uColor.value.setHex(SELECTION_COLORS[type] || 0xffffff);
-
-  // Scale ring to match icon scaling (including user multiplier)
-  const cameraDistance = camera.position.length();
-  const baseDistance = 13;
-  const ringScale = Math.max(0.3, Math.min(2.0, cameraDistance / baseDistance)) * iconScaleParams.multiplier;
-  selectionRing.scale.setScalar(ringScale);
-
-  selectionRing.visible = true;
-}
+// Selection visuals imported from ./selection/visuals
 
 // -----------------------------------------------------------------------------
 // Unit Trails - Fading dot trails showing recent positions
@@ -3554,136 +2490,7 @@ function updateTrails() {
 
 // state.currentIconScale uses state.state.currentIconScale
 
-// User-adjustable icon scale multiplier (1 = default, max 3 = 3x larger)
-const iconScaleParams = {
-  multiplier: 1.0
-};
-
-/**
- * Helper to mark buffer attribute for partial update
- * Uses addUpdateRange for Three.js r144+
- */
-function markAttributeForUpdate(attr, count) {
-  if (attr.clearUpdateRanges && attr.addUpdateRange) {
-    attr.clearUpdateRanges();
-    attr.addUpdateRange(0, count);
-  }
-  attr.needsUpdate = true;
-}
-
-/**
- * Update ship instances by writing directly to GPU attribute buffers
- */
-function updateShipAttributes() {
-  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = shipGeometry.userData;
-  const count = Math.min(shipSimState.length, MAX_SHIPS);
-
-  for (let i = 0; i < count; i++) {
-    const ship = shipSimState[i];
-    latArray[i] = ship.lat;
-    lonArray[i] = ship.lon;
-    headingArray[i] = ship.heading;
-    scaleArray[i] = ship.scale * state.currentIconScale;
-  }
-
-  // Mark for partial update (only upload active units)
-  markAttributeForUpdate(latAttr, count);
-  markAttributeForUpdate(lonAttr, count);
-  markAttributeForUpdate(headingAttr, count);
-  markAttributeForUpdate(scaleAttr, count);
-
-  shipGeometry.instanceCount = count;
-}
-
-/**
- * Update aircraft instances by writing directly to GPU attribute buffers
- */
-function updateAircraftAttributes() {
-  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = aircraftGeometry.userData;
-  const count = Math.min(aircraftSimState.length, MAX_AIRCRAFT);
-
-  for (let i = 0; i < count; i++) {
-    const aircraft = aircraftSimState[i];
-    latArray[i] = aircraft.lat;
-    lonArray[i] = aircraft.lon;
-    headingArray[i] = aircraft.heading;
-    scaleArray[i] = aircraft.scale * state.currentIconScale;
-  }
-
-  // Mark for partial update (only upload active units)
-  markAttributeForUpdate(latAttr, count);
-  markAttributeForUpdate(lonAttr, count);
-  markAttributeForUpdate(headingAttr, count);
-  markAttributeForUpdate(scaleAttr, count);
-
-  aircraftGeometry.instanceCount = count;
-}
-
-/**
- * Update icon scale based on camera distance
- */
-function updateIconScale(cameraDistance) {
-  const baseDistance = 13;
-  state.currentIconScale = (cameraDistance / baseDistance) * iconScaleParams.multiplier;
-}
-
-/**
- * Update satellite instances by writing directly to GPU attribute buffers
- */
-function updateSatelliteAttributes() {
-  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = satelliteGeometry.userData;
-  const count = Math.min(satelliteSimState.length, MAX_SATELLITES);
-
-  for (let i = 0; i < count; i++) {
-    const sat = satelliteSimState[i];
-    latArray[i] = sat.lat;
-    lonArray[i] = sat.lon;
-    headingArray[i] = sat.heading;
-    // Encode altitude and display scale in a single float:
-    // Integer part: display scale * 10 (includes camera scaling)
-    // Fractional part: altitude / 0.5 (normalized to 0-1 range)
-    const scaledDisplay = sat.scale * state.currentIconScale;
-    const normalizedAlt = sat.altitude / 0.5; // altitude 0-0.5 -> 0-1
-    scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
-  }
-
-  // Mark for partial update (only upload active units)
-  markAttributeForUpdate(latAttr, count);
-  markAttributeForUpdate(lonAttr, count);
-  markAttributeForUpdate(headingAttr, count);
-  markAttributeForUpdate(scaleAttr, count);
-
-  satelliteGeometry.instanceCount = count;
-}
-
-/**
- * Update drone instances by writing directly to GPU attribute buffers
- */
-function updateDroneAttributes() {
-  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = droneGeometry.userData;
-  const count = Math.min(droneSimState.length, MAX_DRONES);
-
-  for (let i = 0; i < count; i++) {
-    const drone = droneSimState[i];
-    latArray[i] = drone.lat;
-    lonArray[i] = drone.lon;
-    headingArray[i] = drone.heading;
-    // Encode scale and altitude like satellites do:
-    // Integer part: display scale * 10 (includes camera scaling)
-    // Fractional part: altitude / 0.5 (normalized to 0-1 range)
-    const scaledDisplay = drone.scale * state.currentIconScale;
-    const normalizedAlt = drone.altitude / 0.5;
-    scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
-  }
-
-  // Mark for partial update (only upload active units)
-  markAttributeForUpdate(latAttr, count);
-  markAttributeForUpdate(lonAttr, count);
-  markAttributeForUpdate(headingAttr, count);
-  markAttributeForUpdate(scaleAttr, count);
-
-  droneGeometry.instanceCount = count;
-}
+// Unit attribute functions imported from ./units/attributes
 
 /**
  * Initialize drone state with patrol pattern
@@ -4442,9 +3249,7 @@ h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
     shipTrailMesh.visible = unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
     aircraftTrailMesh.visible = unitCountParams.showAircraft && trailParams.enabled && trailParams.aircraftTrails;
     // Hide H3 meshes, highlight, and popup
-    if (h3Mesh) h3Mesh.visible = false;
-    if (h3LineMesh) h3LineMesh.visible = false;
-    if (h3HighlightMesh) h3HighlightMesh.visible = false;
+    setH3MeshVisibility(false);
     hideH3Popup();
   }
 });
@@ -4806,6 +3611,18 @@ controls.maxPolarAngle = Math.PI; // Can look straight up at south pole
 // Initialize camera module with references
 initCameraModule(camera, controls);
 
+// Initialize H3 grid system with dependencies
+setH3Dependencies({
+  getEarth: () => earth,
+  getCamera: () => camera,
+  getCanvas: () => canvas,
+  getShipSimState: () => shipSimState,
+  getAircraftSimState: () => aircraftSimState,
+  getSatelliteSimState: () => satelliteSimState,
+  getUnitCountParams: () => unitCountParams,
+});
+initH3ClickHandler();
+
 /**
  * =============================================================================
  * UNIT SELECTION (Click to select)
@@ -4852,11 +3669,7 @@ function deselectUnit() {
   unitInfoPanel?.classList.add("hidden");
   droneFeedPanel?.classList.add("hidden");
   if (droneVideo) droneVideo.pause();
-  selectionRing.visible = false;
-  orbitLine.visible = false;
-  patrolCircle.visible = false;
-  observationLine.visible = false;
-  targetMarker.visible = false;
+  hideAllSelectionVisuals();
 }
 
 /**
@@ -5296,7 +4109,7 @@ const tick = () => {
   shipTrailMesh.rotation.y = earthRotY;
   aircraftTrailMesh.rotation.y = earthRotY;
   // patrolCircle, observationLine, targetMarker positions are already rotated in updatePatrolCircle()
-  orbitLine.rotation.y = earthRotY;
+  setOrbitLineRotation(earthRotY);
 
   // Update weather animation
   if (weatherParams.enabled && weatherParams.animate) {
@@ -5375,10 +4188,11 @@ const tick = () => {
   // Update H3 popup if visible (lightweight check for unit movement)
   updateH3PopupPeriodic(elapsedTime);
 
-  // Animate H3 cell highlight (pulsating effect)
-  if (h3HighlightMesh && h3HighlightMesh.visible) {
-    const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 4); // Pulsate 4 times per second
-    h3HighlightMaterial.opacity = 0.6 + 0.4 * pulse; // Range: 0.6 to 1.0
+  // Animate H3 cell highlight (pulsating effect) - handled in H3 module
+  const h3Highlight = getH3HighlightMesh();
+  if (h3Highlight && h3Highlight.visible && h3Highlight.material) {
+    const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 4);
+    h3Highlight.material.opacity = 0.6 + 0.4 * pulse;
   }
 
   // Update selected unit info panel and selection highlight
