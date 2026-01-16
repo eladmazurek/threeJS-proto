@@ -28,7 +28,7 @@ camera.position.z = 4;
 scene.add(camera);
 
 // Create OrbitControls for interactive camera movement
-export const controls = new OrbitControls(camera, canvas);
+export const controls = new OrbitControls(camera, canvas as HTMLElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 controls.minDistance = EARTH_RADIUS + 0.001;

@@ -16,8 +16,8 @@ import {
   SATELLITE_ALTITUDE_GEO,
   DRONE_PATROL_RADIUS
 } from '../constants';
-import { initDroneState } from './motion';
 import { motionParams } from './motion';
+import type { ShipState, AircraftState, SatelliteState, DroneState } from '../types';
 
 // Aliases for simulation state arrays
 const shipSimState = state.ships;
@@ -39,38 +39,42 @@ export const unitCountParams = {
   showDrones: true,
 };
 
-function initUnitState(lat, lon, heading, isAircraft, index = 0) {
-    const baseSpeedRef = isAircraft ? motionParams.aircraftBaseSpeed : motionParams.shipBaseSpeed;
-    const baseTurnRef = isAircraft ? motionParams.aircraftBaseTurnRate : motionParams.shipBaseTurnRate;
-  
-    const baseState = {
+function initShip(lat: number, lon: number, heading: number, index: number = 0): ShipState {
+    return {
       lat,
       lon,
       heading,
       targetHeading: heading,
-      baseSpeed: baseSpeedRef * (0.8 + Math.random() * 0.4),
-      baseTurnRate: baseTurnRef * (0.8 + Math.random() * 0.4),
+      baseSpeed: motionParams.shipBaseSpeed * (0.8 + Math.random() * 0.4),
+      baseTurnRate: motionParams.shipBaseTurnRate * (0.8 + Math.random() * 0.4),
       scale: 0.8 + Math.random() * 0.4,
       nextCourseChange: Math.random() * motionParams.courseChangeInterval,
-      isAircraft,
+      name: SHIP_NAMES[index % SHIP_NAMES.length],
+      mmsi: String(211000000 + index),
+      sog: 8 + Math.random() * 14,
     };
-  
-    if (isAircraft) {
-      const airlineCode = AIRLINE_CODES[index % AIRLINE_CODES.length];
-      const flightNum = 100 + (index % 900);
-      baseState.callsign = `${airlineCode}${flightNum}`;
-      baseState.altitude = 28000 + Math.floor(Math.random() * 14) * 1000;
-      baseState.groundSpeed = 420 + Math.floor(Math.random() * 80);
-    } else {
-      baseState.name = SHIP_NAMES[index % SHIP_NAMES.length];
-      baseState.mmsi = String(211000000 + index);
-      baseState.sog = 8 + Math.random() * 14;
-    }
-  
-    return baseState;
 }
-  
-function initSatelliteState(altitude, inclination, ascendingNode, phase, name, orbitTypeLabel, isMilitary) {
+
+function initAircraft(lat: number, lon: number, heading: number, index: number = 0): AircraftState {
+    const airlineCode = AIRLINE_CODES[index % AIRLINE_CODES.length];
+    const flightNum = 100 + (index % 900);
+    return {
+      lat,
+      lon,
+      heading,
+      targetHeading: heading,
+      baseSpeed: motionParams.aircraftBaseSpeed * (0.8 + Math.random() * 0.4),
+      baseTurnRate: motionParams.aircraftBaseTurnRate * (0.8 + Math.random() * 0.4),
+      scale: 0.8 + Math.random() * 0.4,
+      nextCourseChange: Math.random() * motionParams.courseChangeInterval,
+      callsign: `${airlineCode}${flightNum}`,
+      altitude: 28000 + Math.floor(Math.random() * 14) * 1000,
+      groundSpeed: 420 + Math.floor(Math.random() * 80),
+      flightLevel: 0 // Placeholder
+    };
+}
+
+function initSatelliteState(altitude: number, inclination: number, ascendingNode: number, phase: number, name: string, orbitTypeLabel: string, isMilitary: boolean): SatelliteState {
     const basePeriod = 5400;
     const orbitalPeriod = basePeriod * Math.pow(1 + altitude * 5, 1.5);
   
@@ -90,7 +94,28 @@ function initSatelliteState(altitude, inclination, ascendingNode, phase, name, o
     };
 }
 
-function generateSatelliteName(orbitTypeLabel, isMilitary, index) {
+export function initDroneState(patrolCenterLat: number, patrolCenterLon: number, patrolRadius: number, targetLat: number, targetLon: number): DroneState {
+    const altitude = 0.008 + Math.random() * 0.004; // Normalized altitude
+  
+    return {
+      patrolCenterLat,
+      patrolCenterLon,
+      patrolRadius,
+      phase: Math.random() * 360,
+      altitude,
+      targetLat,
+      targetLon,
+      lat: patrolCenterLat,
+      lon: patrolCenterLon,
+      heading: 0,
+      scale: 0.8 + Math.random() * 0.4,
+      name: "UAV-" + Math.floor(Math.random() * 1000),
+      orbitDirection: 1,
+      orbitSpeed: 1
+    };
+}
+
+function generateSatelliteName(orbitTypeLabel: string, isMilitary: boolean, index: number) {
     if (isMilitary) {
       const militaryTypes = [
         { prefix: 'USA', numRange: [200, 350] },
@@ -104,40 +129,11 @@ function generateSatelliteName(orbitTypeLabel, isMilitary, index) {
       const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
       return `${type.prefix}-${num}`;
     } else {
-      if (orbitTypeLabel === 'LEO') {
-        const leoTypes = [
-          { prefix: 'STARLINK', numRange: [1000, 5000] },
-          { prefix: 'ONEWEB', numRange: [1, 600] },
-          { prefix: 'IRIDIUM', numRange: [100, 180] },
-          { prefix: 'PLANET', numRange: [1, 200] },
-          { prefix: 'SPIRE', numRange: [1, 150] },
-        ];
-        const type = leoTypes[index % leoTypes.length];
-        const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
-        return `${type.prefix}-${num}`;
-      } else if (orbitTypeLabel === 'MEO') {
-        const meoTypes = [
-          { prefix: 'GPS IIF', numRange: [1, 12] },
-          { prefix: 'GPS III', numRange: [1, 10] },
-          { prefix: 'GLONASS', numRange: [750, 800] },
-          { prefix: 'GALILEO', numRange: [201, 230] },
-          { prefix: 'BEIDOU', numRange: [40, 60] },
-        ];
-        const type = meoTypes[index % meoTypes.length];
-        const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
-        return `${type.prefix}-${num}`;
-      } else { // GEO
-        const geoTypes = [
-          { prefix: 'GOES', numRange: [16, 19] },
-          { prefix: 'SES', numRange: [1, 20] },
-          { prefix: 'INTELSAT', numRange: [30, 40] },
-          { prefix: 'ECHOSTAR', numRange: [18, 24] },
-          { prefix: 'VIASAT', numRange: [1, 4] },
-        ];
-        const type = geoTypes[index % geoTypes.length];
-        const num = type.numRange[0] + Math.floor(Math.random() * (type.numRange[1] - type.numRange[0]));
-        return `${type.prefix}-${num}`;
-      }
+      let prefix = 'SAT';
+      if (orbitTypeLabel === 'LEO') prefix = 'LEO';
+      else if (orbitTypeLabel === 'MEO') prefix = 'MEO';
+      else prefix = 'GEO';
+      return `${prefix}-${index}`;
     }
 }
 
@@ -210,23 +206,23 @@ export function generateDemoData(shipCount = unitCountParams.shipCount, aircraft
     for (let i = 0; i < shipCount; i++) {
       const region = selectWeightedRegion(SHIPPING_LANES);
       const { lat, lon } = randomInRegion(region.latRange, region.lonRange);
-      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false, i));
+      shipSimState.push(initShip(lat, lon, Math.random() * 360, i));
     }
     for (let i = 0; i < aircraftCount; i++) {
       const region = selectWeightedRegion(FLIGHT_CORRIDORS);
       const { lat, lon } = randomInRegion(region.latRange, region.lonRange);
-      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true, i));
+      aircraftSimState.push(initAircraft(lat, lon, Math.random() * 360, i));
     }
   } else {
     for (let i = 0; i < shipCount; i++) {
       const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI);
       const lon = Math.random() * 360 - 180;
-      shipSimState.push(initUnitState(lat, lon, Math.random() * 360, false, i));
+      shipSimState.push(initShip(lat, lon, Math.random() * 360, i));
     }
     for (let i = 0; i < aircraftCount; i++) {
       const lat = Math.asin(2 * Math.random() - 1) * (180 / Math.PI);
       const lon = Math.random() * 360 - 180;
-      aircraftSimState.push(initUnitState(lat, lon, Math.random() * 360, true, i));
+      aircraftSimState.push(initAircraft(lat, lon, Math.random() * 360, i));
     }
   }
 }

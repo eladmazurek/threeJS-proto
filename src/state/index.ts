@@ -27,6 +27,8 @@ import type {
   CameraState,
   H3BuildState,
   H3CellData,
+  TrailHistoryState,
+  GridParams,
 } from "../types";
 
 // =============================================================================
@@ -159,18 +161,11 @@ export const state = {
   // -------------------------------------------------------------------------
 
   trails: {
-    /** Ship trail point history */
-    shipHistory: [] as Array<Array<{ lat: number; lon: number }>>,
-
-    /** Aircraft trail point history */
-    aircraftHistory: [] as Array<Array<{ lat: number; lon: number }>>,
-
-    /** Active ship trail point count */
+    shipHistory: [],
+    aircraftHistory: [],
     activeShipCount: 0,
-
-    /** Active aircraft trail point count */
     activeAircraftCount: 0,
-  },
+  } as TrailHistoryState,
 
   // -------------------------------------------------------------------------
   // Camera State
@@ -266,10 +261,9 @@ export const config = {
 
   weather: {
     enabled: false,
-    layer: 0,
+    layer: "precipitation",
     opacity: 0.6,
     animate: true,
-    speed: 1.0,
   } as WeatherParams,
 
   // -------------------------------------------------------------------------
@@ -294,7 +288,12 @@ export const config = {
     updateInterval: 100,
     showShipLabels: true,
     showAircraftLabels: true,
+    showDroneLabels: true,
+    showSatelliteLabels: true,
     fontSize: 1.0,
+    labelOffset: 0.025,
+    debugMode: 0,
+    h3Resolution: 3,
   } as LabelParams,
 
   // -------------------------------------------------------------------------
@@ -306,6 +305,7 @@ export const config = {
     aircraftCount: 500,
     satelliteCount: 100,
     droneCount: 5,
+    totalCount: 1105,
     showShips: true,
     showAircraft: true,
     showSatellites: true,
@@ -318,13 +318,18 @@ export const config = {
   // -------------------------------------------------------------------------
 
   motion: {
-    baseSpeed: 1.0,
-    speedVariation: 0.3,
-    shipSpeedMultiplier: 1.0,
-    aircraftSpeedMultiplier: 5.0,
-    satelliteSpeedMultiplier: 2.0,
-    turnRate: 0.5,
-    updateInterval: 16,
+    shipSpeed: 10.0,
+    aircraftSpeed: 10.0,
+    satelliteSpeed: 10.0,
+    droneSpeed: 5.0,
+    shipBaseSpeed: 0.002,
+    shipBaseTurnRate: 15,
+    aircraftBaseSpeed: 0.02,
+    aircraftBaseTurnRate: 45,
+    droneOrbitPeriod: 120,
+    courseChangeInterval: 10,
+    courseChangeVariance: 5,
+    motionUpdateInterval: 10,
   } as MotionParams,
 
   // -------------------------------------------------------------------------
@@ -334,8 +339,8 @@ export const config = {
   trails: {
     enabled: false,
     opacity: 0.6,
-    showShipTrails: true,
-    showAircraftTrails: true,
+    shipTrails: true,
+    aircraftTrails: true,
   } as TrailParams,
 
   // -------------------------------------------------------------------------
@@ -354,8 +359,6 @@ export const config = {
 
   camera: {
     tiltAngle: 0,
-    autoRotate: false,
-    autoRotateSpeed: 0.5,
   } as CameraParams,
 
   // -------------------------------------------------------------------------
@@ -384,7 +387,7 @@ export const config = {
     opacity: 0.3,
     latInterval: 15,
     lonInterval: 15,
-  },
+  } as GridParams,
 
   // -------------------------------------------------------------------------
   // Texture Selection

@@ -258,7 +258,7 @@ export function createGui(params) {
         if (tilesRenderer) tilesRenderer.dispose();
         params.earth.visible = true;
         params.atmosphereMesh.visible = true;
-        if (typeof cloudMesh !== 'undefined') cloudMesh.visible = true;
+        if (params.cloudMesh) params.cloudMesh.visible = true;
       }
     });
   tilesFolder

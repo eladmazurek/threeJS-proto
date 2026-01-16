@@ -81,6 +81,7 @@ export type UnitType = "ship" | "aircraft" | "satellite" | "drone" | "airport";
 export interface SelectedUnit {
   type: UnitType;
   index: number;
+  data?: any;
 }
 
 // =============================================================================
@@ -102,10 +103,9 @@ export interface EarthParameters {
 /** Weather overlay parameters */
 export interface WeatherParams {
   enabled: boolean;
-  layer: number;
+  layer: string; // Changed from number to string to match usage
   opacity: number;
   animate: boolean;
-  speed: number;
 }
 
 /** H3 grid parameters */
@@ -114,7 +114,6 @@ export interface H3Params {
   resolution: number;
   opacity: number;
   updateInterval: number;
-  showLines: boolean;
 }
 
 /** Unit label parameters */
@@ -124,7 +123,12 @@ export interface LabelParams {
   updateInterval: number;
   showShipLabels: boolean;
   showAircraftLabels: boolean;
+  showDroneLabels: boolean;
+  showSatelliteLabels: boolean;
   fontSize: number;
+  labelOffset: number;
+  debugMode: number;
+  h3Resolution: number;
 }
 
 /** Unit count and visibility parameters */
@@ -133,6 +137,7 @@ export interface UnitCountParams {
   aircraftCount: number;
   satelliteCount: number;
   droneCount: number;
+  totalCount: number;
   showShips: boolean;
   showAircraft: boolean;
   showSatellites: boolean;
@@ -142,21 +147,26 @@ export interface UnitCountParams {
 
 /** Motion simulation parameters */
 export interface MotionParams {
-  baseSpeed: number;
-  speedVariation: number;
-  shipSpeedMultiplier: number;
-  aircraftSpeedMultiplier: number;
-  satelliteSpeedMultiplier: number;
-  turnRate: number;
-  updateInterval: number;
+  shipSpeed: number;
+  aircraftSpeed: number;
+  satelliteSpeed: number;
+  droneSpeed: number;
+  shipBaseSpeed: number;
+  shipBaseTurnRate: number;
+  aircraftBaseSpeed: number;
+  aircraftBaseTurnRate: number;
+  droneOrbitPeriod: number;
+  courseChangeInterval: number;
+  courseChangeVariance: number;
+  motionUpdateInterval: number;
 }
 
 /** Trail rendering parameters */
 export interface TrailParams {
   enabled: boolean;
   opacity: number;
-  showShipTrails: boolean;
-  showAircraftTrails: boolean;
+  shipTrails: boolean;
+  aircraftTrails: boolean;
 }
 
 /** Airport display parameters */
@@ -198,11 +208,10 @@ export interface IconScaleParams {
 
 /** H3 cell density data */
 export interface H3CellData {
-  cellId: string;
-  count: number;
-  shipCount: number;
-  aircraftCount: number;
-  satelliteCount: number;
+  ships: number;
+  aircraft: number;
+  satellites: number;
+  total: number;
 }
 
 /** H3 grid build state for chunked processing */
@@ -256,6 +265,24 @@ export interface PerfProfiler {
   enabled: boolean;
   times: Record<string, number>;
   lastLog: number;
+}
+
+// =============================================================================
+// TRAIL TYPES
+// =============================================================================
+
+/** Trail history entry for a single unit */
+export interface TrailHistoryEntry {
+  positions: Array<{ lat: number; lon: number }>;
+  headIndex: number;
+}
+
+/** Trail history state */
+export interface TrailHistoryState {
+  shipHistory: TrailHistoryEntry[];
+  aircraftHistory: TrailHistoryEntry[];
+  activeShipCount: number;
+  activeAircraftCount: number;
 }
 
 // =============================================================================

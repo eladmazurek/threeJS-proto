@@ -69,16 +69,16 @@ function main() {
         getDroneState: (index) => state.drones[index],
     });
 
-    // Set up H3 grid dependencies
+    // H3 Grid
     setH3Dependencies({
         getEarth: () => earthRefs.mesh,
         getCamera: () => camera,
-        getCanvas: () => canvas,
+        getCanvas: () => canvas as unknown as HTMLCanvasElement,
         getShipSimState: () => state.ships,
         getAircraftSimState: () => state.aircraft,
         getSatelliteSimState: () => state.satellites,
         getUnitCountParams: () => unitCountParams,
-    });
+      });
     initH3ClickHandler();
 
     const GOOGLE_TILES_API_KEY = import.meta.env.VITE_GOOGLE_TILES_API_KEY;
@@ -183,7 +183,7 @@ function main() {
         updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
         updateTrails(state.trails, state.ships, state.aircraft, shipTrailRefs, aircraftTrailRefs);
         controls.update();
-        updateTelemetry({ cameraDistance, cameraPosition: camera.position, earth: earthRefs.mesh, unitCounts: unitCountParams });
+        updateTelemetry({ cameraDistance, cameraPosition: camera.position, earth: earthRefs.mesh, unitCounts: unitCountParams as any });
         updateAirportScales(cameraDistance);
         updateLabelAssignments(camera);
         updateLabelPositions(earthRotY);
@@ -193,7 +193,8 @@ function main() {
         
         const h3Highlight = getH3HighlightMesh();
         if (h3Highlight && h3Highlight.visible && h3Highlight.material) {
-            h3Highlight.material.opacity = 0.6 + 0.4 * Math.sin(elapsedTime * 4);
+            const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 4);
+            (h3Highlight.material as THREE.Material).opacity = 0.6 + 0.4 * pulse;
         }
         
         updateSelectedUnitInfo();

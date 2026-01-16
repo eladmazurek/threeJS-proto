@@ -385,7 +385,7 @@ export function updateLabelAssignments(camera) {
             const unit = state.ships[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 0, unitIndex: i };
-            fillLabelBuffers(labelIdx, 0, unit);
+            fillLabelBuffers(labelIdx, 0, unit, i);
             labelIdx++;
         }
     }
@@ -396,7 +396,7 @@ export function updateLabelAssignments(camera) {
             const unit = state.aircraft[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 1, unitIndex: i };
-            fillLabelBuffers(labelIdx, 1, unit);
+            fillLabelBuffers(labelIdx, 1, unit, i);
             labelIdx++;
         }
     }
@@ -418,7 +418,7 @@ export function updateLabelAssignments(camera) {
             const unit = state.satellites[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
-            fillLabelBuffers(labelIdx, 3, unit);
+            fillLabelBuffers(labelIdx, 3, unit, i);
             labelIdx++;
         }
     }
