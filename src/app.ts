@@ -162,6 +162,8 @@ function main() {
         const elapsedTime = clock.getElapsedTime();
         const cameraDistance = camera.position.length();
 
+        // Earth rotation
+        const scaleFactor = 6371 / EARTH_RADIUS;
         const altitudeKm = (camera.position.length() - EARTH_RADIUS) * (6371 / EARTH_RADIUS);
         const rotationFactor = Math.max(0, Math.min(1, (altitudeKm - 9000) / 3000));
         if (rotationFactor > 0) earthRefs.mesh.rotation.y += 0.0003 * rotationFactor;
@@ -183,6 +185,14 @@ function main() {
         updateIconScale(cameraDistance);
         updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
         updateTrails(state.trails, state.ships, state.aircraft, shipTrailRefs, aircraftTrailRefs);
+        
+        // Adjust rotation speed based on zoom level
+        const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
+        // specific non-linear curve for smoother close-range control
+        const controlScale = zoomFactor * zoomFactor; 
+        controls.rotateSpeed = 0.05 + controlScale * 0.95; 
+        controls.panSpeed = 0.01 + controlScale * 0.99;
+
         controls.update();
         updateTelemetry({ cameraDistance, cameraPosition: camera.position, earth: earthRefs.mesh, unitCounts: unitCountParams as any });
         updateAirportScales(cameraDistance);
@@ -212,6 +222,19 @@ function main() {
               tilesRenderer.update();
             }
         }
+
+        // Enforce minimum distance from Earth center (not just from target)
+        const minDistanceFromCenter = EARTH_RADIUS + 0.00015;
+        const distanceFromCenter = camera.position.length();
+        if (distanceFromCenter < minDistanceFromCenter) {
+            camera.position.normalize().multiplyScalar(minDistanceFromCenter);
+        }
+
+        // Dynamic near plane based on altitude
+        const altitude = distanceFromCenter - EARTH_RADIUS;
+        const nearPlane = Math.max(0.00001, Math.min(0.01, altitude * 0.1));
+        camera.near = nearPlane;
+        camera.updateProjectionMatrix();
 
         renderer.render(scene, camera);
 
