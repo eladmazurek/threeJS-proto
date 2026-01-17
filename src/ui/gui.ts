@@ -47,6 +47,7 @@ export function createGui(params) {
     cameraParams,
     setCameraTilt,
     tiltPresets,
+    earthRotationParams,
     tilesParams,
     setTransitionAltitude,
     tilesRenderer,
@@ -91,6 +92,9 @@ export function createGui(params) {
     .onChange((value) => {
       earthMaterial.uniforms.uNightBlend.value = value ? 1.0 : 0.0;
     });
+
+  // Earth rotation toggle
+  textureFolder.add(earthRotationParams, "enabled").name("Earth Rotation");
 
   // Atmosphere folder
   const atmosphereFolder = gui.addFolder("Atmosphere");

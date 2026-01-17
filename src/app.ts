@@ -97,6 +97,9 @@ function main() {
     // FPS tracking (must be declared before createGui so .listen() works)
     const perfStats = { fps: 0, ships: 0, aircraft: 0, frameMs: 0 };
 
+    // Earth rotation toggle
+    const earthRotationParams = { enabled: true };
+
     const gui = createGui({
         textureParams: { preset: 'Standard' },
         TEXTURE_PRESETS: Object.keys(TEXTURE_PRESETS),
@@ -135,6 +138,7 @@ function main() {
         cameraParams: {tiltAngle: 0},
         setCameraTilt: () => {},
         tiltPresets: {Center: () => {}, "Slight Tilt": () => {}, Tracking: () => {}, Horizon: () => {}},
+        earthRotationParams,
         tilesParams,
         setTransitionAltitude: () => {},
         tilesRenderer: null,
@@ -163,11 +167,13 @@ function main() {
         const elapsedTime = clock.getElapsedTime();
         const cameraDistance = camera.position.length();
 
-        // Earth rotation
+        // Earth rotation (only at high altitude, when enabled)
         const scaleFactor = 6371 / EARTH_RADIUS;
         const altitudeKm = (camera.position.length() - EARTH_RADIUS) * (6371 / EARTH_RADIUS);
-        const rotationFactor = Math.max(0, Math.min(1, (altitudeKm - 9000) / 3000));
-        if (rotationFactor > 0) earthRefs.mesh.rotation.y += 0.0003 * rotationFactor;
+        if (earthRotationParams.enabled) {
+          const rotationFactor = Math.max(0, Math.min(1, (altitudeKm - 9000) / 3000));
+          if (rotationFactor > 0) earthRefs.mesh.rotation.y += 0.0003 * rotationFactor;
+        }
         
         const earthRotY = earthRefs.mesh.rotation.y;
         state.earthRotation.y = earthRotY;
