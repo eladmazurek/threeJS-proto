@@ -157,7 +157,7 @@ const orbitLineMaterial = new THREE.LineBasicMaterial({
   color: 0xaa88ff, // Violet to match satellite color
   transparent: true,
   opacity: 0.6,
-  depthTest: false,
+  depthTest: true,
   depthWrite: false,
 });
 
@@ -333,6 +333,10 @@ const _ringQuat = new THREE.Quaternion();
 export function updateSelectionRing(): void {
   if (!state.selectedUnit || !deps) {
     selectionRing.visible = false;
+    orbitLine.visible = false;
+    patrolCircle.visible = false;
+    observationLine.visible = false;
+    targetMarker.visible = false;
     return;
   }
 
@@ -401,9 +405,10 @@ export function updateSelectionRing(): void {
   selectionRingMaterial.uniforms.uColor.value.setHex(SELECTION_COLORS[type] || 0xffffff);
 
   // Scale ring to match icon scaling (including user multiplier)
+  // Grow faster with distance so rings remain visible when zoomed out
   const cameraDistance = deps.getCameraDistance();
-  const baseDistance = 13;
-  const ringScale = Math.max(0.3, Math.min(2.0, cameraDistance / baseDistance)) * iconScaleParams.multiplier;
+  const baseDistance = 8;
+  const ringScale = Math.max(0.4, Math.min(4.0, (cameraDistance / baseDistance) * 1.5)) * iconScaleParams.multiplier;
   selectionRing.scale.setScalar(ringScale);
 
   selectionRing.visible = true;
