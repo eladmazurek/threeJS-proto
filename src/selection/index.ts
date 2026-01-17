@@ -104,9 +104,21 @@ function selectUnit(type, index) {
     }
   
     unitInfoPanel?.classList.remove("hidden");
-  
+
+    // Show drone feed panel when drone is selected
+    if (type === "drone") {
+      droneFeedPanel?.classList.remove("hidden");
+      if (droneVideo) {
+        droneVideo.currentTime = Math.random() * 10;
+        droneVideo.play();
+      }
+    } else {
+      droneFeedPanel?.classList.add("hidden");
+      if (droneVideo) droneVideo.pause();
+    }
+
     updateSelectedUnitInfo();
-  
+
     // Visuals like orbit line will be updated in the main loop
 }
 
