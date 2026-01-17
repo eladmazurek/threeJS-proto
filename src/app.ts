@@ -199,7 +199,21 @@ function main() {
         controls.zoomSpeed = lowAltFactor;
 
         controls.update();
-        updateTelemetry({ cameraDistance, cameraPosition: camera.position, earth: earthRefs.mesh, unitCounts: unitCountParams as any });
+        updateTelemetry({
+          cameraDistance,
+          cameraPosition: camera.position,
+          earth: earthRefs.mesh,
+          unitCounts: {
+            ships: unitCountParams.shipCount,
+            aircraft: unitCountParams.aircraftCount,
+            satellites: unitCountParams.satelliteCount,
+            drones: unitCountParams.droneCount,
+            showShips: unitCountParams.showShips,
+            showAircraft: unitCountParams.showAircraft,
+            showSatellites: unitCountParams.showSatellites,
+            showDrones: unitCountParams.showDrones,
+          }
+        });
         updateAirportScales(cameraDistance);
         updateLabelAssignments(camera);
         updateLabelPositions(earthRotY);
