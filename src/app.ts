@@ -10,7 +10,7 @@ import { generateDemoData, generateSatelliteData, generateDroneData, updateUnitC
 import { shipMesh, aircraftMesh, satelliteMesh, droneMesh, shipGeometry, aircraftGeometry, satelliteGeometry, droneGeometry } from './units/visuals';
 import { initLabelSystem, updateLabelAssignments, updateLabelPositions, labelParams, labelMaterial } from './labels/system';
 import { update as updateTrails, trailParams, createShipTrailMesh, createAircraftTrailMesh, initTrailHistory } from './units/trails';
-import { initSelectionHandling, updateSelectedUnitInfo } from './selection/index';
+import { initSelectionHandling, updateSelectedUnitInfo, deselectUnit } from './selection/index';
 import { createEarth, createAtmosphere, DEFAULT_EARTH_PARAMS, switchTexturePreset as switchEarthTexturePreset, TEXTURE_PRESETS } from './scene/earth';
 import { createCloudLayer } from './scene/clouds';
 import { createWeather, weatherParams, setWeatherLayer } from './scene/weather';
@@ -119,6 +119,7 @@ function main() {
         aircraftTrailMesh: aircraftTrailRefs.mesh,
         setH3MeshVisibility,
         hideH3Popup,
+        deselectUnit,
         refreshH3PopupIfVisible: () => {},
         h3Material: null,
         h3LineMaterial: null,

@@ -4,8 +4,8 @@
 
 .h3-popup {
   position: fixed;
-  bottom: 20px;
-  right: 240px; /* Offset to sit next to the unit info card */
+  top: 50px;
+  left: 20px; /* Same position as unit-info panel */
   z-index: 1000;
   background: rgba(10, 12, 16, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.1);

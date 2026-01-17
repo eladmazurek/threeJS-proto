@@ -53,7 +53,7 @@ function getDomElements() {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-function deselectUnit() {
+export function deselectUnit() {
     state.selectedUnit = null;
     unitInfoPanel?.classList.add("hidden");
     droneFeedPanel?.classList.add("hidden");

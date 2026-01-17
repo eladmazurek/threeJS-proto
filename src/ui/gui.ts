@@ -31,6 +31,7 @@ export function createGui(params) {
     aircraftTrailMesh,
     setH3MeshVisibility,
     hideH3Popup,
+    deselectUnit,
     refreshH3PopupIfVisible,
     h3Material,
     h3LineMaterial,
@@ -165,6 +166,8 @@ export function createGui(params) {
   h3Folder.add(h3Params, "enabled").name("Show H3 Grid").onChange(() => {
     if (h3Params.enabled) {
       state.h3.lastResolution = -1; // Force rebuild
+      // Close any open unit selection panel
+      deselectUnit();
       // Hide flying units when H3 heatmap is shown
       shipMesh.visible = false;
       aircraftMesh.visible = false;
