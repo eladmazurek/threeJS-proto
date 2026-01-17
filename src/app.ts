@@ -15,7 +15,7 @@ import { createEarth, createAtmosphere, DEFAULT_EARTH_PARAMS, switchTexturePrese
 import { createCloudLayer } from './scene/clouds';
 import { createWeather, weatherParams, setWeatherLayer } from './scene/weather';
 import { initGrid, buildGrid, gridParams, updateGridOpacity, updateGridVisibility } from './scene/grid';
-import { initAirports, setAirportRotation, updateAirportScales, airportParams } from './scene/airports';
+import { initAirports, setAirportRotation, updateAirportScales, updateAirportLabels, airportParams, airportGroup } from './scene/airports';
 import { state } from './state';
 import { updateIconScale, setAttributeDependencies, updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes, iconScaleParams } from './units/attributes';
 import { initSelectionVisuals, setVisualsDependencies, updateSelectionRing, setOrbitLineRotation, selectionRingMaterial } from './selection/visuals';
@@ -128,8 +128,8 @@ function main() {
         setWeatherLayer,
         weatherMaterial: weatherRefs.material,
         airportParams,
-        airportGroup: null,
-        updateAirportLabels: () => {},
+        airportGroup,
+        updateAirportLabels,
         motionParams,
         cameraParams: {tiltAngle: 0},
         setCameraTilt: () => {},
@@ -231,12 +231,11 @@ function main() {
         updateSelectionRing();
         selectionRingMaterial.uniforms.uTime.value = elapsedTime;
         
-        // Always update crossfade - it handles restoring globe when tiles are disabled
+        // Always update crossfade and attribution - they handle state when tiles are disabled
         updateTilesCrossfade();
+        updateTilesAttribution();
 
         if (tilesRenderer && tilesParams.enabled) {
-            updateTilesAttribution();
-
             const altitude = camera.position.length() - EARTH_RADIUS;
             // Always update tiles when forceShow is true, otherwise only below preload altitude
             if (tilesParams.forceShow || altitude < getTilesPreloadAltitude()) {
