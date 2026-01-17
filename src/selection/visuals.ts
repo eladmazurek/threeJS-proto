@@ -141,6 +141,7 @@ export const selectionRingMaterial = new THREE.ShaderMaterial({
   `,
   transparent: true,
   side: THREE.DoubleSide,
+  depthTest: false,
   depthWrite: false,
 });
 
@@ -156,6 +157,7 @@ const orbitLineMaterial = new THREE.LineBasicMaterial({
   color: 0xaa88ff, // Violet to match satellite color
   transparent: true,
   opacity: 0.6,
+  depthTest: false,
   depthWrite: false,
 });
 
@@ -405,6 +407,28 @@ export function updateSelectionRing(): void {
   selectionRing.scale.setScalar(ringScale);
 
   selectionRing.visible = true;
+
+  // Update type-specific visuals
+  if (type === "satellite") {
+    const satData = deps.getSatelliteState(index);
+    updateOrbitLine(satData || null);
+    // Hide drone visuals
+    patrolCircle.visible = false;
+    observationLine.visible = false;
+    targetMarker.visible = false;
+  } else if (type === "drone") {
+    const droneData = deps.getDroneState(index);
+    updatePatrolCircle(droneData || null);
+    updateObservationLine(droneData || null);
+    // Hide satellite visuals
+    orbitLine.visible = false;
+  } else {
+    // Hide both satellite and drone visuals
+    orbitLine.visible = false;
+    patrolCircle.visible = false;
+    observationLine.visible = false;
+    targetMarker.visible = false;
+  }
 }
 
 /**
