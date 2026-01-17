@@ -55,6 +55,26 @@ export type { SatelliteFeedConfig } from "./simulated-satellite-feed";
 export { SimulatedDroneFeed } from "./simulated-drone-feed";
 export type { DroneFeedConfig } from "./simulated-drone-feed";
 
+// Live feeds
+export { OpenSkyAircraftFeed } from "./opensky-aircraft-feed";
+export type { OpenSkyFeedConfig, BoundingBox } from "./opensky-aircraft-feed";
+
 // Feed manager
 export { FeedManagerImpl, feedManager } from "./feed-manager";
 export type { FeedManagerConfig } from "./feed-manager";
+
+// Aircraft feed controller
+export {
+  initAircraftFeedController,
+  startAircraftFeed,
+  stopAircraftFeed,
+  setFeedMode,
+  setCoverageMode,
+  setInterpolation,
+  setSimulatedCount,
+  getFeedStats,
+  updateLiveIndicator,
+  syncLiveFeedState,
+  aircraftFeedParams,
+} from "./aircraft-feed-controller";
+export type { FeedMode, CoverageMode, AircraftFeedParams, FeedControllerDependencies } from "./aircraft-feed-controller";

@@ -33,6 +33,8 @@ jobs:
         run: bun run build
         env:
           VITE_GOOGLE_TILES_API_KEY: ${{ secrets.VITE_GOOGLE_TILES_API_KEY }}
+          VITE_OPEN_SKY_CLIENT_ID: ${{ secrets.VITE_OPEN_SKY_CLIENT_ID }}
+          VITE_OPEN_SKY_CLIENT_KEY: ${{ secrets.VITE_OPEN_SKY_CLIENT_KEY }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

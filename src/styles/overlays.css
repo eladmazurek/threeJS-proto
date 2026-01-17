@@ -81,6 +81,48 @@
   background: #ff3333;
   border-radius: 50%;
   animation: live-pulse 1.5s ease-in-out infinite;
+  transition: background 0.3s ease;
+}
+
+/* Simulated mode - cyan/blue */
+#live-indicator.mode-simulated .live-dot {
+  background: #00d4ff;
+  animation: sim-pulse 2s ease-in-out infinite;
+}
+
+#live-indicator.mode-simulated .live-text {
+  color: rgba(0, 212, 255, 0.9);
+}
+
+/* Live mode - green when connected */
+#live-indicator.mode-live .live-dot {
+  background: #00ff88;
+  animation: live-pulse 1s ease-in-out infinite;
+}
+
+#live-indicator.mode-live .live-text {
+  color: rgba(0, 255, 136, 0.9);
+}
+
+/* Live mode - amber when connecting */
+#live-indicator.mode-connecting .live-dot {
+  background: #ffaa00;
+  animation: connecting-pulse 0.5s ease-in-out infinite;
+}
+
+#live-indicator.mode-connecting .live-text {
+  color: rgba(255, 170, 0, 0.9);
+}
+
+/* Live mode - red when error */
+#live-indicator.mode-error .live-dot {
+  background: #ff3333;
+  animation: none;
+  opacity: 0.8;
+}
+
+#live-indicator.mode-error .live-text {
+  color: rgba(255, 51, 51, 0.9);
 }
 
 @keyframes live-pulse {
@@ -93,11 +135,32 @@
   }
 }
 
+@keyframes sim-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes connecting-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
 .live-text {
   color: rgba(255, 255, 255, 0.8);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 2px;
+  transition: color 0.3s ease;
 }
 
 /* Telemetry display */

@@ -4,6 +4,7 @@
 import { state } from '../state';
 import { normalizeAngle, shortestTurnDirection } from '../data/demo';
 import { DRONE_ALTITUDE_MIN, DRONE_ALTITUDE_MAX, EARTH_RADIUS } from '../constants';
+import { aircraftFeedParams } from '../feeds';
 
 // Motion parameters - simplified with single speed slider per type
 export const motionParams = {
@@ -176,8 +177,12 @@ export function updateMotionSimulation(currentTime, attributeUpdaters) {
     updateUnitMotion(shipSimState[i], physicsDelta);
   }
 
-  for (let i = 0; i < aircraftSimState.length; i++) {
-    updateUnitMotion(aircraftSimState[i], physicsDelta);
+  // Only simulate aircraft motion when NOT using live feed
+  // (live feed provides real positions that shouldn't be overwritten)
+  if (aircraftFeedParams.mode === "simulated") {
+    for (let i = 0; i < aircraftSimState.length; i++) {
+      updateUnitMotion(aircraftSimState[i], physicsDelta);
+    }
   }
 
   const satSpeedMultiplier = motionParams.satelliteSpeed;

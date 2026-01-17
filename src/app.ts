@@ -23,6 +23,7 @@ import { initGoogleTiles, updateTilesCrossfade, updateTilesAttribution, getTiles
 import { updateTelemetry, updateWeatherLegend } from './ui/telemetry';
 import { h3Params, setH3Dependencies, initH3ClickHandler, updateH3Grid, processH3BuildChunk, updateH3PopupPeriodic, getH3HighlightMesh, setH3MeshVisibility, hideH3Popup, h3Material, h3LineMaterial } from './scene/h3-grid';
 import { EARTH_RADIUS } from "./constants.js";
+import { initAircraftFeedController, startAircraftFeed, syncLiveFeedState } from './feeds';
 
 function main() {
     createMainOverlay();
@@ -88,6 +89,24 @@ function main() {
     generateDemoData();
     generateDroneData();
     generateSatelliteData();
+
+    // Initialize aircraft feed controller (for switching between simulated and live data)
+    initAircraftFeedController({
+        camera,
+        getEarthRotation: () => earthRefs.mesh.rotation.y,
+        updateAircraftAttributes,
+        // Show/hide simulated-only units when switching feed modes
+        onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
+            // Ships, satellites, drones are simulated-only (no live feed for them yet)
+            shipMesh.visible = showSimulatedUnits && unitCountParams.showShips;
+            satelliteMesh.visible = showSimulatedUnits && unitCountParams.showSatellites;
+            droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
+            // Trails for ships (aircraft trails stay since we have live aircraft)
+            shipTrailRefs.mesh.visible = showSimulatedUnits && unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
+        },
+    });
+    // Start with simulated feed (default)
+    startAircraftFeed();
 
     const trailHistory = initTrailHistory(state.ships.length, state.aircraft.length);
     state.trails = trailHistory;
@@ -191,6 +210,8 @@ function main() {
         
         updateIconScale(cameraDistance);
         updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
+        // Sync live feed state (handles interpolation + GPU update for live mode)
+        syncLiveFeedState();
         updateTrails(state.trails, state.ships, state.aircraft, shipTrailRefs, aircraftTrailRefs);
         
         // Adjust rotation speed based on zoom level

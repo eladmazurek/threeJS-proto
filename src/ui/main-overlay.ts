@@ -17,9 +17,9 @@ export function createMainOverlay() {
     </div>
 
     <!-- LIVE indicator top-left -->
-    <div id="live-indicator">
+    <div id="live-indicator" class="mode-simulated">
       <span class="live-dot"></span>
-      <span class="live-text">LIVE</span>
+      <span class="live-text">SIM</span>
     </div>
 
     <!-- Telemetry overlay bottom-left -->

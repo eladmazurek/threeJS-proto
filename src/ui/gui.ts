@@ -5,6 +5,14 @@
  */
 import GUI from "lil-gui";
 import { state } from '../state';
+import {
+  aircraftFeedParams,
+  setFeedMode,
+  setCoverageMode,
+  setInterpolation,
+  startAircraftFeed,
+} from '../feeds';
+import type { FeedMode, CoverageMode } from '../feeds';
 
 export function createGui(params) {
   const {
@@ -235,6 +243,50 @@ export function createGui(params) {
   motionFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
   motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
   motionFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
+
+  // Aircraft Data Feed folder
+  const feedFolder = gui.addFolder("Aircraft Data Feed");
+  feedFolder.close();
+
+  // Feed mode selector
+  const feedModeOptions: Record<string, FeedMode> = {
+    "Simulated": "simulated",
+    "Live (OpenSky)": "live",
+  };
+  const feedModeDisplay = { mode: "Simulated" };
+  feedFolder
+    .add(feedModeDisplay, "mode", Object.keys(feedModeOptions))
+    .name("Data Source")
+    .onChange((value: string) => {
+      setFeedMode(feedModeOptions[value]);
+      startAircraftFeed();
+    });
+
+  // Coverage mode selector (only relevant for live feed)
+  const coverageOptions: Record<string, CoverageMode> = {
+    "Worldwide": "worldwide",
+    "Viewport Only": "viewport",
+  };
+  const coverageDisplay = { coverage: "Worldwide" };
+  feedFolder
+    .add(coverageDisplay, "coverage", Object.keys(coverageOptions))
+    .name("Coverage")
+    .onChange((value: string) => {
+      setCoverageMode(coverageOptions[value]);
+    });
+
+  // Interpolation toggle
+  feedFolder
+    .add(aircraftFeedParams, "interpolation")
+    .name("Smooth Motion")
+    .onChange((value: boolean) => {
+      setInterpolation(value);
+    });
+
+  // Status display (read-only)
+  feedFolder.add(aircraftFeedParams, "status").name("Status").listen().disable();
+  feedFolder.add(aircraftFeedParams, "trackedCount").name("Tracked").listen().disable();
+  feedFolder.add(aircraftFeedParams, "lastError").name("Error").listen().disable();
 
   // Camera/View folder
   const cameraFolder = gui.addFolder("Camera");

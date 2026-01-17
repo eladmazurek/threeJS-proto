@@ -75,6 +75,91 @@ Real-time shader effects that work with any texture preset:
 | Aircraft | Amber | Aircraft at flight altitude |
 | Satellites | Violet | Orbital objects (LEO/MEO/GEO) |
 
+## Architecture: Data Feed Flow
+
+The system uses a modular feed architecture that cleanly separates data sources from rendering:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  1. FEED LAYER (src/feeds/)                                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  SimulatedAircraftFeed.tick() runs every 100ms                              │
+│       │                                                                     │
+│       ├── updateAircraftMotion(aircraft, deltaTime)                         │
+│       │       • Calculates new lat/lon from heading + speed                 │
+│       │                                                                     │
+│       └── this.emit(updates)  ◄── Array of { callsign, lat, lon, ... }      │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  2. FEED MANAGER (src/feeds/feed-manager.ts)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  handleAircraftUpdates(updates)                                             │
+│       │                                                                     │
+│       ├── O(1) lookup: index = _aircraftIndex.get(callsign)                 │
+│       ├── Update state: state.aircraft[index].lat = update.lat              │
+│       └── Mark dirty: _aircraftDirty = true                                 │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  3. GPU SYNC (runs every 16ms)                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  syncToGpu()                                                                │
+│       └── if (_aircraftDirty): updateAircraftAttributes()                   │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  4. ATTRIBUTE BUFFERS (src/units/attributes.ts)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  updateAircraftAttributes()                                                 │
+│       ├── Write to GPU buffers: latArray[i], lonArray[i], ...               │
+│       ├── Partial upload: attr.addUpdateRange(0, count)                     │
+│       └── Set instance count: geometry.instanceCount = count                │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  5. GPU RENDERING (vertex shader)                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Per-instance attributes: aLat, aLon, aHeading, aScale                      │
+│       └── Shader converts lat/lon → 3D position, applies rotation/scale     │
+│           Renders via InstancedMesh (1 draw call for all units)             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Swapping Data Sources
+
+To use real data (e.g., OpenSky, FlightAware), create a new feed class:
+
+```typescript
+// src/feeds/opensky-aircraft-feed.ts
+export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState> {
+  readonly id = "opensky-live";
+
+  protected async tick(): Promise<void> {
+    const response = await fetch('https://opensky-network.org/api/states/all');
+    const data = await response.json();
+
+    const updates = data.states.map(s => ({
+      callsign: s[1]?.trim(),
+      lat: s[6],
+      lon: s[5],
+      heading: s[10] || 0,
+      altitude: s[7] * 3.28084,    // meters → feet
+      groundSpeed: s[9] * 1.94384, // m/s → knots
+    }));
+
+    this.emit(updates);
+  }
+}
+
+// Register it
+feedManager.registerAircraftFeed(new OpenSkyAircraftFeed({ updateRateMs: 10000 }));
+```
+
 ## License
 
 MIT

@@ -114,20 +114,29 @@ function requestLabelIndexBuild() {
     ensureWorkerArrayCapacity();
     const { ships, aircraft, drones, satellites } = state;
     const { shipLats, shipLons, aircraftLats, aircraftLons, droneLats, droneLons, satelliteLats, satelliteLons } = workerArrayPool;
-  
-    for (let i = 0; i < ships.length; i++) { shipLats[i] = ships[i].lat; shipLons[i] = ships[i].lon; }
-    for (let i = 0; i < aircraft.length; i++) { aircraftLats[i] = aircraft[i].lat; aircraftLons[i] = aircraft[i].lon; }
-    for (let i = 0; i < drones.length; i++) { droneLats[i] = drones[i].lat; droneLons[i] = drones[i].lon; }
-    for (let i = 0; i < satellites.length; i++) { satelliteLats[i] = satellites[i].lat; satelliteLons[i] = satellites[i].lon; }
-  
+
+    // Only fill arrays if they exist and have data
+    if (shipLats && ships.length > 0) {
+      for (let i = 0; i < ships.length; i++) { shipLats[i] = ships[i].lat; shipLons[i] = ships[i].lon; }
+    }
+    if (aircraftLats && aircraft.length > 0) {
+      for (let i = 0; i < aircraft.length; i++) { aircraftLats[i] = aircraft[i].lat; aircraftLons[i] = aircraft[i].lon; }
+    }
+    if (droneLats && drones.length > 0) {
+      for (let i = 0; i < drones.length; i++) { droneLats[i] = drones[i].lat; droneLons[i] = drones[i].lon; }
+    }
+    if (satelliteLats && satellites.length > 0) {
+      for (let i = 0; i < satellites.length; i++) { satelliteLats[i] = satellites[i].lat; satelliteLons[i] = satellites[i].lon; }
+    }
+
     getH3Worker().postMessage({
       type: 'buildLabelIndex',
       data: {
         resolution: labelParams.h3Resolution,
-        shipLats: shipLats.subarray(0, ships.length),
-        shipLons: shipLons.subarray(0, ships.length),
-        aircraftLats: aircraftLats.subarray(0, aircraft.length),
-        aircraftLons: aircraftLons.subarray(0, aircraft.length),
+        shipLats: shipLats ? shipLats.subarray(0, ships.length) : null,
+        shipLons: shipLons ? shipLons.subarray(0, ships.length) : null,
+        aircraftLats: aircraftLats ? aircraftLats.subarray(0, aircraft.length) : null,
+        aircraftLons: aircraftLons ? aircraftLons.subarray(0, aircraft.length) : null,
         droneLats: droneLats ? droneLats.subarray(0, drones.length) : null,
         droneLons: droneLons ? droneLons.subarray(0, drones.length) : null,
         satelliteLats: satelliteLats ? satelliteLats.subarray(0, satellites.length) : null,

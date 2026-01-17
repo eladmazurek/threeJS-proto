@@ -181,3 +181,85 @@ export function calculateHeading(
   const heading = Math.atan2(y, x) * RAD_TO_DEG;
   return (heading + 360) % 360;
 }
+
+/**
+ * Bounding box for geographic queries.
+ */
+export interface GeoBoundingBox {
+  lamin: number; // min latitude
+  lamax: number; // max latitude
+  lomin: number; // min longitude
+  lomax: number; // max longitude
+}
+
+/**
+ * Calculate the approximate viewport bounding box visible to the camera.
+ * Uses camera distance to estimate visible arc on Earth's surface.
+ *
+ * @param camera - The Three.js camera
+ * @param earthRotationY - Current Earth rotation around Y axis
+ * @param padding - Extra padding in degrees (default: 5)
+ * @returns Bounding box or null if entire Earth is visible
+ */
+export function getViewportBoundingBox(
+  camera: THREE.Camera,
+  earthRotationY: number,
+  padding: number = 5
+): GeoBoundingBox | null {
+  const { lat, lon, distance } = getCameraLatLon(camera, earthRotationY);
+
+  // Calculate the angular radius of what's visible
+  // At distance d from center, visible arc angle ≈ asin(EARTH_RADIUS / d) * 2
+  // But we need to account for the camera FOV too
+
+  // Get camera FOV (assume perspective camera)
+  const perspCamera = camera as THREE.PerspectiveCamera;
+  const fovRad = (perspCamera.fov || 75) * DEG_TO_RAD;
+
+  // Calculate visible arc based on camera distance
+  // When camera is at distance d, the visible "cap" has angular radius θ where:
+  // cos(θ) = EARTH_RADIUS / d (angle from camera to horizon)
+  const distanceRatio = EARTH_RADIUS / distance;
+
+  if (distanceRatio >= 1) {
+    // Camera is inside Earth (shouldn't happen, but return null)
+    return null;
+  }
+
+  // Angle from camera to horizon
+  const horizonAngle = Math.acos(distanceRatio) * RAD_TO_DEG;
+
+  // Account for FOV - what we can actually see
+  const effectiveFov = (fovRad / 2) * RAD_TO_DEG;
+
+  // Use the smaller of horizon angle or FOV, plus padding
+  const visibleRadius = Math.min(horizonAngle, effectiveFov * 1.5) + padding;
+
+  // If visible radius is large (> 80 degrees), return null (whole Earth visible)
+  if (visibleRadius >= 80) {
+    return null;
+  }
+
+  // Calculate bounding box
+  // Latitude bounds are straightforward
+  let lamin = lat - visibleRadius;
+  let lamax = lat + visibleRadius;
+
+  // Clamp latitude
+  lamin = Math.max(-90, lamin);
+  lamax = Math.min(90, lamax);
+
+  // Longitude bounds need to account for latitude (meridians converge at poles)
+  // At higher latitudes, same degree range covers less distance
+  const latFactor = Math.cos(Math.abs(lat) * DEG_TO_RAD);
+  const lonRadius = latFactor > 0.1 ? visibleRadius / latFactor : 180;
+
+  let lomin = lon - lonRadius;
+  let lomax = lon + lonRadius;
+
+  // Handle wrap-around
+  if (lomin < -180) lomin = -180;
+  if (lomax > 180) lomax = 180;
+
+  return { lamin, lamax, lomin, lomax };
+}
