@@ -188,7 +188,7 @@ export function createGui(params) {
       hideH3Popup();
     }
   });
-  h3Folder.add(h3Params, "resolution", 0, 4, 1).name("Resolution").onChange(() => {
+  h3Folder.add(h3Params, "resolution", 1, 4, 1).name("Resolution").onChange(() => {
     hideH3Popup(); // Hide popup when resolution changes
     state.h3.lastResolution = -1; // Force rebuild on resolution change
   });
@@ -196,7 +196,7 @@ export function createGui(params) {
     h3Material.opacity = h3Params.opacity * 0.85;
     h3LineMaterial.opacity = h3Params.opacity * 0.4;
   });
-  h3Folder.add(h3Params, "updateInterval", 0.1, 5.0, 0.1).name("Update Interval (s)");
+  h3Folder.add(h3Params, "updateInterval", 0.5, 5.0, 0.1).name("Update Interval (s)");
 
   // Weather folder
   const weatherFolder = gui.addFolder("Weather");

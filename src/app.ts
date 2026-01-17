@@ -21,7 +21,7 @@ import { updateIconScale, setAttributeDependencies, updateShipAttributes, update
 import { initSelectionVisuals, setVisualsDependencies, updateSelectionRing, setOrbitLineRotation, selectionRingMaterial } from './selection/visuals';
 import { initGoogleTiles, updateTilesCrossfade, updateTilesAttribution, getTilesPreloadAltitude, getMinCameraAltitude, tilesRenderer, tilesParams, setTilesDependencies } from './scene/tiles';
 import { updateTelemetry, updateWeatherLegend } from './ui/telemetry';
-import { h3Params, setH3Dependencies, initH3ClickHandler, updateH3Grid, processH3BuildChunk, updateH3PopupPeriodic, getH3HighlightMesh, setH3MeshVisibility, hideH3Popup } from './scene/h3-grid';
+import { h3Params, setH3Dependencies, initH3ClickHandler, updateH3Grid, processH3BuildChunk, updateH3PopupPeriodic, getH3HighlightMesh, setH3MeshVisibility, hideH3Popup, h3Material, h3LineMaterial } from './scene/h3-grid';
 import { EARTH_RADIUS } from "./constants.js";
 
 function main() {
@@ -121,8 +121,8 @@ function main() {
         hideH3Popup,
         deselectUnit,
         refreshH3PopupIfVisible: () => {},
-        h3Material: null,
-        h3LineMaterial: null,
+        h3Material,
+        h3LineMaterial,
         weatherParams,
         weatherMesh: weatherRefs.mesh,
         updateWeatherLegend,
