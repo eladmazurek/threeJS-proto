@@ -61,6 +61,20 @@ const workerArrayPool = {
   shipCapacity: 0, aircraftCapacity: 0, droneCapacity: 0, satelliteCapacity: 0,
 };
 
+/**
+ * Helper to mark buffer attribute for partial update.
+ * Uses addUpdateRange to avoid uploading the entire buffer.
+ * @param attr - The instanced buffer attribute
+ * @param count - Number of elements to upload (in component units, e.g., 3 for vec3)
+ */
+function markLabelAttributeForUpdate(attr: THREE.InstancedBufferAttribute, count: number): void {
+  if ((attr as any).clearUpdateRanges && (attr as any).addUpdateRange) {
+    (attr as any).clearUpdateRanges();
+    (attr as any).addUpdateRange(0, count);
+  }
+  attr.needsUpdate = true;
+}
+
 function ensureWorkerArrayCapacity() {
   const { ships, aircraft, drones, satellites } = state;
   if (ships.length > workerArrayPool.shipCapacity) {
@@ -352,9 +366,10 @@ export function updateLabelAssignments(camera) {
         labelAssignments.slots[0] = { type: unitType, unitIndex: index };
         fillLabelBuffers(0, unitType, unit, index);
         labelAssignments.count = 1;
-        labelGeometry.userData.uvAttr.needsUpdate = true;
-        labelGeometry.userData.colorAttr.needsUpdate = true;
-        labelGeometry.userData.scaleAttr.needsUpdate = true;
+        // Only upload 1 label's worth of data (24 chars × components)
+        markLabelAttributeForUpdate(labelGeometry.userData.uvAttr, MAX_LABEL_CHARS * 4);
+        markLabelAttributeForUpdate(labelGeometry.userData.colorAttr, MAX_LABEL_CHARS * 3);
+        markLabelAttributeForUpdate(labelGeometry.userData.scaleAttr, MAX_LABEL_CHARS);
         labelGeometry.instanceCount = MAX_LABEL_CHARS;
       }
       return;
@@ -434,9 +449,11 @@ export function updateLabelAssignments(camera) {
 
     labelAssignments.count = labelIdx;
     if (labelIdx > 0) {
-      labelGeometry.userData.uvAttr.needsUpdate = true;
-      labelGeometry.userData.colorAttr.needsUpdate = true;
-      labelGeometry.userData.scaleAttr.needsUpdate = true;
+      // Only upload active labels' worth of data
+      const activeChars = labelIdx * MAX_LABEL_CHARS;
+      markLabelAttributeForUpdate(labelGeometry.userData.uvAttr, activeChars * 4);
+      markLabelAttributeForUpdate(labelGeometry.userData.colorAttr, activeChars * 3);
+      markLabelAttributeForUpdate(labelGeometry.userData.scaleAttr, activeChars);
     }
     labelGeometry.instanceCount = labelIdx * MAX_LABEL_CHARS;
 }
@@ -464,5 +481,9 @@ export function updateLabelPositions(earthRotation) {
         labelBuffer.positions[pi + 2] = _tempVec3.z;
       }
     }
-    if (labelGeometry) labelGeometry.userData.posAttr.needsUpdate = true;
+    if (labelGeometry) {
+      // Only upload active labels' positions
+      const activeChars = labelAssignments.count * MAX_LABEL_CHARS;
+      markLabelAttributeForUpdate(labelGeometry.userData.posAttr, activeChars * 3);
+    }
 }
