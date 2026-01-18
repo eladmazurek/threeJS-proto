@@ -76,7 +76,36 @@ const OS = {
   SQUAWK: 14,
   SPI: 15,
   POSITION_SOURCE: 16,
+  CATEGORY: 17,
 } as const;
+
+/**
+ * OpenSky aircraft category mapping
+ * https://openskynetwork.github.io/opensky-api/rest.html#aircraft-category
+ */
+const CATEGORY_MAP: Record<number, string> = {
+  0: "Unknown",
+  1: "Unknown",
+  2: "Light",
+  3: "Small",
+  4: "Large",
+  5: "High Vortex Large",
+  6: "Heavy",
+  7: "High Performance",
+  8: "Rotorcraft",
+  9: "Glider",
+  10: "Lighter-than-air",
+  11: "Skydiver",
+  12: "Ultralight",
+  13: "Reserved",
+  14: "UAV",
+  15: "Space Vehicle",
+  16: "Emergency Vehicle",
+  17: "Service Vehicle",
+  18: "Obstacle",
+  19: "Cluster Obstacle",
+  20: "Line Obstacle",
+};
 
 interface OpenSkyResponse {
   time: number;
@@ -281,6 +310,9 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     let url = baseUrl;
     const params: string[] = [];
 
+    // Request extended data to get aircraft category (index 17)
+    params.push("extended=1");
+
     // Add bounding box if viewport filtering is enabled
     if (this._config.useViewportFilter && this._config.getViewportBounds) {
       const bounds = this._config.getViewportBounds();
@@ -359,6 +391,13 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       const velocityMs = (state[OS.VELOCITY] as number) || 0;
       const groundSpeedKnots = velocityMs * 1.94384;
 
+      // Get aircraft category (index 17) - NOTE: OpenSky REST API doesn't include this field
+      // Keeping infrastructure in case they add it or we switch to a different data source
+      const categoryNum = state.length > OS.CATEGORY ? state[OS.CATEGORY] as number | null : null;
+      const aircraftType = categoryNum !== null && categoryNum > 1
+        ? CATEGORY_MAP[categoryNum] || undefined
+        : undefined;
+
       seenIds.add(icao24);
 
       // Get or create aircraft state
@@ -372,6 +411,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           groundSpeed: groundSpeedKnots,
           callsign,
           originCountry,
+          aircraftType,
           scale: 1.0,
           flightLevel: Math.floor(altitudeFeet / 100),
           // Simulation properties (unused for live aircraft, but required by type)
@@ -410,6 +450,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.callsign = callsign;
         aircraft.originCountry = originCountry;
         aircraft.flightLevel = Math.floor(altitudeFeet / 100);
+        if (aircraftType) aircraft.aircraftType = aircraftType;
         // Reset interpolation
         aircraft.interpProgress = 0;
       }
@@ -444,7 +485,12 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     // Mark dirty so next sync triggers GPU update
     this._isDirty = true;
 
-    console.log(`[${this.id}] Processed ${updates.length} aircraft (${this._units.size} tracked)`);
+    // Log category stats once per fetch (only if we have category data)
+    let withCategory = 0;
+    for (const aircraft of this._units.values()) {
+      if (aircraft.aircraftType) withCategory++;
+    }
+    console.log(`[${this.id}] Processed ${updates.length} aircraft (${this._units.size} tracked, ${withCategory} with category)`);
     this.emit(updates);
   }
 
@@ -511,6 +557,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           groundSpeed: aircraft.groundSpeed,
           callsign: aircraft.callsign,
           originCountry: aircraft.originCountry,
+          aircraftType: aircraft.aircraftType,
           scale: aircraft.scale,
           flightLevel: aircraft.flightLevel,
           // Simulation properties (unused for live aircraft, but required by type)
@@ -529,6 +576,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         target.groundSpeed = aircraft.groundSpeed;
         target.callsign = aircraft.callsign;
         target.originCountry = aircraft.originCountry;
+        target.aircraftType = aircraft.aircraftType;
       }
       i++;
     }

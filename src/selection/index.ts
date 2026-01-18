@@ -26,7 +26,8 @@ import { AIRPORTS } from "../data/airports";
 // DOM elements for unit info panel
 let unitInfoPanel, unitTypeEl, unitIdEl, unitLatEl, unitLonEl, unitHdgEl, unitSpdEl, unitAltEl, unitCloseBtn;
 let droneFeedPanel, droneFeedCoords, droneVideo;
-let unitLabel1, unitLabel2, unitLabel3, unitLabel4, unitLabel5;
+let unitLabel1, unitLabel2, unitLabel3, unitLabel4, unitLabel5, unitLabel6;
+let unitRow6, unitExtra;
 
 function getDomElements() {
     unitInfoPanel = document.getElementById("unit-info");
@@ -46,6 +47,9 @@ function getDomElements() {
     unitLabel3 = document.getElementById("unit-label-3");
     unitLabel4 = document.getElementById("unit-label-4");
     unitLabel5 = document.getElementById("unit-label-5");
+    unitLabel6 = document.getElementById("unit-label-6");
+    unitRow6 = document.getElementById("unit-row-6");
+    unitExtra = document.getElementById("unit-extra");
 }
 
 
@@ -155,6 +159,7 @@ export function updateSelectedUnitInfo() {
       unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
       unitSpdEl.textContent = speed;
       unitAltEl.textContent = altitude;
+      if (unitRow6) unitRow6.style.display = "none";
     } else if (type === "aircraft") {
       unitData = state.aircraft[index];
       if (!unitData) { deselectUnit(); return; }
@@ -167,6 +172,14 @@ export function updateSelectedUnitInfo() {
       unitHdgEl.textContent = speed;
       unitSpdEl.textContent = country;
       unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
+      // Show aircraft type in 6th row only if available
+      if (unitData.aircraftType) {
+        if (unitRow6) unitRow6.style.display = "";
+        if (unitLabel6) unitLabel6.textContent = "TYPE";
+        if (unitExtra) unitExtra.textContent = unitData.aircraftType;
+      } else {
+        if (unitRow6) unitRow6.style.display = "none";
+      }
     } else if (type === "satellite") {
         unitData = state.satellites[index];
         if (!unitData) { deselectUnit(); return; }
@@ -179,6 +192,7 @@ export function updateSelectedUnitInfo() {
         unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
         unitSpdEl.textContent = speed;
         unitAltEl.textContent = altitude;
+        if (unitRow6) unitRow6.style.display = "none";
     } else if (type === "drone") {
         unitData = state.drones[index];
         if (!unitData) { deselectUnit(); return; }
@@ -192,6 +206,7 @@ export function updateSelectedUnitInfo() {
         unitSpdEl.textContent = speed;
         unitAltEl.textContent = altitude;
         if (droneFeedCoords) droneFeedCoords.textContent = `TGT: ${unitData.targetLat.toFixed(4)}° ${unitData.targetLon.toFixed(4)}°`;
+        if (unitRow6) unitRow6.style.display = "none";
     } else if (type === "airport") {
         const airport = AIRPORTS[index];
         if (!airport) { deselectUnit(); return; }
@@ -201,6 +216,7 @@ export function updateSelectedUnitInfo() {
         unitHdgEl.textContent = `${airport.lon.toFixed(4)}°`;
         unitSpdEl.textContent = "—";
         unitAltEl.textContent = "INTL";
+        if (unitRow6) unitRow6.style.display = "none";
     }
 }
 

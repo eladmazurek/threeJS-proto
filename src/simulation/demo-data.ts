@@ -9,6 +9,7 @@ import {
   selectWeightedRegion,
   AIRLINE_CODES,
   SHIP_NAMES,
+  AIRCRAFT_TYPES,
 } from '../data/demo';
 import {
   SATELLITE_ALTITUDE_LEO,
@@ -58,6 +59,7 @@ function initShip(lat: number, lon: number, heading: number, index: number = 0):
 function initAircraft(lat: number, lon: number, heading: number, index: number = 0): AircraftState {
     const airlineCode = AIRLINE_CODES[index % AIRLINE_CODES.length];
     const flightNum = 100 + (index % 900);
+    const aircraftType = AIRCRAFT_TYPES[Math.floor(Math.random() * AIRCRAFT_TYPES.length)];
     return {
       lat,
       lon,
@@ -70,7 +72,8 @@ function initAircraft(lat: number, lon: number, heading: number, index: number =
       callsign: `${airlineCode}${flightNum}`,
       altitude: 28000 + Math.floor(Math.random() * 14) * 1000,
       groundSpeed: 420 + Math.floor(Math.random() * 80),
-      flightLevel: 0 // Placeholder
+      flightLevel: 0, // Placeholder
+      aircraftType,
     };
 }
 

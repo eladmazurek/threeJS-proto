@@ -33,6 +33,9 @@ const droneVideo = document.getElementById("drone-video") as HTMLVideoElement | 
 const unitLabel3 = document.getElementById("unit-label-3");
 const unitLabel4 = document.getElementById("unit-label-4");
 const unitLabel5 = document.getElementById("unit-label-5");
+const unitLabel6 = document.getElementById("unit-label-6");
+const unitRow6 = document.getElementById("unit-row-6");
+const unitExtra = document.getElementById("unit-extra");
 
 // =============================================================================
 // STATE GETTERS (set via setSelectionDependencies)
@@ -144,6 +147,7 @@ function updateShipPanel(unitData: ShipState): void {
   if (unitHdgEl) unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
   if (unitSpdEl) unitSpdEl.textContent = speed;
   if (unitAltEl) unitAltEl.textContent = "0 ft";
+  if (unitRow6) unitRow6.style.display = "none";
 }
 
 /**
@@ -165,6 +169,15 @@ function updateAircraftPanel(unitData: AircraftState): void {
   if (unitHdgEl) unitHdgEl.textContent = speed;
   if (unitSpdEl) unitSpdEl.textContent = country;
   if (unitAltEl) unitAltEl.textContent = `${altFeet} ft`;
+
+  // Show aircraft type in 6th row only if available
+  if (unitData.aircraftType) {
+    if (unitRow6) unitRow6.style.display = "";
+    if (unitLabel6) unitLabel6.textContent = "TYPE";
+    if (unitExtra) unitExtra.textContent = unitData.aircraftType;
+  } else {
+    if (unitRow6) unitRow6.style.display = "none";
+  }
 }
 
 /**
@@ -185,6 +198,7 @@ function updateSatellitePanel(unitData: SatelliteState): void {
   if (unitHdgEl) unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
   if (unitSpdEl) unitSpdEl.textContent = speed;
   if (unitAltEl) unitAltEl.textContent = `${altKm} km`;
+  if (unitRow6) unitRow6.style.display = "none";
 }
 
 /**
@@ -205,6 +219,7 @@ function updateDronePanel(unitData: DroneState): void {
   if (unitHdgEl) unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
   if (unitSpdEl) unitSpdEl.textContent = speed;
   if (unitAltEl) unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
+  if (unitRow6) unitRow6.style.display = "none";
 }
 
 /**
@@ -222,6 +237,7 @@ function updateAirportPanel(airport: { name: string; lat: number; lon: number })
   if (unitHdgEl) unitHdgEl.textContent = `${airport.lon.toFixed(4)}°`;
   if (unitSpdEl) unitSpdEl.textContent = "—";
   if (unitAltEl) unitAltEl.textContent = "INTL";
+  if (unitRow6) unitRow6.style.display = "none";
 }
 
 // =============================================================================

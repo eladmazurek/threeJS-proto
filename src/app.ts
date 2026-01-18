@@ -132,6 +132,14 @@ function main() {
       droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
       // Trails for ships (aircraft trails stay since we have live aircraft)
       shipTrailRefs.mesh.visible = showSimulatedUnits && unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
+      // Also hide labels for simulated-only units
+      labelParams.showShipLabels = showSimulatedUnits;
+      labelParams.showSatelliteLabels = showSimulatedUnits;
+      labelParams.showDroneLabels = showSimulatedUnits;
+      // Update state.unitCounts so click detection respects visibility
+      state.unitCounts.showShips = showSimulatedUnits && unitCountParams.showShips;
+      state.unitCounts.showSatellites = showSimulatedUnits && unitCountParams.showSatellites;
+      state.unitCounts.showDrones = showSimulatedUnits && unitCountParams.showDrones;
     },
   });
   // Start with simulated feed (default)
@@ -217,7 +225,8 @@ function main() {
 
   const tick = () => {
     frameStartTime = performance.now();
-    let t0 = frameStartTime, t1;
+    let t0 = frameStartTime,
+      t1;
 
     const elapsedTime = clock.getElapsedTime();
     const cameraDistance = camera.position.length();
@@ -248,9 +257,13 @@ function main() {
     updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
     // Sync live feed state (handles interpolation + GPU update for live mode)
     syncLiveFeedState();
-    t1 = performance.now(); debugTiming.motion += t1 - t0; t0 = t1;
+    t1 = performance.now();
+    debugTiming.motion += t1 - t0;
+    t0 = t1;
     updateTrails(state.trails, state.ships, state.aircraft, shipTrailRefs, aircraftTrailRefs);
-    t1 = performance.now(); debugTiming.trails += t1 - t0; t0 = t1;
+    t1 = performance.now();
+    debugTiming.trails += t1 - t0;
+    t0 = t1;
 
     // Adjust rotation speed based on zoom level
     const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
@@ -283,11 +296,15 @@ function main() {
     updateAirportScales(cameraDistance);
     updateLabelAssignments(camera);
     updateLabelPositions(earthRotY);
-    t1 = performance.now(); debugTiming.labels += t1 - t0; t0 = t1;
+    t1 = performance.now();
+    debugTiming.labels += t1 - t0;
+    t0 = t1;
     updateH3Grid(cameraDistance, elapsedTime);
     processH3BuildChunk();
     updateH3PopupPeriodic(elapsedTime);
-    t1 = performance.now(); debugTiming.h3 += t1 - t0; t0 = t1;
+    t1 = performance.now();
+    debugTiming.h3 += t1 - t0;
+    t0 = t1;
 
     const h3Highlight = getH3HighlightMesh();
     if (h3Highlight && h3Highlight.visible && h3Highlight.material) {
@@ -326,7 +343,8 @@ function main() {
     camera.near = nearPlane;
     camera.updateProjectionMatrix();
 
-    t1 = performance.now(); debugTiming.other += t1 - t0; // selection/tiles/misc work
+    t1 = performance.now();
+    debugTiming.other += t1 - t0; // selection/tiles/misc work
     const renderStart = performance.now();
     renderer.render(scene, camera);
     debugTiming.gpu += performance.now() - renderStart;
@@ -348,7 +366,7 @@ function main() {
       // Log debug timing
       if (debugTiming.count > 0) {
         const n = debugTiming.count;
-        console.log(`[Timing] motion: ${(debugTiming.motion/n).toFixed(2)}ms, trails: ${(debugTiming.trails/n).toFixed(2)}ms, labels: ${(debugTiming.labels/n).toFixed(2)}ms, h3: ${(debugTiming.h3/n).toFixed(2)}ms, other: ${(debugTiming.other/n).toFixed(2)}ms, gpu: ${(debugTiming.gpu/n).toFixed(2)}ms`);
+        //console.log(`[Timing] motion: ${(debugTiming.motion/n).toFixed(2)}ms, trails: ${(debugTiming.trails/n).toFixed(2)}ms, labels: ${(debugTiming.labels/n).toFixed(2)}ms, h3: ${(debugTiming.h3/n).toFixed(2)}ms, other: ${(debugTiming.other/n).toFixed(2)}ms, gpu: ${(debugTiming.gpu/n).toFixed(2)}ms`);
         debugTiming = { motion: 0, trails: 0, labels: 0, h3: 0, other: 0, gpu: 0, count: 0 };
       }
       frameCount = 0;

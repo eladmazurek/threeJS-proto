@@ -93,6 +93,10 @@ export function createMainOverlay() {
           <span class="unit-info-label" id="unit-label-5">ALT</span>
           <span class="unit-info-value" id="unit-alt">0 ft</span>
         </div>
+        <div class="unit-info-row" id="unit-row-6">
+          <span class="unit-info-label" id="unit-label-6">TYPE</span>
+          <span class="unit-info-value" id="unit-extra">—</span>
+        </div>
       </div>
     </div>
 
