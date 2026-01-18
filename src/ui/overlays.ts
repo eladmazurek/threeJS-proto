@@ -401,24 +401,25 @@ export function updateUnitInfoAircraft(
   lon: number,
   heading: number,
   speed: number,
-  altitude: number
+  altitude: number,
+  originCountry?: string
 ): void {
   if (!unitTypeEl || !unitIdEl || !unitLatEl || !unitLonEl || !unitHdgEl || !unitSpdEl || !unitAltEl) return;
   if (!unitLabel1 || !unitLabel2 || !unitLabel3 || !unitLabel4 || !unitLabel5) return;
 
-  unitTypeEl.textContent = "AIRCRAFT";
+  unitTypeEl.textContent = "";
   unitTypeEl.className = "unit-info-type aircraft";
   unitIdEl.textContent = callsign;
-  unitLabel1.textContent = "LAT";
-  unitLabel2.textContent = "LON";
-  unitLabel3.textContent = "HDG";
-  unitLabel4.textContent = "GS";
-  unitLabel5.textContent = "FL";
-  unitLatEl.textContent = lat.toFixed(4) + "°";
-  unitLonEl.textContent = lon.toFixed(4) + "°";
-  unitHdgEl.textContent = heading.toFixed(0) + "°";
-  unitSpdEl.textContent = speed.toFixed(0) + " kts";
-  unitAltEl.textContent = "FL" + Math.round(altitude / 100);
+  unitLabel1.textContent = "POS";
+  unitLabel2.textContent = "HDG";
+  unitLabel3.textContent = "SPD";
+  unitLabel4.textContent = "REG";
+  unitLabel5.textContent = "ALT";
+  unitLatEl.textContent = `${lat.toFixed(2)}° ${lon.toFixed(2)}°`;
+  unitLonEl.textContent = heading.toFixed(0) + "°";
+  unitHdgEl.textContent = speed.toFixed(0) + " kts";
+  unitSpdEl.textContent = originCountry || "—";
+  unitAltEl.textContent = Math.round(altitude).toLocaleString() + " ft";
 }
 
 /**

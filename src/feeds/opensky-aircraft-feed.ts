@@ -95,6 +95,7 @@ interface InterpolatedAircraft extends AircraftState {
   apiAltitude: number;
   apiGroundSpeed: number;
   apiTimestamp: number;
+  apiOriginCountry: string;
   // Previous position for interpolation
   prevLat: number;
   prevLon: number;
@@ -349,6 +350,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
 
       const icao24 = state[OS.ICAO24] as string;
       const callsign = ((state[OS.CALLSIGN] as string) || icao24).trim();
+      const originCountry = (state[OS.ORIGIN_COUNTRY] as string) || "Unknown";
       const lat = state[OS.LATITUDE] as number;
       const lon = state[OS.LONGITUDE] as number;
       const heading = (state[OS.TRUE_TRACK] as number) || 0;
@@ -369,6 +371,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           altitude: altitudeFeet,
           groundSpeed: groundSpeedKnots,
           callsign,
+          originCountry,
           scale: 1.0,
           flightLevel: Math.floor(altitudeFeet / 100),
           // Simulation properties (unused for live aircraft, but required by type)
@@ -383,6 +386,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           apiAltitude: altitudeFeet,
           apiGroundSpeed: groundSpeedKnots,
           apiTimestamp: timestamp,
+          apiOriginCountry: originCountry,
           // Previous values (same as current for new aircraft)
           prevLat: lat,
           prevLon: lon,
@@ -402,7 +406,9 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.apiAltitude = altitudeFeet;
         aircraft.apiGroundSpeed = groundSpeedKnots;
         aircraft.apiTimestamp = timestamp;
+        aircraft.apiOriginCountry = originCountry;
         aircraft.callsign = callsign;
+        aircraft.originCountry = originCountry;
         aircraft.flightLevel = Math.floor(altitudeFeet / 100);
         // Reset interpolation
         aircraft.interpProgress = 0;
@@ -504,6 +510,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           altitude: aircraft.altitude,
           groundSpeed: aircraft.groundSpeed,
           callsign: aircraft.callsign,
+          originCountry: aircraft.originCountry,
           scale: aircraft.scale,
           flightLevel: aircraft.flightLevel,
           // Simulation properties (unused for live aircraft, but required by type)
@@ -521,6 +528,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         target.altitude = aircraft.altitude;
         target.groundSpeed = aircraft.groundSpeed;
         target.callsign = aircraft.callsign;
+        target.originCountry = aircraft.originCountry;
       }
       i++;
     }

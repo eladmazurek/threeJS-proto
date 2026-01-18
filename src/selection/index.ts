@@ -91,17 +91,21 @@ function selectUnit(type, index) {
     }
   
     if (!unitData) return;
-  
+
     state.selectedUnit = { type, index, data: unitData };
-  
-    unitTypeEl.textContent = typeLabel;
-    unitTypeEl.className = `unit-info-type ${typeClass}`;
-  
-    if (type === "airport") {
-      unitIdEl.textContent = unitData.code;
-    } else if (type === "aircraft" && unitData.callsign) {
+
+    // For aircraft, hide the type label and show callsign prominently
+    if (type === "aircraft" && unitData.callsign) {
+      unitTypeEl.textContent = "";
+      unitTypeEl.className = `unit-info-type ${typeClass}`;
       unitIdEl.textContent = unitData.callsign;
+    } else if (type === "airport") {
+      unitTypeEl.textContent = typeLabel;
+      unitTypeEl.className = `unit-info-type ${typeClass}`;
+      unitIdEl.textContent = unitData.code;
     } else {
+      unitTypeEl.textContent = typeLabel;
+      unitTypeEl.className = `unit-info-type ${typeClass}`;
       unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
     }
   
@@ -147,13 +151,13 @@ export function updateSelectedUnitInfo() {
       unitData = state.aircraft[index];
       if (!unitData) { deselectUnit(); return; }
       const altFeet = unitData.altitude ? Math.round(unitData.altitude) : 0;
-      const flightLevel = Math.round(altFeet / 100);
       speed = unitData.groundSpeed ? `${Math.round(unitData.groundSpeed)} kts` : "0 kts";
-      unitLabel1.textContent = "POS"; unitLabel2.textContent = "HDG"; unitLabel3.textContent = "SPD"; unitLabel4.textContent = "FL"; unitLabel5.textContent = "ALT";
+      const country = unitData.originCountry || "—";
+      unitLabel1.textContent = "POS"; unitLabel2.textContent = "HDG"; unitLabel3.textContent = "SPD"; unitLabel4.textContent = "REG"; unitLabel5.textContent = "ALT";
       unitLatEl.textContent = `${unitData.lat.toFixed(2)}° ${unitData.lon.toFixed(2)}°`;
       unitLonEl.textContent = `${unitData.heading.toFixed(0)}°`;
       unitHdgEl.textContent = speed;
-      unitSpdEl.textContent = `FL${flightLevel}`;
+      unitSpdEl.textContent = country;
       unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
     } else if (type === "satellite") {
         unitData = state.satellites[index];

@@ -35,6 +35,7 @@ export interface AircraftState extends BaseUnitState {
   altitude: number;
   groundSpeed: number;
   flightLevel: number;
+  originCountry?: string;
 }
 
 /** Satellite unit state */

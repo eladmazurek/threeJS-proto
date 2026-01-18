@@ -150,19 +150,20 @@ function updateShipPanel(unitData: ShipState): void {
  * Update panel content for an aircraft
  */
 function updateAircraftPanel(unitData: AircraftState): void {
-  const altFeet = unitData.altitude ? unitData.altitude.toLocaleString() : "0";
-  const speed = unitData.groundSpeed ? `${unitData.groundSpeed} kts` : "0 kts";
+  const altFeet = unitData.altitude ? Math.round(unitData.altitude).toLocaleString() : "0";
+  const speed = unitData.groundSpeed ? `${Math.round(unitData.groundSpeed)} kts` : "0 kts";
+  const country = unitData.originCountry || "—";
 
-  if (unitLabel1) unitLabel1.textContent = "LAT";
-  if (unitLabel2) unitLabel2.textContent = "LON";
-  if (unitLabel3) unitLabel3.textContent = "HDG";
-  if (unitLabel4) unitLabel4.textContent = "SPD";
+  if (unitLabel1) unitLabel1.textContent = "POS";
+  if (unitLabel2) unitLabel2.textContent = "HDG";
+  if (unitLabel3) unitLabel3.textContent = "SPD";
+  if (unitLabel4) unitLabel4.textContent = "REG";
   if (unitLabel5) unitLabel5.textContent = "ALT";
 
-  if (unitLatEl) unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-  if (unitLonEl) unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-  if (unitHdgEl) unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-  if (unitSpdEl) unitSpdEl.textContent = speed;
+  if (unitLatEl) unitLatEl.textContent = `${unitData.lat.toFixed(2)}° ${unitData.lon.toFixed(2)}°`;
+  if (unitLonEl) unitLonEl.textContent = `${unitData.heading.toFixed(0)}°`;
+  if (unitHdgEl) unitHdgEl.textContent = speed;
+  if (unitSpdEl) unitSpdEl.textContent = country;
   if (unitAltEl) unitAltEl.textContent = `${altFeet} ft`;
 }
 
