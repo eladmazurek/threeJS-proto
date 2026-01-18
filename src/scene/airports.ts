@@ -24,6 +24,10 @@ export const airportParams: AirportParams = {
 export const airportGroup = new THREE.Group();
 airportGroup.renderOrder = 5;
 
+/** Cached lists of objects for fast per-frame updates (avoid traverse) */
+const scaleableMarkers: THREE.Object3D[] = [];
+const scaleableLabels: THREE.Object3D[] = [];
+
 // =============================================================================
 // MARKER CREATION
 // =============================================================================
@@ -140,7 +144,7 @@ function createAirportMarker(airport: Airport): THREE.Group {
  * Build all airport markers
  */
 export function buildAirportMarkers(): void {
-  // Clear existing markers
+  // Clear existing markers and caches
   while (airportGroup.children.length > 0) {
     const child = airportGroup.children[0];
     child.traverse((obj) => {
@@ -151,12 +155,25 @@ export function buildAirportMarkers(): void {
     });
     airportGroup.remove(child);
   }
+  scaleableMarkers.length = 0;
+  scaleableLabels.length = 0;
 
   // Create markers for each airport
   for (const airport of AIRPORTS) {
     const marker = createAirportMarker(airport);
     airportGroup.add(marker);
   }
+
+  // Cache scaleable objects for fast per-frame updates (avoid traverse)
+  airportGroup.traverse((obj) => {
+    if (obj.userData && obj.userData.baseScale) {
+      if (obj.userData.isLabel) {
+        scaleableLabels.push(obj);
+      } else {
+        scaleableMarkers.push(obj);
+      }
+    }
+  });
 
   // Update visibility
   airportGroup.visible = airportParams.visible;
@@ -177,6 +194,7 @@ export function updateAirportLabels(): void {
 /**
  * Update airport marker and label scales based on camera distance.
  * Keeps them at a consistent screen size regardless of zoom.
+ * Uses cached object lists for O(n) instead of traverse overhead.
  */
 export function updateAirportScales(cameraDistance: number): void {
   // Scale factor: same as icons
@@ -189,34 +207,35 @@ export function updateAirportScales(cameraDistance: number): void {
   // Use markerSize param as multiplier
   const sizeMultiplier = airportParams.markerSize / 0.06; // Normalize to default size
 
-  airportGroup.traverse((obj) => {
-    if (obj.userData && obj.userData.baseScale) {
-      if (obj.userData.isLabel) {
-        // Labels scale with marker size and zoom
-        const labelScale = clampedScale * sizeMultiplier;
-        obj.scale.set(
-          obj.userData.baseScale.x * labelScale,
-          obj.userData.baseScale.y * labelScale,
-          1
-        );
-        // Also update label position to maintain constant visual distance from marker
-        if (obj.userData.basePosition && obj.userData.offsetDirection) {
-          const bp = obj.userData.basePosition;
-          const od = obj.userData.offsetDirection;
-          const scaledOffset = obj.userData.baseOffset * clampedScale;
-          obj.position.set(
-            bp.x + od.x * scaledOffset,
-            bp.y + od.y * scaledOffset,
-            bp.z + od.z * scaledOffset
-          );
-        }
-      } else {
-        // Markers
-        const size = airportParams.markerSize * clampedScale;
-        obj.scale.set(size, size, 1);
-      }
+  // Update markers (simple scale)
+  const markerSize = airportParams.markerSize * clampedScale;
+  for (let i = 0; i < scaleableMarkers.length; i++) {
+    const obj = scaleableMarkers[i];
+    obj.scale.set(markerSize, markerSize, 1);
+  }
+
+  // Update labels (scale + position)
+  const labelScale = clampedScale * sizeMultiplier;
+  for (let i = 0; i < scaleableLabels.length; i++) {
+    const obj = scaleableLabels[i];
+    const ud = obj.userData;
+    obj.scale.set(
+      ud.baseScale.x * labelScale,
+      ud.baseScale.y * labelScale,
+      1
+    );
+    // Update label position to maintain constant visual distance from marker
+    if (ud.basePosition && ud.offsetDirection) {
+      const bp = ud.basePosition;
+      const od = ud.offsetDirection;
+      const scaledOffset = ud.baseOffset * clampedScale;
+      obj.position.set(
+        bp.x + od.x * scaledOffset,
+        bp.y + od.y * scaledOffset,
+        bp.z + od.z * scaledOffset
+      );
     }
-  });
+  }
 }
 
 /**

@@ -119,6 +119,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
   private _interpolationInterval: ReturnType<typeof setInterval> | null = null;
   private _fetchError: string | null = null;
   private _consecutiveErrors: number = 0;
+  private _isDirty: boolean = false; // Track if positions changed since last sync
+
+  // OAuth2 token management
+  private _accessToken: string | null = null;
+  private _tokenExpiry: number = 0;
 
   constructor(config: Partial<OpenSkyFeedConfig> = {}) {
     super();
@@ -185,15 +190,22 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
   protected async tick(): Promise<void> {
     const now = performance.now();
 
-    // Respect rate limiting
-    const minInterval = this._config.clientId ? 5000 : 10000;
+    // Base rate limit (OpenSky API limits)
+    const baseInterval = this._config.clientId ? 5000 : 10000;
+
+    // Exponential backoff on errors: double the interval for each consecutive error
+    const backoffMultiplier = Math.min(Math.pow(2, this._consecutiveErrors), 32); // Cap at 32x
+    const minInterval = baseInterval * backoffMultiplier;
+
     if (now - this._lastFetchTime < minInterval) {
       return;
     }
 
+    // Always update fetch time to prevent rapid retries
+    this._lastFetchTime = now;
+
     try {
       const states = await this.fetchAircraftStates();
-      this._lastFetchTime = now;
       this._fetchError = null;
       this._consecutiveErrors = 0;
 
@@ -203,17 +215,69 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     } catch (error) {
       this._consecutiveErrors++;
       this._fetchError = error instanceof Error ? error.message : String(error);
-      console.error(`[${this.id}] Fetch error (${this._consecutiveErrors}):`, this._fetchError);
 
-      // Back off on repeated errors
-      if (this._consecutiveErrors >= 3) {
-        console.warn(`[${this.id}] Multiple errors, backing off...`);
+      const nextRetrySeconds = (baseInterval * Math.min(Math.pow(2, this._consecutiveErrors), 32)) / 1000;
+      console.error(`[${this.id}] Fetch error (${this._consecutiveErrors}): ${this._fetchError} - next retry in ${nextRetrySeconds}s`);
+    }
+  }
+
+  /**
+   * Get OAuth2 access token, refreshing if needed
+   */
+  private async getAccessToken(): Promise<string | null> {
+    if (!this._config.clientId || !this._config.clientKey) {
+      return null;
+    }
+
+    // Return cached token if still valid (with 1 min buffer)
+    if (this._accessToken && Date.now() < this._tokenExpiry - 60000) {
+      return this._accessToken;
+    }
+
+    console.log(`[${this.id}] Fetching OAuth2 token...`);
+
+    try {
+      // Use proxy in development
+      const tokenUrl = import.meta.env.DEV
+        ? "/api/opensky-auth/auth/realms/opensky-network/protocol/openid-connect/token"
+        : "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
+
+      const response = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "client_credentials",
+          client_id: this._config.clientId,
+          client_secret: this._config.clientKey,
+        }),
+        credentials: 'omit',
+      });
+
+      if (!response.ok) {
+        console.error(`[${this.id}] OAuth2 token request failed: ${response.status}`);
+        return null;
       }
+
+      const data = await response.json();
+      this._accessToken = data.access_token;
+      // Token expires in 30 min, store expiry time
+      this._tokenExpiry = Date.now() + (data.expires_in || 1800) * 1000;
+      console.log(`[${this.id}] OAuth2 token obtained, expires in ${data.expires_in}s`);
+      return this._accessToken;
+    } catch (error) {
+      console.error(`[${this.id}] OAuth2 token error:`, error);
+      return null;
     }
   }
 
   private async fetchAircraftStates(): Promise<(string | number | boolean | null)[][] | null> {
-    let url = "https://opensky-network.org/api/states/all";
+    // Use proxy in development to avoid CORS, direct URL in production
+    const baseUrl = import.meta.env.DEV
+      ? "/api/opensky/states/all"
+      : "https://opensky-network.org/api/states/all";
+    let url = baseUrl;
     const params: string[] = [];
 
     // Add bounding box if viewport filtering is enabled
@@ -233,13 +297,35 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
 
     const headers: HeadersInit = {};
 
-    // Add authentication if credentials are provided
+    // Use OAuth2 Bearer token if credentials are configured
     if (this._config.clientId && this._config.clientKey) {
-      const credentials = btoa(`${this._config.clientId}:${this._config.clientKey}`);
-      headers["Authorization"] = `Basic ${credentials}`;
+      const token = await this.getAccessToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      } else {
+        console.warn(`[${this.id}] Failed to get token, trying anonymous mode`);
+      }
     }
 
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, {
+      headers,
+      credentials: 'omit',
+    });
+
+    // If auth fails, clear token and fall back to anonymous
+    if (response.status === 401) {
+      this._accessToken = null;
+      this._tokenExpiry = 0;
+
+      if (this._config.clientId) {
+        console.warn(`[${this.id}] Auth failed (token invalid/expired), switching to anonymous mode.`);
+        this._config.clientId = "";
+        this._config.clientKey = "";
+        this._config.updateRateMs = 10000;
+        this._consecutiveErrors = 2;
+        throw new Error("Auth failed - switching to anonymous mode");
+      }
+    }
 
     if (!response.ok) {
       if (response.status === 429) {
@@ -349,6 +435,9 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       }
     }
 
+    // Mark dirty so next sync triggers GPU update
+    this._isDirty = true;
+
     console.log(`[${this.id}] Processed ${updates.length} aircraft (${this._units.size} tracked)`);
     this.emit(updates);
   }
@@ -368,9 +457,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     const interpStep = (deltaTime / (this._config.updateRateMs / 1000)) * this._config.interpolationSpeed;
 
     // Update internal state only - no emit to avoid callback overhead
+    let anyUpdated = false;
     for (const aircraft of this._units.values()) {
       if (aircraft.interpProgress >= 1.0) continue;
 
+      anyUpdated = true;
       aircraft.interpProgress = Math.min(1.0, aircraft.interpProgress + interpStep);
       const t = this.easeInOutCubic(aircraft.interpProgress);
 
@@ -382,15 +473,26 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       aircraft.groundSpeed = this.lerp(aircraft.groundSpeed, aircraft.apiGroundSpeed, t);
     }
 
-    // Mark that interpolation occurred (for sync)
-    this._lastInterpolationTime = now;
+    // Only mark dirty if positions actually changed
+    if (anyUpdated) {
+      this._isDirty = true;
+    }
   }
 
   /**
    * Sync internal interpolated state to external state array.
    * Call this once per frame from the render loop.
+   * Returns true if GPU buffers need updating (positions changed).
    */
-  syncToState(stateArray: AircraftState[]): void {
+  syncToState(stateArray: AircraftState[]): boolean {
+    // Check if we need to update
+    const needsUpdate = this._isDirty;
+    this._isDirty = false;
+
+    if (!needsUpdate && stateArray.length === this._units.size) {
+      return false; // No changes, skip sync
+    }
+
     let i = 0;
     for (const aircraft of this._units.values()) {
       if (i >= stateArray.length) {
@@ -424,6 +526,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     }
     // Trim excess
     stateArray.length = this._units.size;
+    return true;
   }
 
   /**

@@ -212,8 +212,12 @@ function main() {
   let frameStartTime = 0;
   const frameTimes: number[] = [];
 
+  // Debug timing (temporary)
+  let debugTiming = { motion: 0, trails: 0, labels: 0, h3: 0, other: 0, gpu: 0, count: 0 };
+
   const tick = () => {
     frameStartTime = performance.now();
+    let t0 = frameStartTime, t1;
 
     const elapsedTime = clock.getElapsedTime();
     const cameraDistance = camera.position.length();
@@ -244,7 +248,9 @@ function main() {
     updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
     // Sync live feed state (handles interpolation + GPU update for live mode)
     syncLiveFeedState();
+    t1 = performance.now(); debugTiming.motion += t1 - t0; t0 = t1;
     updateTrails(state.trails, state.ships, state.aircraft, shipTrailRefs, aircraftTrailRefs);
+    t1 = performance.now(); debugTiming.trails += t1 - t0; t0 = t1;
 
     // Adjust rotation speed based on zoom level
     const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
@@ -277,9 +283,11 @@ function main() {
     updateAirportScales(cameraDistance);
     updateLabelAssignments(camera);
     updateLabelPositions(earthRotY);
+    t1 = performance.now(); debugTiming.labels += t1 - t0; t0 = t1;
     updateH3Grid(cameraDistance, elapsedTime);
     processH3BuildChunk();
     updateH3PopupPeriodic(elapsedTime);
+    t1 = performance.now(); debugTiming.h3 += t1 - t0; t0 = t1;
 
     const h3Highlight = getH3HighlightMesh();
     if (h3Highlight && h3Highlight.visible && h3Highlight.material) {
@@ -318,7 +326,11 @@ function main() {
     camera.near = nearPlane;
     camera.updateProjectionMatrix();
 
+    t1 = performance.now(); debugTiming.other += t1 - t0; // selection/tiles/misc work
+    const renderStart = performance.now();
     renderer.render(scene, camera);
+    debugTiming.gpu += performance.now() - renderStart;
+    debugTiming.count++;
 
     // Track actual frame work time (not inter-frame time)
     const frameTime = performance.now() - frameStartTime;
@@ -333,6 +345,12 @@ function main() {
       perfStats.fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
       perfStats.ships = state.ships.length;
       perfStats.aircraft = state.aircraft.length;
+      // Log debug timing
+      if (debugTiming.count > 0) {
+        const n = debugTiming.count;
+        console.log(`[Timing] motion: ${(debugTiming.motion/n).toFixed(2)}ms, trails: ${(debugTiming.trails/n).toFixed(2)}ms, labels: ${(debugTiming.labels/n).toFixed(2)}ms, h3: ${(debugTiming.h3/n).toFixed(2)}ms, other: ${(debugTiming.other/n).toFixed(2)}ms, gpu: ${(debugTiming.gpu/n).toFixed(2)}ms`);
+        debugTiming = { motion: 0, trails: 0, labels: 0, h3: 0, other: 0, gpu: 0, count: 0 };
+      }
       frameCount = 0;
       lastFpsTime = now;
     }

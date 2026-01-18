@@ -11,6 +11,25 @@ export default defineConfig({
   publicDir: '../static',
   envDir: '../',
 
+  server: {
+    proxy: {
+      // Proxy OpenSky auth server for OAuth2 token requests
+      '/api/opensky-auth': {
+        target: 'https://auth.opensky-network.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/opensky-auth/, ''),
+        secure: true,
+      },
+      // Proxy OpenSky API requests to avoid CORS issues in development
+      '/api/opensky': {
+        target: 'https://opensky-network.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/opensky/, '/api'),
+        secure: true,
+      },
+    },
+  },
+
   build: {
     outDir: '../dist',
     emptyOutDir: true,

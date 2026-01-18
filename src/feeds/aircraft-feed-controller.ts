@@ -87,8 +87,8 @@ export function initAircraftFeedController(deps: FeedControllerDependencies): vo
   onUnitVisibilityChange = deps.onUnitVisibilityChange || null;
 
   // Get OpenSky credentials from environment
-  const clientId = import.meta.env.VITE_OPENSKY_CLIENT_ID || "";
-  const clientKey = import.meta.env.VITE_OPENSKY_CLIENT_KEY || "";
+  const clientId = import.meta.env.VITE_OPEN_SKY_CLIENT_ID || "";
+  const clientKey = import.meta.env.VITE_OPEN_SKY_CLIENT_KEY || "";
 
   // Create simulated feed
   simulatedFeed = new SimulatedAircraftFeed({
@@ -112,9 +112,10 @@ export function initAircraftFeedController(deps: FeedControllerDependencies): vo
 
   // Log credential status
   if (clientId) {
-    console.log("[AircraftFeedController] OpenSky credentials found, using authenticated mode (5s rate limit)");
+    console.log(`[AircraftFeedController] OpenSky credentials found (${clientId.substring(0, 3)}...), using authenticated mode (5s rate limit)`);
   } else {
     console.log("[AircraftFeedController] No OpenSky credentials, using anonymous mode (10s rate limit)");
+    console.log("[AircraftFeedController] Expected env vars: VITE_OPEN_SKY_CLIENT_ID, VITE_OPEN_SKY_CLIENT_KEY");
   }
 
   console.log("[AircraftFeedController] Initialized");
@@ -393,11 +394,12 @@ export function syncLiveFeedState(): void {
   if (aircraftFeedParams.mode !== "live" || !liveFeed) return;
 
   // Sync interpolated positions directly to state array
-  liveFeed.syncToState(state.aircraft);
+  // Returns true only if positions actually changed
+  const needsGpuUpdate = liveFeed.syncToState(state.aircraft);
   aircraftFeedParams.trackedCount = state.aircraft.length;
 
-  // Update GPU buffers
-  if (onAttributesUpdate) {
+  // Only update GPU buffers when positions changed
+  if (needsGpuUpdate && onAttributesUpdate) {
     onAttributesUpdate();
   }
 }
