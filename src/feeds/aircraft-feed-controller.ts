@@ -398,6 +398,17 @@ export function syncLiveFeedState(): void {
   const needsGpuUpdate = liveFeed.syncToState(state.aircraft);
   aircraftFeedParams.trackedCount = state.aircraft.length;
 
+  // Update selected unit index if it's an aircraft (indices may have shifted)
+  if (state.selectedUnit?.type === "aircraft" && state.selectedUnit.id) {
+    const newIndex = state.aircraft.findIndex(a => a.callsign === state.selectedUnit!.id);
+    if (newIndex >= 0) {
+      state.selectedUnit.index = newIndex;
+    } else {
+      // Aircraft no longer in feed - deselect
+      state.selectedUnit = null;
+    }
+  }
+
   // Only update GPU buffers when positions changed
   if (needsGpuUpdate && onAttributesUpdate) {
     onAttributesUpdate();

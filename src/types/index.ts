@@ -82,6 +82,8 @@ export type UnitType = "ship" | "aircraft" | "satellite" | "drone" | "airport";
 export interface SelectedUnit {
   type: UnitType;
   index: number;
+  /** Unique identifier for stable selection (callsign for aircraft, mmsi for ships, etc.) */
+  id?: string;
   data?: any;
 }
 

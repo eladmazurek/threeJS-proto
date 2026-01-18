@@ -92,7 +92,15 @@ function selectUnit(type, index) {
   
     if (!unitData) return;
 
-    state.selectedUnit = { type, index, data: unitData };
+    // Get unique ID for stable selection across array rebuilds
+    let id: string | undefined;
+    if (type === "aircraft" && unitData.callsign) {
+      id = unitData.callsign;
+    } else if (type === "ship" && unitData.mmsi) {
+      id = unitData.mmsi;
+    }
+
+    state.selectedUnit = { type, index, id, data: unitData };
 
     // For aircraft, hide the type label and show callsign prominently
     if (type === "aircraft" && unitData.callsign) {
