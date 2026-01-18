@@ -99,6 +99,8 @@ function selectUnit(type, index) {
   
     if (type === "airport") {
       unitIdEl.textContent = unitData.code;
+    } else if (type === "aircraft" && unitData.callsign) {
+      unitIdEl.textContent = unitData.callsign;
     } else {
       unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
     }
@@ -144,15 +146,15 @@ export function updateSelectedUnitInfo() {
     } else if (type === "aircraft") {
       unitData = state.aircraft[index];
       if (!unitData) { deselectUnit(); return; }
-      const altFeet = unitData.altitude ? unitData.altitude.toLocaleString() : "0";
-      altitude = `${altFeet} ft`;
-      speed = unitData.groundSpeed ? `${unitData.groundSpeed} kts` : "0 kts";
-      unitLabel1.textContent = "LAT"; unitLabel2.textContent = "LON"; unitLabel3.textContent = "HDG"; unitLabel4.textContent = "SPD"; unitLabel5.textContent = "ALT";
-      unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-      unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-      unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-      unitSpdEl.textContent = speed;
-      unitAltEl.textContent = altitude;
+      const altFeet = unitData.altitude ? Math.round(unitData.altitude) : 0;
+      const flightLevel = Math.round(altFeet / 100);
+      speed = unitData.groundSpeed ? `${Math.round(unitData.groundSpeed)} kts` : "0 kts";
+      unitLabel1.textContent = "POS"; unitLabel2.textContent = "HDG"; unitLabel3.textContent = "SPD"; unitLabel4.textContent = "FL"; unitLabel5.textContent = "ALT";
+      unitLatEl.textContent = `${unitData.lat.toFixed(2)}° ${unitData.lon.toFixed(2)}°`;
+      unitLonEl.textContent = `${unitData.heading.toFixed(0)}°`;
+      unitHdgEl.textContent = speed;
+      unitSpdEl.textContent = `FL${flightLevel}`;
+      unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
     } else if (type === "satellite") {
         unitData = state.satellites[index];
         if (!unitData) { deselectUnit(); return; }
