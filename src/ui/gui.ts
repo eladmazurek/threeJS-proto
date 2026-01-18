@@ -12,7 +12,7 @@ import {
   setInterpolation,
   startAircraftFeed,
 } from '../feeds';
-import type { FeedMode, CoverageMode } from '../feeds';
+import type { CoverageMode } from '../feeds';
 
 export function createGui(params) {
   const {
@@ -244,25 +244,21 @@ export function createGui(params) {
   motionFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
   motionFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
 
-  // Aircraft Data Feed folder
-  const feedFolder = gui.addFolder("Aircraft Data Feed");
+  // Live Data Feeds folder
+  const feedFolder = gui.addFolder("Live Data Feeds");
   feedFolder.close();
 
-  // Feed mode selector
-  const feedModeOptions: Record<string, FeedMode> = {
-    "Simulated": "simulated",
-    "Live (OpenSky)": "live",
-  };
-  const feedModeDisplay = { mode: "Simulated" };
+  // OpenSky toggle
+  const openskyState = { enabled: false };
   feedFolder
-    .add(feedModeDisplay, "mode", Object.keys(feedModeOptions))
-    .name("Data Source")
-    .onChange((value: string) => {
-      setFeedMode(feedModeOptions[value]);
+    .add(openskyState, "enabled")
+    .name("OpenSky (Aircraft)")
+    .onChange((value: boolean) => {
+      setFeedMode(value ? "live" : "simulated");
       startAircraftFeed();
     });
 
-  // Coverage mode selector (only relevant for live feed)
+  // Coverage mode selector
   const coverageOptions: Record<string, CoverageMode> = {
     "Worldwide": "worldwide",
     "Viewport Only": "viewport",
