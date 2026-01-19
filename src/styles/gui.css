@@ -87,26 +87,25 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
 }
 
-/* Nested subfolders - feed item style */
+/* Nested subfolders - minimal style */
 .lil-gui .lil-gui .lil-title {
   background: rgba(255, 255, 255, 0.03) !important;
-  border-left: 2px solid rgba(100, 200, 255, 0.4) !important;
+  border-left: none !important;
   border-bottom: none !important;
   font-size: 8px !important;
   letter-spacing: 1.5px !important;
   color: rgba(255, 255, 255, 0.7) !important;
-  padding: 6px 10px 6px 12px !important;
+  padding: 6px 10px !important;
   margin: 4px 0 !important;
 }
 
 .lil-gui .lil-gui .lil-title:hover {
-  background: rgba(100, 200, 255, 0.08) !important;
-  border-left-color: rgba(100, 200, 255, 0.6) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 
 /* Subfolder children - tighter spacing */
 .lil-gui .lil-gui > .children {
-  border-left: 1px solid rgba(100, 200, 255, 0.15) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
   margin-left: 6px !important;
   padding-left: 6px !important;
 }

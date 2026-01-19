@@ -284,7 +284,7 @@ export const config = {
 
   labels: {
     enabled: true,
-    maxLabels: 500,
+    maxLabels: 100,
     updateInterval: 100,
     showShipLabels: true,
     showAircraftLabels: true,

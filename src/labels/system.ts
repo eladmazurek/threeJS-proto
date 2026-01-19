@@ -24,7 +24,7 @@ import { unitCountParams } from '../simulation/demo-data';
 
 export const labelParams = {
   enabled: true,
-  maxLabels: 500,
+  maxLabels: 100,
   updateInterval: 100,
   fontSize: 0.015,
   labelOffset: 0.025,
