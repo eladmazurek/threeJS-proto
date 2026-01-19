@@ -18,6 +18,7 @@ import type { UnitType, ShipState, AircraftState, SatelliteState, DroneState } f
 const unitInfoPanel = document.getElementById("unit-info");
 const unitTypeEl = document.getElementById("unit-type");
 const unitIdEl = document.getElementById("unit-id");
+const unitStalenessEl = document.getElementById("unit-staleness");
 const unitLatEl = document.getElementById("unit-lat");
 const unitLonEl = document.getElementById("unit-lon");
 const unitHdgEl = document.getElementById("unit-hdg");
@@ -149,6 +150,8 @@ function updateShipPanel(unitData: ShipState): void {
   if (unitSpdEl) unitSpdEl.textContent = speed;
   if (unitAltEl) unitAltEl.textContent = "0 ft";
   if (unitRow6) unitRow6.style.display = "none";
+  
+  if (unitStalenessEl) unitStalenessEl.textContent = "";
 }
 
 /**
@@ -171,9 +174,42 @@ function updateAircraftPanel(unitData: AircraftState): void {
   if (unitSpdEl) unitSpdEl.textContent = country;
   if (unitAltEl) unitAltEl.textContent = `${altFeet} ft`;
 
+  // Update staleness counter
+  let unitStalenessEl = document.getElementById("unit-staleness");
+  
+  // Self-healing: Create element if missing (fixes HMR/hot-reload issues)
+  if (!unitStalenessEl) {
+    const header = document.querySelector(".unit-info-header");
+    const closeBtn = document.getElementById("unit-close");
+    if (header) {
+      unitStalenessEl = document.createElement("span");
+      unitStalenessEl.id = "unit-staleness";
+      unitStalenessEl.className = "unit-staleness";
+      if (closeBtn) {
+        header.insertBefore(unitStalenessEl, closeBtn);
+      } else {
+        header.appendChild(unitStalenessEl);
+      }
+      console.log("[UI] Created missing unit-staleness element");
+    }
+  }
+
+  if (unitStalenessEl) {
+    if (unitData.apiTimestamp) {
+      const nowUnix = Date.now() / 1000;
+      const staleness = Math.max(0, Math.floor(nowUnix - unitData.apiTimestamp));
+      console.log(`[UI] Staleness: ${staleness}s (Now: ${nowUnix.toFixed(0)}, API: ${unitData.apiTimestamp.toFixed(0)})`);
+      unitStalenessEl.textContent = `+${staleness}s`;
+      unitStalenessEl.style.display = "inline"; // Force display
+    } else {
+      console.log(`[UI] No apiTimestamp for unit`, unitData);
+      unitStalenessEl.textContent = "";
+    }
+  }
+
   // Show aircraft type in 6th row only if available
   // Prefer ICAO type code with full name, fall back to category
-  console.log('[DEBUG] Aircraft type info:', { icaoTypeCode: unitData.icaoTypeCode, aircraftType: unitData.aircraftType });
+  // console.log('[DEBUG] Aircraft type info:', { icaoTypeCode: unitData.icaoTypeCode, aircraftType: unitData.aircraftType });
   const typeDisplay = unitData.icaoTypeCode
     ? formatAircraftType(unitData.icaoTypeCode)
     : unitData.aircraftType;
@@ -205,6 +241,8 @@ function updateSatellitePanel(unitData: SatelliteState): void {
   if (unitSpdEl) unitSpdEl.textContent = speed;
   if (unitAltEl) unitAltEl.textContent = `${altKm} km`;
   if (unitRow6) unitRow6.style.display = "none";
+  
+  if (unitStalenessEl) unitStalenessEl.textContent = "";
 }
 
 /**
@@ -226,6 +264,8 @@ function updateDronePanel(unitData: DroneState): void {
   if (unitSpdEl) unitSpdEl.textContent = speed;
   if (unitAltEl) unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
   if (unitRow6) unitRow6.style.display = "none";
+  
+  if (unitStalenessEl) unitStalenessEl.textContent = "";
 }
 
 /**
@@ -244,6 +284,8 @@ function updateAirportPanel(airport: { name: string; lat: number; lon: number })
   if (unitSpdEl) unitSpdEl.textContent = "—";
   if (unitAltEl) unitAltEl.textContent = "INTL";
   if (unitRow6) unitRow6.style.display = "none";
+  
+  if (unitStalenessEl) unitStalenessEl.textContent = "";
 }
 
 // =============================================================================

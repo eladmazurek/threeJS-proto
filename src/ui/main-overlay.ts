@@ -70,6 +70,7 @@ export function createMainOverlay() {
       <div class="unit-info-header">
         <span class="unit-info-type" id="unit-type">AIRCRAFT</span>
         <span class="unit-info-id" id="unit-id">#0000</span>
+        <span class="unit-staleness" id="unit-staleness"></span>
         <button class="unit-info-close" id="unit-close">×</button>
       </div>
       <div class="unit-info-body">

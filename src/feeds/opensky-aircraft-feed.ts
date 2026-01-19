@@ -125,6 +125,7 @@ interface InterpolatedAircraft extends AircraftState {
   apiAltitude: number;
   apiGroundSpeed: number;
   apiTimestamp: number;
+  lastUpdate: number;
   apiOriginCountry: string;
   // Previous position for interpolation
   prevLat: number;
@@ -454,7 +455,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           apiHeading: heading,
           apiAltitude: altitudeFeet,
           apiGroundSpeed: groundSpeedKnots,
-          apiTimestamp: timestamp,
+          apiTimestamp: timePosition, // Store Unix timestamp of position report
+          lastUpdate: nowUnix, // Store local arrival time
           apiOriginCountry: originCountry,
           // Previous values (not used for dead reckoning, but needed for type compatibility)
           prevLat: projectedLat,
@@ -476,7 +478,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.apiGroundSpeed = groundSpeedKnots;
         aircraft.groundSpeed = groundSpeedKnots; 
         
-        aircraft.apiTimestamp = timestamp;
+        aircraft.apiTimestamp = timePosition; // Store Unix timestamp
+        aircraft.lastUpdate = nowUnix; // Store local arrival time
         aircraft.apiOriginCountry = originCountry;
         aircraft.callsign = callsign;
         aircraft.originCountry = originCountry;
@@ -641,6 +644,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           icaoTypeCode: aircraft.icaoTypeCode,
           scale: aircraft.scale,
           flightLevel: aircraft.flightLevel,
+          apiTimestamp: aircraft.apiTimestamp, // Pass through timestamp
+          lastUpdate: aircraft.lastUpdate, // Pass through local arrival time
           // Simulation properties (unused for live aircraft, but required by type)
           targetHeading: aircraft.heading,
           baseSpeed: 0,
@@ -659,6 +664,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         target.originCountry = aircraft.originCountry;
         target.aircraftType = aircraft.aircraftType;
         target.icaoTypeCode = aircraft.icaoTypeCode;
+        target.apiTimestamp = aircraft.apiTimestamp; // Update timestamp
+        target.lastUpdate = aircraft.lastUpdate; // Update local arrival time
       }
       i++;
     }
