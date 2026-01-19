@@ -12,6 +12,7 @@
 import { BaseFeed, DEFAULT_FEED_CONFIG } from "./base-feed";
 import type { AircraftUpdate, FeedConfig, FeedStats } from "./types";
 import type { AircraftState } from "../types";
+import { lookupICAO24, lookupTypecode } from "../data/icao-aircraft";
 
 // =============================================================================
 // CONFIGURATION
@@ -391,12 +392,17 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       const velocityMs = (state[OS.VELOCITY] as number) || 0;
       const groundSpeedKnots = velocityMs * 1.94384;
 
-      // Get aircraft category (index 17) - NOTE: OpenSky REST API doesn't include this field
-      // Keeping infrastructure in case they add it or we switch to a different data source
+      // Look up aircraft type from ICAO24 database (57k commercial aircraft)
+      // Falls back to OpenSky category if available
+      const icaoTypecode = lookupICAO24(icao24);
+      const typeInfo = icaoTypecode ? lookupTypecode(icaoTypecode) : undefined;
+
+      // Use our database first, fall back to OpenSky category
       const categoryNum = state.length > OS.CATEGORY ? state[OS.CATEGORY] as number | null : null;
-      const aircraftType = categoryNum !== null && categoryNum > 1
+      const openskyCategory = categoryNum !== null && categoryNum > 1
         ? CATEGORY_MAP[categoryNum] || undefined
         : undefined;
+      const aircraftType = typeInfo?.category ?? openskyCategory;
 
       seenIds.add(icao24);
 
@@ -412,6 +418,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           callsign,
           originCountry,
           aircraftType,
+          icaoTypeCode: icaoTypecode,
           scale: 1.0,
           flightLevel: Math.floor(altitudeFeet / 100),
           // Simulation properties (unused for live aircraft, but required by type)
@@ -451,6 +458,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.originCountry = originCountry;
         aircraft.flightLevel = Math.floor(altitudeFeet / 100);
         if (aircraftType) aircraft.aircraftType = aircraftType;
+        if (icaoTypecode && !aircraft.icaoTypeCode) aircraft.icaoTypeCode = icaoTypecode;
         // Reset interpolation
         aircraft.interpProgress = 0;
       }
@@ -558,6 +566,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           callsign: aircraft.callsign,
           originCountry: aircraft.originCountry,
           aircraftType: aircraft.aircraftType,
+          icaoTypeCode: aircraft.icaoTypeCode,
           scale: aircraft.scale,
           flightLevel: aircraft.flightLevel,
           // Simulation properties (unused for live aircraft, but required by type)
@@ -577,6 +586,7 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         target.callsign = aircraft.callsign;
         target.originCountry = aircraft.originCountry;
         target.aircraftType = aircraft.aircraftType;
+        target.icaoTypeCode = aircraft.icaoTypeCode;
       }
       i++;
     }

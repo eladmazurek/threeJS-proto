@@ -36,7 +36,10 @@ export interface AircraftState extends BaseUnitState {
   groundSpeed: number;
   flightLevel: number;
   originCountry?: string;
+  /** Aircraft category (e.g., "Large", "Heavy", "Light") */
   aircraftType?: string;
+  /** ICAO type designator (e.g., "B738", "A320") */
+  icaoTypeCode?: string;
 }
 
 /** Satellite unit state */

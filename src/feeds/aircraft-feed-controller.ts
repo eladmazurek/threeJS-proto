@@ -245,8 +245,25 @@ export function setSimulatedCount(count: number): void {
 const aircraftIndex = new Map<string, number>();
 
 function handleAircraftUpdates(updates: AircraftUpdate[]): void {
+  // For simulated feed, get full unit state to access type info
+  const fullUnits = activeFeed === simulatedFeed ? simulatedFeed?.getUnits() : undefined;
+  const unitsByCallsign = new Map<string, AircraftState>();
+  if (fullUnits) {
+    for (const unit of fullUnits) {
+      unitsByCallsign.set(unit.callsign, unit);
+    }
+    // Debug: log first unit to check if type info is present
+    if (fullUnits.length > 0) {
+      const sample = fullUnits[0];
+      console.log('[DEBUG] Sample unit from feed:', { callsign: sample.callsign, icaoTypeCode: sample.icaoTypeCode, aircraftType: sample.aircraftType });
+    }
+  } else {
+    console.log('[DEBUG] No fullUnits - activeFeed === simulatedFeed:', activeFeed === simulatedFeed);
+  }
+
   for (const update of updates) {
     let index = aircraftIndex.get(update.callsign);
+    const fullUnit = unitsByCallsign.get(update.callsign);
 
     if (index === undefined) {
       // New aircraft - add to state
@@ -260,8 +277,11 @@ function handleAircraftUpdates(updates: AircraftUpdate[]): void {
         altitude: update.altitude,
         groundSpeed: update.groundSpeed,
         callsign: update.callsign,
-        scale: 1.0,
+        scale: fullUnit?.scale ?? 1.0,
         flightLevel: Math.floor(update.altitude / 100),
+        // Type info from simulated feed
+        aircraftType: fullUnit?.aircraftType,
+        icaoTypeCode: fullUnit?.icaoTypeCode,
         // Simulation properties (unused for live aircraft, but required by type)
         targetHeading: update.heading,
         baseSpeed: 0,
@@ -276,6 +296,13 @@ function handleAircraftUpdates(updates: AircraftUpdate[]): void {
       aircraft.heading = update.heading;
       aircraft.altitude = update.altitude;
       aircraft.groundSpeed = update.groundSpeed;
+      // Update type info if we have it and it's missing
+      if (fullUnit?.aircraftType && !aircraft.aircraftType) {
+        aircraft.aircraftType = fullUnit.aircraftType;
+      }
+      if (fullUnit?.icaoTypeCode && !aircraft.icaoTypeCode) {
+        aircraft.icaoTypeCode = fullUnit.icaoTypeCode;
+      }
     }
   }
 

@@ -16,6 +16,7 @@ import {
   normalizeAngle,
   shortestTurnDirection,
 } from "../data/demo";
+import { getWeightedRandomAircraftType } from "../data/icao-aircraft";
 
 /** Aircraft-specific feed configuration */
 export interface AircraftFeedConfig extends FeedConfig {
@@ -99,7 +100,15 @@ export class SimulatedAircraftFeed extends BaseFeed<AircraftUpdate, AircraftStat
     const speedVariation = 0.8 + Math.random() * 0.4;
     const airlineCode = AIRLINE_CODES[index % AIRLINE_CODES.length];
     const flightNum = 100 + (index % 900);
-    const altitude = 28000 + Math.floor(Math.random() * 14) * 1000;
+
+    // Get aircraft type from ICAO database
+    const icaoType = getWeightedRandomAircraftType();
+    const altitude = icaoType.typicalAltitude
+      ? icaoType.typicalAltitude + Math.floor((Math.random() - 0.5) * 4000)
+      : 28000 + Math.floor(Math.random() * 14) * 1000;
+    const groundSpeed = icaoType.typicalSpeed
+      ? icaoType.typicalSpeed + Math.floor((Math.random() - 0.5) * 40)
+      : 420 + Math.floor(Math.random() * 80);
 
     return {
       lat,
@@ -112,8 +121,10 @@ export class SimulatedAircraftFeed extends BaseFeed<AircraftUpdate, AircraftStat
       nextCourseChange: Math.random() * 30,
       callsign: `${airlineCode}${flightNum}`,
       altitude,
-      groundSpeed: 420 + Math.floor(Math.random() * 80),
+      groundSpeed,
       flightLevel: Math.floor(altitude / 100),
+      aircraftType: icaoType.category,
+      icaoTypeCode: icaoType.icao,
     };
   }
 

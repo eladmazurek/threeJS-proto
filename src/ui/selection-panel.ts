@@ -6,6 +6,7 @@
 
 import { EARTH_RADIUS } from "../constants";
 import { AIRPORTS } from "../data/airports";
+import { formatAircraftType } from "../data/icao-aircraft";
 import { state } from "../state";
 import type { UnitType, ShipState, AircraftState, SatelliteState, DroneState } from "../types";
 
@@ -171,10 +172,15 @@ function updateAircraftPanel(unitData: AircraftState): void {
   if (unitAltEl) unitAltEl.textContent = `${altFeet} ft`;
 
   // Show aircraft type in 6th row only if available
-  if (unitData.aircraftType) {
+  // Prefer ICAO type code with full name, fall back to category
+  console.log('[DEBUG] Aircraft type info:', { icaoTypeCode: unitData.icaoTypeCode, aircraftType: unitData.aircraftType });
+  const typeDisplay = unitData.icaoTypeCode
+    ? formatAircraftType(unitData.icaoTypeCode)
+    : unitData.aircraftType;
+  if (typeDisplay) {
     if (unitRow6) unitRow6.style.display = "";
     if (unitLabel6) unitLabel6.textContent = "TYPE";
-    if (unitExtra) unitExtra.textContent = unitData.aircraftType;
+    if (unitExtra) unitExtra.textContent = typeDisplay;
   } else {
     if (unitRow6) unitRow6.style.display = "none";
   }
