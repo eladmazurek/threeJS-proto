@@ -22,6 +22,7 @@ import {
 import type { SelectedUnit, UnitType, SatelliteState, DroneState } from "../types";
 import { state } from '../state';
 import { AIRPORTS } from "../data/airports";
+import { getCountryFlag } from "../utils/country-flags";
 
 // DOM elements for unit info panel
 let unitInfoPanel, unitTypeEl, unitIdEl, unitStalenessEl, unitLatEl, unitLonEl, unitHdgEl, unitSpdEl, unitAltEl, unitCloseBtn;
@@ -189,7 +190,8 @@ export function updateSelectedUnitInfo() {
       unitLatEl.textContent = `${unitData.lat.toFixed(2)}° ${unitData.lon.toFixed(2)}°`;
       unitLonEl.textContent = `${unitData.heading.toFixed(0)}°`;
       unitHdgEl.textContent = speed;
-      unitSpdEl.textContent = country;
+      const flag = getCountryFlag(country);
+      unitSpdEl.textContent = flag ? `${flag} ${country}` : country;
       unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
       
       // Update staleness (Time since last update received)
