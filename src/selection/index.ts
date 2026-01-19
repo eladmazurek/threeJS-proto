@@ -23,6 +23,7 @@ import type { SelectedUnit, UnitType, SatelliteState, DroneState } from "../type
 import { state } from '../state';
 import { AIRPORTS } from "../data/airports";
 import { getCountryFlag } from "../utils/country-flags";
+import { formatAircraftType } from "../data/icao-aircraft";
 
 // DOM elements for unit info panel
 let unitInfoPanel, unitTypeEl, unitIdEl, unitStalenessEl, unitLatEl, unitLonEl, unitHdgEl, unitSpdEl, unitAltEl, unitCloseBtn;
@@ -206,10 +207,14 @@ export function updateSelectedUnitInfo() {
       }
 
       // Show aircraft type in 6th row only if available
-      if (unitData.aircraftType) {
+      // Prefer ICAO type code with full name, fall back to category
+      const typeDisplay = unitData.icaoTypeCode
+        ? formatAircraftType(unitData.icaoTypeCode)
+        : unitData.aircraftType;
+      if (typeDisplay) {
         if (unitRow6) unitRow6.style.display = "";
         if (unitLabel6) unitLabel6.textContent = "TYPE";
-        if (unitExtra) unitExtra.textContent = unitData.aircraftType;
+        if (unitExtra) unitExtra.textContent = typeDisplay;
       } else {
         if (unitRow6) unitRow6.style.display = "none";
       }

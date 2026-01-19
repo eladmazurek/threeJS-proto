@@ -209,7 +209,6 @@ function updateAircraftPanel(unitData: AircraftState): void {
 
   // Show aircraft type in 6th row only if available
   // Prefer ICAO type code with full name, fall back to category
-  // console.log('[DEBUG] Aircraft type info:', { icaoTypeCode: unitData.icaoTypeCode, aircraftType: unitData.aircraftType });
   const typeDisplay = unitData.icaoTypeCode
     ? formatAircraftType(unitData.icaoTypeCode)
     : unitData.aircraftType;

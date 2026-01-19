@@ -64,6 +64,7 @@ let getEarthRotation: (() => number) | null = null;
 let onAttributesUpdate: (() => void) | null = null;
 let onUnitVisibilityChange: ((showSimulatedUnits: boolean) => void) | null = null;
 
+
 // =============================================================================
 // INITIALIZATION
 // =============================================================================
@@ -139,8 +140,9 @@ export function startAircraftFeed(): void {
     aircraftIndex.clear();
 
     simulatedFeed.setConfig({ maxUnits: aircraftFeedParams.simulatedCount });
-    simulatedFeed.start();
+    // Set activeFeed BEFORE start() so handleAircraftUpdates can access full unit state
     activeFeed = simulatedFeed;
+    simulatedFeed.start();
     aircraftFeedParams.status = "simulated";
     aircraftFeedParams.indicatorStatus = "simulated";
 
@@ -160,8 +162,9 @@ export function startAircraftFeed(): void {
 
     liveFeed.setViewportFilter(aircraftFeedParams.coverage === "viewport");
     liveFeed.setInterpolation(aircraftFeedParams.interpolation);
-    liveFeed.start();
+    // Set activeFeed BEFORE start() for consistency
     activeFeed = liveFeed;
+    liveFeed.start();
     aircraftFeedParams.status = "connecting";
     aircraftFeedParams.indicatorStatus = "connecting";
 
@@ -248,17 +251,11 @@ function handleAircraftUpdates(updates: AircraftUpdate[]): void {
   // For simulated feed, get full unit state to access type info
   const fullUnits = activeFeed === simulatedFeed ? simulatedFeed?.getUnits() : undefined;
   const unitsByCallsign = new Map<string, AircraftState>();
+
   if (fullUnits) {
     for (const unit of fullUnits) {
       unitsByCallsign.set(unit.callsign, unit);
     }
-    // Debug: log first unit to check if type info is present
-    if (fullUnits.length > 0) {
-      const sample = fullUnits[0];
-      console.log('[DEBUG] Sample unit from feed:', { callsign: sample.callsign, icaoTypeCode: sample.icaoTypeCode, aircraftType: sample.aircraftType });
-    }
-  } else {
-    console.log('[DEBUG] No fullUnits - activeFeed === simulatedFeed:', activeFeed === simulatedFeed);
   }
 
   for (const update of updates) {
