@@ -375,6 +375,10 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
   private processStates(states: (string | number | boolean | null)[][], timestamp: number): void {
     const updates: AircraftUpdate[] = [];
     const seenIds = new Set<string>();
+    const nowUnix = Date.now() / 1000;
+    const DEG_TO_RAD = Math.PI / 180;
+    const KNOTS_TO_KMH = 1.852;
+    const DEG_PER_KM = 1 / 111.12;
 
     for (const state of states) {
       // Skip aircraft on ground or with missing position
@@ -391,6 +395,24 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       const altitudeFeet = altitudeMeters * 3.28084;
       const velocityMs = (state[OS.VELOCITY] as number) || 0;
       const groundSpeedKnots = velocityMs * 1.94384;
+      const timePosition = (state[OS.TIME_POSITION] as number) || nowUnix;
+
+      // PROJECT POSITION FORWARD TO CURRENT TIME
+      // OpenSky data is often 5-10s old. If we target the raw lat/lon, we pull the plane back.
+      // We must project where the plane is *now*.
+      const lagSeconds = Math.max(0, nowUnix - timePosition);
+      const speedKmh = groundSpeedKnots * KNOTS_TO_KMH;
+      const distDeg = (speedKmh * lagSeconds / 3600) * DEG_PER_KM;
+      
+      let projectedLat = lat;
+      let projectedLon = lon;
+
+      if (distDeg > 0) {
+        const headingRad = heading * DEG_TO_RAD;
+        projectedLat += Math.cos(headingRad) * distDeg;
+        const cosLat = Math.cos(lat * DEG_TO_RAD);
+        projectedLon += (Math.sin(headingRad) * distDeg) / Math.max(0.01, Math.abs(cosLat));
+      }
 
       // Look up aircraft type from ICAO24 database (57k commercial aircraft)
       // Falls back to OpenSky category if available
@@ -410,8 +432,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       let aircraft = this._units.get(icao24);
       if (!aircraft) {
         aircraft = {
-          lat,
-          lon,
+          lat: projectedLat, // Start at projected position
+          lon: projectedLon,
           heading,
           altitude: altitudeFeet,
           groundSpeed: groundSpeedKnots,
@@ -426,32 +448,34 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           baseSpeed: 0,
           baseTurnRate: 0,
           nextCourseChange: 0,
-          // API values
-          apiLat: lat,
-          apiLon: lon,
+          // API values (Set to projected so we don't snap back)
+          apiLat: projectedLat,
+          apiLon: projectedLon,
           apiHeading: heading,
           apiAltitude: altitudeFeet,
           apiGroundSpeed: groundSpeedKnots,
           apiTimestamp: timestamp,
           apiOriginCountry: originCountry,
-          // Previous values (same as current for new aircraft)
-          prevLat: lat,
-          prevLon: lon,
+          // Previous values (not used for dead reckoning, but needed for type compatibility)
+          prevLat: projectedLat,
+          prevLon: projectedLon,
           prevHeading: heading,
-          interpProgress: 1.0,
+          interpProgress: 0,
         };
         this._units.set(icao24, aircraft);
       } else {
-        // Update existing aircraft - store previous for interpolation
-        aircraft.prevLat = aircraft.apiLat;
-        aircraft.prevLon = aircraft.apiLon;
-        aircraft.prevHeading = aircraft.apiHeading;
-        // Update API values
-        aircraft.apiLat = lat;
-        aircraft.apiLon = lon;
-        aircraft.apiHeading = heading;
+        // Update API values (Dead Reckoning target)
+        // Set target to the PROJECTED position so the ghost doesn't jump back 10 seconds
+        aircraft.apiLat = projectedLat;
+        aircraft.apiLon = projectedLon;
+        
+        aircraft.apiHeading = heading; 
+        aircraft.heading = heading; 
+        
         aircraft.apiAltitude = altitudeFeet;
         aircraft.apiGroundSpeed = groundSpeedKnots;
+        aircraft.groundSpeed = groundSpeedKnots; 
+        
         aircraft.apiTimestamp = timestamp;
         aircraft.apiOriginCountry = originCountry;
         aircraft.callsign = callsign;
@@ -459,8 +483,6 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.flightLevel = Math.floor(altitudeFeet / 100);
         if (aircraftType) aircraft.aircraftType = aircraftType;
         if (icaoTypecode && !aircraft.icaoTypeCode) aircraft.icaoTypeCode = icaoTypecode;
-        // Reset interpolation
-        aircraft.interpProgress = 0;
       }
 
       updates.push({
@@ -503,8 +525,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
   }
 
   /**
-   * Interpolation tick - runs at 60fps to smoothly animate between API updates
-   * Updates internal state only - no emit (too expensive with 7000+ aircraft)
+   * Interpolation tick - runs at 60fps to smoothly animate aircraft.
+   * Uses Dead Reckoning (Extrapolation) + Moving Target Correction.
+   * 
+   * This ensures continuous motion even if API updates are delayed,
+   * avoiding the "pause" seen with simple interpolation.
    */
   private interpolateTick(): void {
     if (!this._config.interpolatePositions || this._units.size === 0) return;
@@ -513,24 +538,71 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     const deltaTime = (now - this._lastInterpolationTime) / 1000;
     this._lastInterpolationTime = now;
 
-    // Calculate interpolation step based on update rate
-    const interpStep = (deltaTime / (this._config.updateRateMs / 1000)) * this._config.interpolationSpeed;
+    // Constants for earth calculations
+    const KNOTS_TO_KMH = 1.852;
+    const DEG_PER_KM = 1 / 111.12; // 1 degree lat is approx 111km
+    const CORRECTION_FACTOR = 0.05; // 5% correction per frame towards the moving target
+    const DEG_TO_RAD = Math.PI / 180;
 
-    // Update internal state only - no emit to avoid callback overhead
     let anyUpdated = false;
+
     for (const aircraft of this._units.values()) {
-      if (aircraft.interpProgress >= 1.0) continue;
+      // 1. DEAD RECKONING (Move based on speed/heading)
+      // Calculate distance traveled in degrees
+      const speedKmh = aircraft.groundSpeed * KNOTS_TO_KMH * this._config.interpolationSpeed;
+      const distDeg = (speedKmh * deltaTime / 3600) * DEG_PER_KM;
 
-      anyUpdated = true;
-      aircraft.interpProgress = Math.min(1.0, aircraft.interpProgress + interpStep);
-      const t = this.easeInOutCubic(aircraft.interpProgress);
+      if (distDeg > 0) {
+        // Calculate change in lat/lon
+        const headingRad = aircraft.heading * DEG_TO_RAD;
+        const dLat = Math.cos(headingRad) * distDeg;
+        // Adjust longitude change for latitude (converging meridians)
+        const cosLat = Math.cos(aircraft.lat * DEG_TO_RAD);
+        const dLon = (Math.sin(headingRad) * distDeg) / Math.max(0.01, Math.abs(cosLat));
 
-      // Interpolate position in place
-      aircraft.lat = this.lerp(aircraft.prevLat, aircraft.apiLat, t);
-      aircraft.lon = this.lerpAngle(aircraft.prevLon, aircraft.apiLon, t);
-      aircraft.heading = this.lerpAngle(aircraft.prevHeading, aircraft.apiHeading, t);
-      aircraft.altitude = this.lerp(aircraft.altitude, aircraft.apiAltitude, t);
-      aircraft.groundSpeed = this.lerp(aircraft.groundSpeed, aircraft.apiGroundSpeed, t);
+        // Update Visual Position
+        aircraft.lat += dLat;
+        aircraft.lon += dLon;
+        
+        // Update Target Position (The "Ghost" moves too!)
+        // This prevents the visual plane from being pulled back to a static past point
+        aircraft.apiLat += dLat;
+        aircraft.apiLon += dLon;
+
+        // Handle longitude wrap-around for both
+        if (aircraft.lon > 180) aircraft.lon -= 360;
+        else if (aircraft.lon < -180) aircraft.lon += 360;
+
+        if (aircraft.apiLon > 180) aircraft.apiLon -= 360;
+        else if (aircraft.apiLon < -180) aircraft.apiLon += 360;
+        
+        anyUpdated = true;
+      }
+
+      // 2. CORRECTION (Drift towards API position)
+      // Smoothly blend towards the "Ghost" target
+      const latError = aircraft.apiLat - aircraft.lat;
+      let lonError = aircraft.apiLon - aircraft.lon;
+      
+      // Handle wrap-around for shortest path
+      if (lonError > 180) lonError -= 360;
+      if (lonError < -180) lonError += 360;
+      
+      const altError = aircraft.apiAltitude - aircraft.altitude;
+
+      // Apply correction if error is significant (but not a teleport/huge jump)
+      if (Math.abs(latError) > 1.0 || Math.abs(lonError) > 1.0) {
+        aircraft.lat = aircraft.apiLat;
+        aircraft.lon = aircraft.apiLon;
+      } else {
+        aircraft.lat += latError * CORRECTION_FACTOR;
+        aircraft.lon += lonError * CORRECTION_FACTOR;
+        aircraft.altitude += altError * CORRECTION_FACTOR;
+        
+        if (Math.abs(latError) > 0.000001 || Math.abs(lonError) > 0.000001) {
+          anyUpdated = true;
+        }
+      }
     }
 
     // Only mark dirty if positions actually changed
