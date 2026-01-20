@@ -23,7 +23,39 @@ import type { SelectedUnit, UnitType, SatelliteState, DroneState } from "../type
 import { state } from '../state';
 import { AIRPORTS } from "../data/airports";
 import { getCountryFlag } from "../utils/country-flags";
-import { formatAircraftType } from "../data/icao-aircraft";
+// Lazy-loaded formatAircraftType to avoid import affecting startup
+let _formatAircraftType: ((code: string | undefined) => string) | null = null;
+async function loadFormatAircraftType() {
+  if (!_formatAircraftType) {
+    const module = await import("../data/icao-aircraft");
+    _formatAircraftType = module.formatAircraftType;
+  }
+  return _formatAircraftType;
+}
+
+// Cache for formatted aircraft type strings
+const formattedTypeCache = new Map<string, string>();
+function getCachedAircraftType(icaoTypeCode: string | undefined, fallback: string | undefined): string | undefined {
+  if (!icaoTypeCode) return fallback;
+
+  // Return cached value if available
+  let cached = formattedTypeCache.get(icaoTypeCode);
+  if (cached) return cached;
+
+  // If formatter not loaded yet, schedule load and return fallback for now
+  if (!_formatAircraftType) {
+    loadFormatAircraftType().then(fn => {
+      const formatted = fn(icaoTypeCode);
+      formattedTypeCache.set(icaoTypeCode, formatted);
+    });
+    return fallback;
+  }
+
+  // Formatter loaded, compute and cache
+  cached = _formatAircraftType(icaoTypeCode);
+  formattedTypeCache.set(icaoTypeCode, cached);
+  return cached;
+}
 
 // DOM elements for unit info panel
 let unitInfoPanel, unitTypeEl, unitIdEl, unitStalenessEl, unitLatEl, unitLonEl, unitHdgEl, unitSpdEl, unitAltEl, unitCloseBtn;
@@ -208,9 +240,7 @@ export function updateSelectedUnitInfo() {
 
       // Show aircraft type in 6th row only if available
       // Prefer ICAO type code with full name, fall back to category
-      const typeDisplay = unitData.icaoTypeCode
-        ? formatAircraftType(unitData.icaoTypeCode)
-        : unitData.aircraftType;
+      const typeDisplay = getCachedAircraftType(unitData.icaoTypeCode, unitData.aircraftType);
       if (typeDisplay) {
         if (unitRow6) unitRow6.style.display = "";
         if (unitLabel6) unitLabel6.textContent = "TYPE";
