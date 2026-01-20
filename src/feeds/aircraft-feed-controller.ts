@@ -248,65 +248,9 @@ export function setSimulatedCount(count: number): void {
 const aircraftIndex = new Map<string, number>();
 
 function handleAircraftUpdates(updates: AircraftUpdate[]): void {
-  // For simulated feed, get full unit state to access type info
-  const fullUnits = activeFeed === simulatedFeed ? simulatedFeed?.getUnits() : undefined;
-  const unitsByCallsign = new Map<string, AircraftState>();
-
-  if (fullUnits) {
-    for (const unit of fullUnits) {
-      unitsByCallsign.set(unit.callsign, unit);
-    }
-  }
-
-  for (const update of updates) {
-    let index = aircraftIndex.get(update.callsign);
-    const fullUnit = unitsByCallsign.get(update.callsign);
-
-    if (index === undefined) {
-      // New aircraft - add to state
-      index = state.aircraft.length;
-      aircraftIndex.set(update.callsign, index);
-
-      state.aircraft.push({
-        lat: update.lat,
-        lon: update.lon,
-        heading: update.heading,
-        altitude: update.altitude,
-        groundSpeed: update.groundSpeed,
-        callsign: update.callsign,
-        scale: fullUnit?.scale ?? 1.0,
-        flightLevel: Math.floor(update.altitude / 100),
-        // Type info from simulated feed
-        aircraftType: fullUnit?.aircraftType,
-        icaoTypeCode: fullUnit?.icaoTypeCode,
-        // Simulation properties (unused for live aircraft, but required by type)
-        targetHeading: update.heading,
-        baseSpeed: 0,
-        baseTurnRate: 0,
-        nextCourseChange: 0,
-      });
-    } else if (index < state.aircraft.length) {
-      // Update existing aircraft
-      const aircraft = state.aircraft[index];
-      aircraft.lat = update.lat;
-      aircraft.lon = update.lon;
-      aircraft.heading = update.heading;
-      aircraft.altitude = update.altitude;
-      aircraft.groundSpeed = update.groundSpeed;
-      // Update type info if we have it and it's missing
-      if (fullUnit?.aircraftType && !aircraft.aircraftType) {
-        aircraft.aircraftType = fullUnit.aircraftType;
-      }
-      if (fullUnit?.icaoTypeCode && !aircraft.icaoTypeCode) {
-        aircraft.icaoTypeCode = fullUnit.icaoTypeCode;
-      }
-    }
-  }
-
-  // Update tracked count
-  aircraftFeedParams.trackedCount = state.aircraft.length;
-
-  // Update status and error for live feed
+  // If we're in live mode, syncLiveFeedState handles the state updates 
+  // every frame for all aircraft. We don't want to duplicate that here
+  // or mess up the indices managed by syncToState.
   if (activeFeed === liveFeed && liveFeed) {
     const error = liveFeed.lastError;
     aircraftFeedParams.lastError = error || "";
@@ -320,15 +264,14 @@ function handleAircraftUpdates(updates: AircraftUpdate[]): void {
       aircraftFeedParams.indicatorStatus = "live";
     }
 
-    // Update indicator if status changed
     if (prevStatus !== aircraftFeedParams.indicatorStatus) {
       updateLiveIndicator();
     }
-
-    // For live feed, syncLiveFeedState handles GPU updates per frame
-    // Don't trigger here (this callback is only for initial API response)
     return;
   }
+
+  // For simulated feed, get full unit state to access type info
+  const fullUnits = activeFeed === simulatedFeed ? simulatedFeed?.getUnits() : undefined;
 
   // Trigger GPU buffer update (simulated feed only)
   if (onAttributesUpdate) {
