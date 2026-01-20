@@ -478,6 +478,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         };
         this._units.set(icao24, aircraft);
       } else {
+        // Check if this is actually new data
+        // OpenSky sends updates for all aircraft, even if position hasn't changed.
+        // We only want to reset the "staleness" timer if we have a fresh position report.
+        const isNewData = timePosition > (aircraft.apiTimestamp || 0);
+
         // Update API values (Dead Reckoning target)
         // Set target to the PROJECTED position so the ghost doesn't jump back 10 seconds
         aircraft.apiLat = projectedLat;
@@ -490,8 +495,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.apiGroundSpeed = groundSpeedKnots;
         aircraft.groundSpeed = groundSpeedKnots; 
         
-        aircraft.apiTimestamp = timePosition; // Store Unix timestamp
-        aircraft.lastUpdate = nowUnix; // Store local arrival time
+        if (isNewData) {
+          aircraft.apiTimestamp = timePosition; // Store Unix timestamp
+          aircraft.lastUpdate = nowUnix; // Store local arrival time
+        }
+        
         aircraft.apiOriginCountry = originCountry;
         aircraft.callsign = callsign;
         aircraft.originCountry = originCountry;
