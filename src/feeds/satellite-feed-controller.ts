@@ -1,0 +1,167 @@
+/**
+ * Satellite Feed Controller
+ *
+ * Manages switching between simulated and live (CelesTrak) satellite feeds.
+ */
+
+import { SimulatedSatelliteFeed } from "./simulated-satellite-feed";
+import { CelesTrakSatelliteFeed } from "./celestrak-satellite-feed";
+import { state } from "../state";
+import type { SatelliteState } from "../types";
+import { satelliteFeedParams } from "./shared";
+import type { SatelliteFeedMode, SatelliteFeedParams } from "./shared";
+import { updateLiveIndicator } from "./shared";
+
+export type { SatelliteFeedMode, SatelliteFeedParams };
+export { satelliteFeedParams };
+
+// =============================================================================
+// FEED INSTANCES
+// =============================================================================
+
+let simulatedFeed: SimulatedSatelliteFeed | null = null;
+let liveFeed: CelesTrakSatelliteFeed | null = null;
+let activeFeed: SimulatedSatelliteFeed | CelesTrakSatelliteFeed | null = null;
+
+// Dependencies
+let onAttributesUpdate: (() => void) | null = null;
+let onUnitVisibilityChange: ((showSimulatedUnits: boolean) => void) | null = null;
+
+export interface SatelliteFeedDependencies {
+  updateSatelliteAttributes: () => void;
+  onUnitVisibilityChange?: (showSimulatedUnits: boolean) => void;
+}
+
+export function initSatelliteFeedController(deps: SatelliteFeedDependencies): void {
+  onAttributesUpdate = deps.updateSatelliteAttributes;
+  onUnitVisibilityChange = deps.onUnitVisibilityChange || null;
+
+  simulatedFeed = new SimulatedSatelliteFeed({
+    maxUnits: satelliteFeedParams.simulatedCount,
+  });
+
+  liveFeed = new CelesTrakSatelliteFeed({
+    group: satelliteFeedParams.liveGroup,
+  });
+
+  // For simulated feed, we handle updates via callback (legacy way)
+  // For live feed, we'll use syncToState in the render loop for performance
+  simulatedFeed.onUpdate(handleSimulatedUpdates);
+  
+  console.log("[SatelliteFeedController] Initialized");
+}
+
+export function startSatelliteFeed(): void {
+  stopSatelliteFeed();
+
+  if (satelliteFeedParams.mode === "simulated") {
+    if (!simulatedFeed) return;
+    
+    // Clear state
+    state.satellites.length = 0;
+    
+    simulatedFeed.setSatelliteCount(satelliteFeedParams.simulatedCount);
+    activeFeed = simulatedFeed;
+    simulatedFeed.start();
+    
+    satelliteFeedParams.status = "simulated";
+    satelliteFeedParams.indicatorStatus = "simulated";
+    
+    if (onUnitVisibilityChange) {
+      onUnitVisibilityChange(true);
+    }
+    
+    updateLiveIndicator();
+    console.log("[SatelliteFeedController] Started simulated feed");
+  } else {
+    if (!liveFeed) return;
+
+    // Clear state
+    state.satellites.length = 0;
+
+    activeFeed = liveFeed;
+    liveFeed.start();
+    
+    satelliteFeedParams.status = "connecting";
+    satelliteFeedParams.indicatorStatus = "connecting";
+    
+    if (onUnitVisibilityChange) {
+      onUnitVisibilityChange(false);
+    }
+    
+    updateLiveIndicator();
+    console.log("[SatelliteFeedController] Started live feed");
+  }
+}
+
+export function stopSatelliteFeed(): void {
+  simulatedFeed?.stop();
+  liveFeed?.stop();
+  activeFeed = null;
+  satelliteFeedParams.status = "stopped";
+}
+
+export function setSatelliteFeedMode(mode: SatelliteFeedMode): void {
+  if (mode === satelliteFeedParams.mode) return;
+  satelliteFeedParams.mode = mode;
+  startSatelliteFeed();
+}
+
+export function getSatelliteFeedStats() {
+    return {
+        mode: satelliteFeedParams.mode,
+        trackedCount: state.satellites.length,
+        status: satelliteFeedParams.status,
+    };
+}
+
+// Handler for simulated updates (callback based)
+function handleSimulatedUpdates(updates: any[]): void {
+    if (activeFeed !== simulatedFeed) return;
+    
+    if (simulatedFeed) {
+        const units = simulatedFeed.getUnits();
+        // Sync to global state
+        if (state.satellites.length !== units.length) {
+            state.satellites = [...units];
+        } else {
+            for(let i=0; i<units.length; i++) {
+                state.satellites[i] = units[i];
+            }
+        }
+        
+        satelliteFeedParams.trackedCount = state.satellites.length;
+        if (onAttributesUpdate) onAttributesUpdate();
+    }
+}
+
+/**
+ * Sync live feed state to state.satellites and update GPU buffers.
+ * Call this once per frame from the render loop.
+ */
+export function syncSatelliteFeedState(): void {
+  if (satelliteFeedParams.mode !== "live" || !liveFeed) return;
+
+  const needsUpdate = liveFeed.syncToState(state.satellites);
+  
+  // Update status when connected
+  if (state.satellites.length > 0 && satelliteFeedParams.indicatorStatus === "connecting") {
+      satelliteFeedParams.status = "connected";
+      satelliteFeedParams.indicatorStatus = "live";
+      updateLiveIndicator();
+  }
+
+  // Update error status
+  const error = liveFeed.lastError;
+  if (error && satelliteFeedParams.indicatorStatus !== "error") {
+      satelliteFeedParams.status = "error";
+      satelliteFeedParams.indicatorStatus = "error";
+      satelliteFeedParams.lastError = error;
+      updateLiveIndicator();
+  }
+  
+  if (needsUpdate) {
+      satelliteFeedParams.trackedCount = state.satellites.length;
+      if (onAttributesUpdate) onAttributesUpdate();
+  }
+}

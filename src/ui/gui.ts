@@ -11,6 +11,8 @@ import {
   setCoverageMode,
   setInterpolation,
   startAircraftFeed,
+  satelliteFeedParams,
+  setSatelliteFeedMode,
 } from '../feeds';
 import type { CoverageMode } from '../feeds';
 
@@ -280,9 +282,21 @@ export function createGui(params) {
     });
 
   // Status display (read-only)
-  feedFolder.add(aircraftFeedParams, "status").name("Status").listen().disable();
-  feedFolder.add(aircraftFeedParams, "trackedCount").name("Tracked").listen().disable();
-  feedFolder.add(aircraftFeedParams, "lastError").name("Error").listen().disable();
+  feedFolder.add(aircraftFeedParams, "status").name("Air Status").listen().disable();
+  feedFolder.add(aircraftFeedParams, "trackedCount").name("Air Tracked").listen().disable();
+  feedFolder.add(aircraftFeedParams, "lastError").name("Air Error").listen().disable();
+
+  // CelesTrak toggle
+  const celestrakState = { enabled: false };
+  feedFolder
+    .add(celestrakState, "enabled")
+    .name("CelesTrak (Satellites)")
+    .onChange((value: boolean) => {
+      setSatelliteFeedMode(value ? "live" : "simulated");
+    });
+  
+  feedFolder.add(satelliteFeedParams, "status").name("Sat Status").listen().disable();
+  feedFolder.add(satelliteFeedParams, "trackedCount").name("Sat Tracked").listen().disable();
 
   // Camera/View folder
   const cameraFolder = gui.addFolder("Camera");

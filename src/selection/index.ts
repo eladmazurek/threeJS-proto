@@ -154,15 +154,21 @@ function selectUnit(type, index) {
       id = unitData.callsign;
     } else if (type === "ship" && unitData.mmsi) {
       id = unitData.mmsi;
+    } else if (type === "satellite" && unitData.name) {
+      id = unitData.name;
     }
 
     state.selectedUnit = { type, index, id, data: unitData };
 
-    // For aircraft, hide the type label and show callsign prominently
+    // For aircraft/satellites, hide the type label and show ID prominently
     if (type === "aircraft" && unitData.callsign) {
       unitTypeEl.textContent = "";
       unitTypeEl.className = `unit-info-type ${typeClass}`;
       unitIdEl.textContent = unitData.callsign;
+    } else if (type === "satellite" && unitData.name) {
+      unitTypeEl.textContent = "SATELLITE";
+      unitTypeEl.className = `unit-info-type ${typeClass}`;
+      unitIdEl.textContent = unitData.name;
     } else if (type === "airport") {
       unitTypeEl.textContent = typeLabel;
       unitTypeEl.className = `unit-info-type ${typeClass}`;
@@ -315,7 +321,10 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
     const clickX = event.clientX - rect.left;
     const clickY = event.clientY - rect.top;
 
-    const clickRadius = 20;
+    // Increase click radius when zoomed out to make selection easier
+    const camDist = camera.position.length();
+    const clickRadius = camDist > 5 ? 40 : 20;
+    
     let closestUnit = null;
     let closestDist = clickRadius;
 

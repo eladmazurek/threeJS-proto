@@ -59,9 +59,15 @@ export type { DroneFeedConfig } from "./simulated-drone-feed";
 export { OpenSkyAircraftFeed } from "./opensky-aircraft-feed";
 export type { OpenSkyFeedConfig, BoundingBox } from "./opensky-aircraft-feed";
 
+export { CelesTrakSatelliteFeed } from "./celestrak-satellite-feed";
+export type { CelesTrakFeedConfig } from "./celestrak-satellite-feed";
+
 // Feed manager
 export { FeedManagerImpl, feedManager } from "./feed-manager";
 export type { FeedManagerConfig } from "./feed-manager";
+
+// Shared feed status and params
+export * from "./shared";
 
 // Aircraft feed controller
 export {
@@ -73,8 +79,17 @@ export {
   setInterpolation,
   setSimulatedCount,
   getFeedStats,
-  updateLiveIndicator,
   syncLiveFeedState,
-  aircraftFeedParams,
 } from "./aircraft-feed-controller";
-export type { FeedMode, CoverageMode, AircraftFeedParams, FeedControllerDependencies } from "./aircraft-feed-controller";
+export type { FeedControllerDependencies } from "./aircraft-feed-controller";
+
+// Satellite feed controller
+export {
+  initSatelliteFeedController,
+  startSatelliteFeed,
+  stopSatelliteFeed,
+  setSatelliteFeedMode,
+  getSatelliteFeedStats,
+  syncSatelliteFeedState,
+} from "./satellite-feed-controller";
+export type { SatelliteFeedDependencies } from "./satellite-feed-controller";

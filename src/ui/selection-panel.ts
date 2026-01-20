@@ -225,21 +225,25 @@ function updateAircraftPanel(unitData: AircraftState): void {
  * Update panel content for a satellite
  */
 function updateSatellitePanel(unitData: SatelliteState): void {
-  const altKm = (unitData.altitude * 6371 / EARTH_RADIUS).toFixed(0);
-  const speed = `${(7.8 - unitData.altitude * 2).toFixed(1)} km/s`;
+  // Convert altitude back to km for display
+  const altKm = (unitData.altitude * (6371 / EARTH_RADIUS)).toFixed(0);
+  const speed = Math.sqrt(398600 / (6371 + (unitData.altitude * (6371 / EARTH_RADIUS)))).toFixed(2); // km/s using real altitude
 
-  if (unitLabel1) unitLabel1.textContent = "LAT";
-  if (unitLabel2) unitLabel2.textContent = "LON";
-  if (unitLabel3) unitLabel3.textContent = "HDG";
+  if (unitLabel1) unitLabel1.textContent = "ALT";
+  if (unitLabel2) unitLabel2.textContent = "INC";
+  if (unitLabel3) unitLabel3.textContent = "PER";
   if (unitLabel4) unitLabel4.textContent = "SPD";
-  if (unitLabel5) unitLabel5.textContent = "ALT";
+  if (unitLabel5) unitLabel5.textContent = "TYPE";
 
-  if (unitLatEl) unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-  if (unitLonEl) unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-  if (unitHdgEl) unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-  if (unitSpdEl) unitSpdEl.textContent = speed;
-  if (unitAltEl) unitAltEl.textContent = `${altKm} km`;
-  if (unitRow6) unitRow6.style.display = "none";
+  if (unitLatEl) unitLatEl.textContent = `${altKm} km`;
+  if (unitLonEl) unitLonEl.textContent = `${unitData.inclination.toFixed(1)}°`;
+  if (unitHdgEl) unitHdgEl.textContent = `${unitData.orbitalPeriod.toFixed(1)}m`;
+  if (unitSpdEl) unitSpdEl.textContent = `${speed} km/s`;
+  if (unitAltEl) unitAltEl.textContent = unitData.orbitTypeLabel || "LEO";
+  
+  if (unitRow6) unitRow6.style.display = "";
+  if (unitLabel6) unitLabel6.textContent = "LAT/LON";
+  if (unitExtra) unitExtra.textContent = `${unitData.lat.toFixed(2)}° / ${unitData.lon.toFixed(2)}°`;
   
   if (unitStalenessEl) unitStalenessEl.textContent = "";
 }

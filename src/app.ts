@@ -52,7 +52,7 @@ import {
   h3LineMaterial,
 } from "./scene/h3-grid";
 import { EARTH_RADIUS } from "./constants.js";
-import { initAircraftFeedController, startAircraftFeed, syncLiveFeedState } from "./feeds";
+import { initAircraftFeedController, startAircraftFeed, syncLiveFeedState, initSatelliteFeedController, startSatelliteFeed, syncSatelliteFeedState } from "./feeds";
 
 function main() {
   createMainOverlay();
@@ -117,7 +117,6 @@ function main() {
 
   generateDemoData();
   generateDroneData();
-  generateSatelliteData();
 
   // Initialize aircraft feed controller (for switching between simulated and live data)
   initAircraftFeedController({
@@ -126,24 +125,40 @@ function main() {
     updateAircraftAttributes,
     // Show/hide simulated-only units when switching feed modes
     onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
-      // Ships, satellites, drones are simulated-only (no live feed for them yet)
+      // Ships, drones are simulated-only (satellites handled by their own feed now)
       shipMesh.visible = showSimulatedUnits && unitCountParams.showShips;
-      satelliteMesh.visible = showSimulatedUnits && unitCountParams.showSatellites;
       droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
       // Trails for ships (aircraft trails stay since we have live aircraft)
       shipTrailRefs.mesh.visible = showSimulatedUnits && unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
       // Also hide labels for simulated-only units
       labelParams.showShipLabels = showSimulatedUnits;
-      labelParams.showSatelliteLabels = showSimulatedUnits;
       labelParams.showDroneLabels = showSimulatedUnits;
       // Update state.unitCounts so click detection respects visibility
       state.unitCounts.showShips = showSimulatedUnits && unitCountParams.showShips;
-      state.unitCounts.showSatellites = showSimulatedUnits && unitCountParams.showSatellites;
       state.unitCounts.showDrones = showSimulatedUnits && unitCountParams.showDrones;
     },
   });
   // Start with simulated feed (default)
   startAircraftFeed();
+
+  // Initialize satellite feed controller
+  initSatelliteFeedController({
+    updateSatelliteAttributes,
+    onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
+      // Ships and drones are simulated-only
+      shipMesh.visible = showSimulatedUnits && unitCountParams.showShips;
+      droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
+      // Trails for ships
+      shipTrailRefs.mesh.visible = showSimulatedUnits && unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
+      // Labels
+      labelParams.showShipLabels = showSimulatedUnits;
+      labelParams.showDroneLabels = showSimulatedUnits;
+      // Unit counts for click detection
+      state.unitCounts.showShips = showSimulatedUnits && unitCountParams.showShips;
+      state.unitCounts.showDrones = showSimulatedUnits && unitCountParams.showDrones;
+    },
+  });
+  startSatelliteFeed();
 
   const trailHistory = initTrailHistory(state.ships.length, state.aircraft.length);
   state.trails = trailHistory;
@@ -257,6 +272,7 @@ function main() {
     updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
     // Sync live feed state (handles interpolation + GPU update for live mode)
     syncLiveFeedState();
+    syncSatelliteFeedState();
     t1 = performance.now();
     debugTiming.motion += t1 - t0;
     t0 = t1;

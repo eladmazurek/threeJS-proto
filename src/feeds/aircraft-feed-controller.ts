@@ -12,43 +12,12 @@ import type { AircraftUpdate } from "./types";
 import type { AircraftState } from "../types";
 import { state } from "../state";
 import { getViewportBoundingBox } from "../utils/coordinates";
+import { aircraftFeedParams } from "./shared";
+import type { FeedMode, CoverageMode, AircraftFeedParams } from "./shared";
+import { updateLiveIndicator } from "./shared";
 
-// =============================================================================
-// CONFIGURATION
-// =============================================================================
-
-export type FeedMode = "simulated" | "live";
-export type CoverageMode = "worldwide" | "viewport";
-
-export interface AircraftFeedParams {
-  /** Current feed mode */
-  mode: FeedMode;
-  /** Coverage area for live feed */
-  coverage: CoverageMode;
-  /** Enable position interpolation for live feed */
-  interpolation: boolean;
-  /** Number of simulated aircraft (when in simulated mode) */
-  simulatedCount: number;
-  /** Last error message (if any) */
-  lastError: string;
-  /** Number of tracked aircraft */
-  trackedCount: number;
-  /** Feed status */
-  status: string;
-  /** Indicator status for UI (simulated, live, connecting, error) */
-  indicatorStatus: "simulated" | "live" | "connecting" | "error";
-}
-
-export const aircraftFeedParams: AircraftFeedParams = {
-  mode: "simulated",
-  coverage: "worldwide",
-  interpolation: true,
-  simulatedCount: 500,
-  lastError: "",
-  trackedCount: 0,
-  status: "idle",
-  indicatorStatus: "simulated",
-};
+export type { FeedMode, CoverageMode, AircraftFeedParams };
+export { aircraftFeedParams };
 
 // =============================================================================
 // FEED INSTANCES
@@ -290,36 +259,6 @@ function getViewportBounds() {
   const bounds = getViewportBoundingBox(cameraRef, earthRotY);
 
   return bounds;
-}
-
-// =============================================================================
-// LIVE INDICATOR
-// =============================================================================
-
-const INDICATOR_LABELS: Record<AircraftFeedParams["indicatorStatus"], string> = {
-  simulated: "SIM",
-  live: "LIVE",
-  connecting: "CONNECTING",
-  error: "ERROR",
-};
-
-/**
- * Update the live indicator in the UI based on current feed status.
- */
-export function updateLiveIndicator(): void {
-  const indicator = document.getElementById("live-indicator");
-  const textEl = indicator?.querySelector(".live-text");
-
-  if (!indicator || !textEl) return;
-
-  // Remove all mode classes
-  indicator.classList.remove("mode-simulated", "mode-live", "mode-connecting", "mode-error");
-
-  // Add current mode class
-  indicator.classList.add(`mode-${aircraftFeedParams.indicatorStatus}`);
-
-  // Update text
-  textEl.textContent = INDICATOR_LABELS[aircraftFeedParams.indicatorStatus];
 }
 
 // =============================================================================
