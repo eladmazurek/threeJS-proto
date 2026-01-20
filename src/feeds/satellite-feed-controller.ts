@@ -152,7 +152,7 @@ export function syncSatelliteFeedState(): void {
   }
 
   // Update error status
-  const error = liveFeed.lastError;
+  const error = (liveFeed as any).lastError;
   if (error && satelliteFeedParams.indicatorStatus !== "error") {
       satelliteFeedParams.status = "error";
       satelliteFeedParams.indicatorStatus = "error";

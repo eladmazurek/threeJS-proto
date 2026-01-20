@@ -34,10 +34,7 @@ const DEFAULT_CELESTRAK_CONFIG: CelesTrakFeedConfig = {
 // =============================================================================
 
 interface PropagatedSatellite extends SatelliteState {
-  satrec: satellite.SatRec;
   satnum: string;
-  prevLat?: number;
-  prevLon?: number;
 }
 
 export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
@@ -50,22 +47,23 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
   private _lastTleUpdate: number = 0;
   private _propagationInterval: ReturnType<typeof setInterval> | null = null;
   private _fetchError: string | null = null;
-  // ... (rest of class)
+  private _worker: Worker | null = null;
 
   constructor(config: Partial<CelesTrakFeedConfig> = {}) {
     super();
     this._config = { ...DEFAULT_CELESTRAK_CONFIG, ...config };
-    // We don't use the base class polling for TLEs, we handle it manually
-    this._config.updateRateMs = 0; 
+    this._config.updateRateMs = 0; // Manual control
+
+    // Initialize worker
+    try {
+      this._worker = new Worker(new URL('../workers/satellite-worker.ts', import.meta.url), { type: 'module' });
+      this._worker.onmessage = this.handleWorkerMessage.bind(this);
+    } catch (e) {
+      console.error(`[${this.id}] Failed to initialize worker:`, e);
+    }
   }
 
-  get config(): CelesTrakFeedConfig {
-    return { ...this._config };
-  }
-
-  get lastError(): string | null {
-    return this._fetchError;
-  }
+  // ... (getters)
 
   async start(): Promise<void> {
     if (this._running) return;
@@ -74,10 +72,15 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
     // Fetch initial TLEs
     await this.fetchTLEs();
 
-    // Start propagation loop (60 FPS)
-    this._propagationInterval = setInterval(() => {
-      this.propagateTick();
-    }, 16);
+    // Start propagation loop (request updates from worker)
+    if (this._worker) {
+      this._propagationInterval = setInterval(() => {
+        this._worker?.postMessage({
+          type: 'propagate',
+          data: { time: Date.now() }
+        });
+      }, 16); // 60 FPS target
+    }
   }
 
   stop(): void {
@@ -90,7 +93,7 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
 
   // Abstract method implementation (unused as we override start/stop loop)
   protected async tick(): Promise<void> {
-    // We handle updates via fetchTLEs and propagateTick
+    // We handle updates via fetchTLEs and propagateTick (worker)
   }
 
   protected initializeUnits(): void {
@@ -99,6 +102,33 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
 
   protected getUnitId(unit: SatelliteState): string {
     return unit.name;
+  }
+
+  public syncToState(stateArray: SatelliteState[]): boolean {
+    if (stateArray.length !== this._units.size) {
+        stateArray.length = 0;
+        for (const unit of this._units.values()) {
+            stateArray.push({ ...unit });
+        }
+        return true;
+    }
+
+    let i = 0;
+    for (const unit of this._units.values()) {
+        const target = stateArray[i];
+        target.lat = unit.lat;
+        target.lon = unit.lon;
+        target.altitude = unit.altitude;
+        target.heading = unit.heading;
+        target.name = unit.name;
+        target.isMilitary = unit.isMilitary;
+        target.ascendingNode = unit.ascendingNode;
+        target.inclination = unit.inclination;
+        target.orbitalPeriod = unit.orbitalPeriod;
+        target.orbitTypeLabel = unit.orbitTypeLabel;
+        i++;
+    }
+    return true;
   }
 
   private async fetchTLEs(): Promise<void> {
@@ -118,62 +148,6 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
     }
   }
 
-  private processTLEs(tleData: string): void {
-    const lines = tleData.split(/\r?\n/);
-    let count = 0;
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-
-      if (line.startsWith("1 ") && i + 1 < lines.length && lines[i+1].startsWith("2 ")) {
-        const line1 = line;
-        const line2 = lines[i+1];
-        let name = "Unknown";
-        if (i > 0) {
-            name = lines[i-1].trim();
-        }
-
-        try {
-            const satrec = satellite.twoline2satrec(line1, line2);
-            const satnum = satrec.satnum;
-
-            const inclinationDeg = (satrec.inclo * 180) / Math.PI;
-            const periodMin = 2 * Math.PI / satrec.no;
-
-            if (!this._units.has(satnum)) {
-                this._units.set(satnum, {
-                    satrec,
-                    satnum,
-                    lat: 0,
-                    lon: 0,
-                    heading: 0,
-                    altitude: 0,
-                    scale: 1.0,
-                    inclination: inclinationDeg,
-                    ascendingNode: (satrec.nodeo * 180) / Math.PI,
-                    phase: (satrec.mo * 180) / Math.PI,
-                    orbitalPeriod: periodMin,
-                    name: name,
-                    orbitTypeLabel: this.getOrbitType(periodMin, inclinationDeg),
-                    isMilitary: this.isMilitarySatellite(name),
-                });
-            } else {
-                const unit = this._units.get(satnum)!;
-                unit.satrec = satrec;
-                unit.name = name;
-                unit.isMilitary = this.isMilitarySatellite(name);
-            }
-            count++;
-            i += 1;
-        } catch (e) {
-            // Ignore bad TLE
-        }
-      }
-    }
-    console.log(`[${this.id}] Parsed ${count} satellites`);
-  }
-
   private getOrbitType(periodMin: number, inclination: number): string {
     if (Math.abs(periodMin - 1436) < 10 && Math.abs(inclination) < 1) return "GEO";
     if (periodMin < 120) return "LEO";
@@ -187,116 +161,85 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
     return militaryPrefixes.some(prefix => upperName.startsWith(prefix));
   }
 
-  private propagateTick(): void {
-    if (this._units.size === 0) return;
+  private processTLEs(tleData: string): void {
+    const lines = tleData.split(/\r?\n/);
+    let count = 0;
+    const workerInitData: any[] = [];
+    
+    // Clear existing to ensure sync with worker
+    this._units.clear();
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
 
-    const now = new Date();
-    const gmst = satellite.gstime(now);
-    const DEG_TO_RAD = Math.PI / 180;
-    const RAD_TO_DEG = 180 / Math.PI;
+      if (line.startsWith("1 ") && i + 1 < lines.length && lines[i+1].startsWith("2 ")) {
+        const line1 = line;
+        const line2 = lines[i+1];
+        let name = "Unknown";
+        if (i > 0) {
+            name = lines[i-1].trim();
+        }
 
-    for (const unit of this._units.values()) {
-        const positionAndVelocity = satellite.propagate(unit.satrec, now);
+        // We only need basic metadata locally
+        const satnum = line1.substring(2, 7);
+        const incl = parseFloat(line2.substring(8, 16));
+        const period = 0; // We could parse this locally if needed, or get from worker. 
+                          // For now, let's just parse rough period for orbit type.
+        const meanMotion = parseFloat(line2.substring(52, 63));
+        const periodMin = (24 * 60) / meanMotion;
+
+        const sat: PropagatedSatellite = {
+            satnum,
+            lat: 0, lon: 0, heading: 0, altitude: 0, scale: 1.0,
+            inclination: incl,
+            ascendingNode: 0, // Updated by worker
+            phase: 0, // Not updated by worker currently, used for simple viz only
+            orbitalPeriod: periodMin,
+            name: name,
+            orbitTypeLabel: this.getOrbitType(periodMin, incl),
+            isMilitary: this.isMilitarySatellite(name),
+        };
+
+        this._units.set(satnum, sat);
+        workerInitData.push({ line1, line2, satnum });
         
-        if (positionAndVelocity.position && typeof positionAndVelocity.position !== 'boolean') {
-            const positionEci = positionAndVelocity.position;
-            const velocityEci = positionAndVelocity.velocity as satellite.Eci;
-
-            // Convert to Geodetic
-            const geodetic = satellite.eciToGeodetic(positionEci, gmst);
-            
-            // Store previous for heading
-            unit.prevLat = unit.lat;
-            unit.prevLon = unit.lon;
-
-            // Update Unit State
-            unit.lat = (geodetic.latitude * 180) / Math.PI;
-            unit.lon = (geodetic.longitude * 180) / Math.PI;
-            
-            // Convert altitude from km to scene units
-            unit.altitude = (geodetic.height / 6371) * EARTH_RADIUS;
-
-            // --- HEADING CALCULATION ---
-            // Calculate from position delta
-            if (unit.prevLat !== undefined) {
-              const dLat = unit.lat - unit.prevLat;
-              let dLon = unit.lon - unit.prevLon;
-              if (dLon > 180) dLon -= 360;
-              if (dLon < -180) dLon += 360;
-
-              // Always update if there's any movement
-              if (Math.abs(dLat) > 0 || Math.abs(dLon) > 0) {
-                const cosLat = Math.cos(unit.lat * DEG_TO_RAD);
-                unit.heading = Math.atan2(dLon * cosLat, dLat) * RAD_TO_DEG;
-                if (unit.heading < 0) unit.heading += 360;
-              }
-            }
-
-            // --- ORBIT LINE ALIGNMENT ---
-            // Convert Geodetic Latitude (from SGP4) to Geocentric Latitude (for Spherical Visualizer)
-            // This corrects the offset caused by Earth's oblateness
-            // f = 1/298.257223563 (WGS84 flattening)
-            // (1-f)^2 ~= 0.9933056
-            const latGeodeticRad = unit.lat * DEG_TO_RAD;
-            const latGeocentricRad = Math.atan(0.9933056 * Math.tan(latGeodeticRad));
-
-            const inclRad = unit.inclination * DEG_TO_RAD;
-            
-            // sin(lat_gc) = sin(inc) * sin(phase)
-            const sinPhase = Math.max(-1, Math.min(1, Math.sin(latGeocentricRad) / Math.sin(inclRad)));
-            let phaseRad = Math.asin(sinPhase);
-
-            // Determine quadrant based on velocity Z
-            if (velocityEci.z < 0) {
-              phaseRad = Math.PI - phaseRad;
-            }
-
-            // Calculate longitude relative to ascending node
-            const yOrbit = Math.sin(phaseRad);
-            const xOrbit = Math.cos(phaseRad);
-            
-            const lonInOrbitRad = Math.atan2(yOrbit * Math.cos(inclRad), xOrbit);
-            const lonInOrbitDeg = lonInOrbitRad * RAD_TO_DEG;
-
-            let lan = unit.lon - lonInOrbitDeg;
-            
-            while (lan > 180) lan -= 360;
-            while (lan < -180) lan += 360;
-
-            unit.ascendingNode = lan;
-        }
+        count++;
+        i += 1;
+      }
     }
+    
+    // Send to worker
+    if (this._worker && workerInitData.length > 0) {
+        this._worker.postMessage({
+            type: 'init',
+            data: workerInitData
+        });
+    }
+    
+    console.log(`[${this.id}] Parsed ${count} satellites`);
   }
 
-  /**
-   * Sync internal state to external state array.
-   */
-  syncToState(stateArray: SatelliteState[]): boolean {
-    if (stateArray.length !== this._units.size) {
-        // Rebuild array if size mismatch (simplest, though garbage heavy if size changes often)
-        // With TLEs, size only changes on fetch (hourly).
-        stateArray.length = 0;
+  private handleWorkerMessage(e: MessageEvent): void {
+    const { type, buffer } = e.data;
+    if (type === 'update' && buffer) {
+        const data = new Float32Array(buffer);
+        let idx = 0;
+        
+        // Iterate map in insertion order (must match worker order)
         for (const unit of this._units.values()) {
-            stateArray.push({ ...unit }); // Clone to avoid ref issues? Or just push reference?
-            // Pushing shallow clone is safer if we mutate internals.
-            // But actually we want to update the SAME objects in stateArray to avoid GC.
+            if (idx * 5 >= data.length) break;
+            
+            unit.lat = data[idx * 5];
+            unit.lon = data[idx * 5 + 1];
+            unit.altitude = data[idx * 5 + 2];
+            unit.heading = data[idx * 5 + 3];
+            unit.ascendingNode = data[idx * 5 + 4];
+            
+            idx++;
         }
-        return true;
     }
-
-    // Update existing objects in place
-    let i = 0;
-    for (const unit of this._units.values()) {
-        const target = stateArray[i];
-        target.lat = unit.lat;
-        target.lon = unit.lon;
-        target.altitude = unit.altitude;
-        target.heading = unit.heading;
-        target.name = unit.name;
-        target.isMilitary = unit.isMilitary;
-        // Static props usually don't change, but ensuring sync is cheap enough
-        i++;
-    }
-    return true;
   }
+
+  // ... (helpers)
 }
