@@ -133,6 +133,10 @@ interface InterpolatedAircraft extends AircraftState {
   prevHeading: number;
   // Interpolation progress (0-1)
   interpProgress: number;
+  // Cached trig values for performance
+  cosLat: number;
+  cosHeading: number;
+  sinHeading: number;
 }
 
 // =============================================================================
@@ -408,11 +412,15 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       let projectedLat = lat;
       let projectedLon = lon;
 
+      // Pre-calculate trig values for performance
+      const headingRad = heading * DEG_TO_RAD;
+      const cosHeading = Math.cos(headingRad);
+      const sinHeading = Math.sin(headingRad);
+      const cosLat = Math.cos(lat * DEG_TO_RAD);
+
       if (distDeg > 0) {
-        const headingRad = heading * DEG_TO_RAD;
-        projectedLat += Math.cos(headingRad) * distDeg;
-        const cosLat = Math.cos(lat * DEG_TO_RAD);
-        projectedLon += (Math.sin(headingRad) * distDeg) / Math.max(0.01, Math.abs(cosLat));
+        projectedLat += cosHeading * distDeg;
+        projectedLon += (sinHeading * distDeg) / Math.max(0.01, Math.abs(cosLat));
       }
 
       // Look up aircraft type from ICAO24 database (57k commercial aircraft)
@@ -463,6 +471,10 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           prevLon: projectedLon,
           prevHeading: heading,
           interpProgress: 0,
+          // Cached trig values
+          cosLat,
+          cosHeading,
+          sinHeading,
         };
         this._units.set(icao24, aircraft);
       } else {
@@ -486,6 +498,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.flightLevel = Math.floor(altitudeFeet / 100);
         if (aircraftType) aircraft.aircraftType = aircraftType;
         if (icaoTypecode && !aircraft.icaoTypeCode) aircraft.icaoTypeCode = icaoTypecode;
+        
+        // Update cached trig values
+        aircraft.cosLat = cosLat;
+        aircraft.cosHeading = cosHeading;
+        aircraft.sinHeading = sinHeading;
       }
 
       updates.push({
@@ -545,7 +562,6 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
     const KNOTS_TO_KMH = 1.852;
     const DEG_PER_KM = 1 / 111.12; // 1 degree lat is approx 111km
     const CORRECTION_FACTOR = 0.05; // 5% correction per frame towards the moving target
-    const DEG_TO_RAD = Math.PI / 180;
 
     let anyUpdated = false;
 
@@ -556,12 +572,11 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       const distDeg = (speedKmh * deltaTime / 3600) * DEG_PER_KM;
 
       if (distDeg > 0) {
-        // Calculate change in lat/lon
-        const headingRad = aircraft.heading * DEG_TO_RAD;
-        const dLat = Math.cos(headingRad) * distDeg;
+        // Use cached trig values from processStates
+        // This avoids expensive Math.cos/sin calls for every aircraft every frame
+        const dLat = aircraft.cosHeading * distDeg;
         // Adjust longitude change for latitude (converging meridians)
-        const cosLat = Math.cos(aircraft.lat * DEG_TO_RAD);
-        const dLon = (Math.sin(headingRad) * distDeg) / Math.max(0.01, Math.abs(cosLat));
+        const dLon = (aircraft.sinHeading * distDeg) / Math.max(0.01, Math.abs(aircraft.cosLat));
 
         // Update Visual Position
         aircraft.lat += dLat;
