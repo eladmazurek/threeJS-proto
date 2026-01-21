@@ -226,6 +226,39 @@
   letter-spacing: 1px;
 }
 
+/* Performance Telemetry */
+#perf-telemetry {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 24px;
+  pointer-events: none;
+}
+
+.perf-item {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.perf-value {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.perf-unit {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
 /* Unit info panel */
 #unit-info {
   position: absolute;

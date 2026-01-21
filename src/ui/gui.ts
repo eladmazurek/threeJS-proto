@@ -483,9 +483,5 @@ export function createGui(params) {
       if (labelMaterial) labelMaterial.uniforms.uDebugMode.value = parseFloat(value);
     });
 
-  // Performance stats display
-  unitsFolder.add(perfStats, "fps").name("FPS").listen().disable();
-  unitsFolder.add(perfStats, "frameMs").name("Frame (ms)").listen().disable();
-
   return gui;
 }

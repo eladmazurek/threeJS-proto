@@ -57,6 +57,14 @@ import { initAircraftFeedController, startAircraftFeed, syncLiveFeedState, initS
 function main() {
   createMainOverlay();
 
+  // Performance tracking elements
+  const perfFpsEl = document.getElementById("perf-fps");
+  const perfMsEl = document.getElementById("perf-ms");
+  const perfMemEl = document.getElementById("perf-mem");
+  const perfMemContainer = document.getElementById("perf-mem-container");
+  const hasMemoryApi = (performance as any).memory !== undefined;
+  if (!hasMemoryApi && perfMemContainer) perfMemContainer.style.display = "none";
+
   const earthRefs = createEarth();
   const atmosphereRefs = createAtmosphere();
   const cloudRefs = createCloudLayer(earthRefs.specularCloudsTexture, new THREE.Vector3().fromArray(Object.values(DEFAULT_EARTH_PARAMS).slice(4, 7)));
@@ -165,9 +173,6 @@ function main() {
 
   initSelectionHandling(camera, canvas, earthRefs.mesh, h3Params);
 
-  // FPS tracking (must be declared before createGui so .listen() works)
-  const perfStats = { fps: 0, ships: 0, aircraft: 0, frameMs: 0 };
-
   // Earth rotation toggle
   const earthRotationParams = { enabled: true };
 
@@ -226,13 +231,12 @@ function main() {
     iconScaleParams,
     labelParams,
     labelMaterial,
-    perfStats,
   });
 
   // FPS tracking state
   let lastFpsTime = performance.now();
-  let frameCount = 0;
   let frameStartTime = 0;
+  let frameCount = 0;
   const frameTimes: number[] = [];
 
   // Debug timing (temporary)
@@ -359,26 +363,40 @@ function main() {
     camera.near = nearPlane;
     camera.updateProjectionMatrix();
 
-    t1 = performance.now();
-    debugTiming.other += t1 - t0; // selection/tiles/misc work
-    const renderStart = performance.now();
-    renderer.render(scene, camera);
-    debugTiming.gpu += performance.now() - renderStart;
-    debugTiming.count++;
+        t1 = performance.now();
 
-    // Track actual frame work time (not inter-frame time)
+        debugTiming.other += t1 - t0; // selection/tiles/misc work
+
+        const renderStart = performance.now();
+
+        renderer.render(scene, camera);
+
+        debugTiming.gpu += performance.now() - renderStart;
+
+        debugTiming.count++;
+
+    
+
+        // Track frame work time
     const frameTime = performance.now() - frameStartTime;
     frameTimes.push(frameTime);
     if (frameTimes.length > 60) frameTimes.shift();
-    perfStats.frameMs = Math.round((frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length) * 10) / 10;
-
-    // Update FPS counter every second
     frameCount++;
+
+    // Update debug stats every 500ms
     const now = performance.now();
-    if (now - lastFpsTime >= 1000) {
-      perfStats.fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
-      perfStats.ships = state.ships.length;
-      perfStats.aircraft = state.aircraft.length;
+    if (now - lastFpsTime >= 500) {
+      const fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
+      const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+
+      if (perfFpsEl) perfFpsEl.textContent = fps.toString();
+      if (perfMsEl) perfMsEl.textContent = avgFrameTime.toFixed(1);
+
+      if (hasMemoryApi && perfMemEl) {
+        const mem = Math.round((performance as any).memory.usedJSHeapSize / 1048576);
+        perfMemEl.textContent = mem.toString();
+      }
+
       // Log debug timing
       if (debugTiming.count > 0) {
         const n = debugTiming.count;

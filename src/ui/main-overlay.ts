@@ -53,6 +53,22 @@ export function createMainOverlay() {
       <span class="mission-value" id="met-value">00:00:00</span>
     </div>
 
+    <!-- Performance Telemetry bottom-center -->
+    <div id="perf-telemetry">
+      <div class="perf-item">
+        <span class="perf-value" id="perf-fps">0</span>
+        <span class="perf-unit">FPS</span>
+      </div>
+      <div class="perf-item">
+        <span class="perf-value" id="perf-ms">0.0</span>
+        <span class="perf-unit">MS</span>
+      </div>
+      <div class="perf-item" id="perf-mem-container">
+        <span class="perf-value" id="perf-mem">0</span>
+        <span class="perf-unit">MB</span>
+      </div>
+    </div>
+
     <!-- Weather legend (bottom-right, above unit info) -->
     <div id="weather-legend" class="hidden">
       <div class="legend-header">

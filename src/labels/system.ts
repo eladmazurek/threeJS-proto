@@ -345,35 +345,35 @@ function fillLabelBuffers(labelIdx, unitType, unit, unitIndex) {
   
 export function updateLabelAssignments(camera) {
     const hasSelectedLabelUnit = state.selectedUnit && (state.selectedUnit.type === 'ship' || state.selectedUnit.type === 'aircraft' || state.selectedUnit.type === 'drone' || state.selectedUnit.type === 'satellite');
-    if (!labelParams.enabled && !hasSelectedLabelUnit) {
-      if(labelGeometry) labelGeometry.instanceCount = 0;
-      labelAssignments.count = 0;
+    
+    if (!labelParams.enabled) {
+      if (hasSelectedLabelUnit) {
+          // Show only selected unit's label when labels are disabled but unit is selected
+          const { type, index } = state.selectedUnit;
+          let unit, unitType;
+          if (type === 'ship') { unit = state.ships[index]; unitType = 0; }
+          else if (type === 'aircraft') { unit = state.aircraft[index]; unitType = 1; }
+          else if (type === 'drone') { unit = state.drones[index]; unitType = 2; }
+          else { unit = state.satellites[index]; unitType = 3; }
+
+          if (unit) {
+            labelAssignments.slots[0] = { type: unitType, unitIndex: index };
+            fillLabelBuffers(0, unitType, unit, index);
+            labelAssignments.count = 1;
+            // Only upload 1 label's worth of data
+            markLabelAttributeForUpdate(labelGeometry.userData.uvAttr, MAX_LABEL_CHARS * 4);
+            markLabelAttributeForUpdate(labelGeometry.userData.colorAttr, MAX_LABEL_CHARS * 3);
+            markLabelAttributeForUpdate(labelGeometry.userData.scaleAttr, MAX_LABEL_CHARS);
+            labelGeometry.instanceCount = MAX_LABEL_CHARS;
+          }
+      } else {
+          if(labelGeometry) labelGeometry.instanceCount = 0;
+          labelAssignments.count = 0;
+      }
       return;
     }
   
     if (labelMaterial) labelMaterial.uniforms.uCameraDistance.value = camera.position.length();
-  
-    if (!labelParams.enabled && hasSelectedLabelUnit) {
-      // Show only selected unit's label when labels are disabled but unit is selected
-      const { type, index } = state.selectedUnit;
-      let unit, unitType;
-      if (type === 'ship') { unit = state.ships[index]; unitType = 0; }
-      else if (type === 'aircraft') { unit = state.aircraft[index]; unitType = 1; }
-      else if (type === 'drone') { unit = state.drones[index]; unitType = 2; }
-      else { unit = state.satellites[index]; unitType = 3; }
-
-      if (unit) {
-        labelAssignments.slots[0] = { type: unitType, unitIndex: index };
-        fillLabelBuffers(0, unitType, unit, index);
-        labelAssignments.count = 1;
-        // Only upload 1 label's worth of data (24 chars × components)
-        markLabelAttributeForUpdate(labelGeometry.userData.uvAttr, MAX_LABEL_CHARS * 4);
-        markLabelAttributeForUpdate(labelGeometry.userData.colorAttr, MAX_LABEL_CHARS * 3);
-        markLabelAttributeForUpdate(labelGeometry.userData.scaleAttr, MAX_LABEL_CHARS);
-        labelGeometry.instanceCount = MAX_LABEL_CHARS;
-      }
-      return;
-    }
   
     const now = performance.now();
     if (now - labelVisibility.lastIndexBuild > labelVisibility.indexBuildInterval) {
@@ -387,25 +387,39 @@ export function updateLabelAssignments(camera) {
   
     const visibilityChanged = _labelVisibilityVersion !== _lastVisibilityVersion;
     const timeToRebuild = now - _lastLabelRebuild > 200;
-    if (!visibilityChanged && !timeToRebuild) return;
+    
+    // Always rebuild if there's a selected unit to ensure it stays prioritized/visible
+    if (!visibilityChanged && !timeToRebuild && !hasSelectedLabelUnit) return;
   
     _lastVisibilityVersion = _labelVisibilityVersion;
     _lastLabelRebuild = now;
   
     const { shipIndices, aircraftIndices, droneIndices, satelliteIndices } = labelVisibility;
-    const totalAvailable = shipIndices.length + aircraftIndices.length + droneIndices.length + satelliteIndices.length;
-    if (totalAvailable === 0 && !hasSelectedLabelUnit) {
-      if(labelGeometry) labelGeometry.instanceCount = 0;
-      return;
-    }
-  
-    const maxLabels = Math.min(labelParams.maxLabels, totalAvailable);
+
+    const maxLabels = labelParams.maxLabels;
+    // Reserve one slot for the selected unit if it exists
+    const generalLabelLimit = hasSelectedLabelUnit ? maxLabels - 1 : maxLabels;
+    
     let labelIdx = 0;
-    labelAssignments.count = 0;
-  
+    // We don't need labelAssignments.count = 0 here as we set it at the end
+    
+    let selectedTypeInt = -1;
+    let selectedIndex = -1;
+    if (hasSelectedLabelUnit) {
+        const { type, index } = state.selectedUnit;
+        selectedIndex = index;
+        if (type === 'ship') selectedTypeInt = 0;
+        else if (type === 'aircraft') selectedTypeInt = 1;
+        else if (type === 'drone') selectedTypeInt = 2;
+        else selectedTypeInt = 3;
+    }
+
+    // 1. Fill slots with general visible units (up to generalLabelLimit)
     if (labelParams.showShipLabels && unitCountParams.showShips) {
-        for (let j = 0; j < shipIndices.length && labelIdx < maxLabels; j++) {
+        for (let j = 0; j < shipIndices.length && labelIdx < generalLabelLimit; j++) {
             const i = shipIndices[j];
+            if (selectedTypeInt === 0 && selectedIndex === i) continue; // Skip selected
+
             const unit = state.ships[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 0, unitIndex: i };
@@ -415,8 +429,10 @@ export function updateLabelAssignments(camera) {
     }
 
     if (labelParams.showAircraftLabels && unitCountParams.showAircraft) {
-        for (let j = 0; j < aircraftIndices.length && labelIdx < maxLabels; j++) {
+        for (let j = 0; j < aircraftIndices.length && labelIdx < generalLabelLimit; j++) {
             const i = aircraftIndices[j];
+            if (selectedTypeInt === 1 && selectedIndex === i) continue; // Skip selected
+
             const unit = state.aircraft[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 1, unitIndex: i };
@@ -426,8 +442,10 @@ export function updateLabelAssignments(camera) {
     }
 
     if (labelParams.showDroneLabels && unitCountParams.showDrones) {
-        for (let j = 0; j < droneIndices.length && labelIdx < maxLabels; j++) {
+        for (let j = 0; j < droneIndices.length && labelIdx < generalLabelLimit; j++) {
             const i = droneIndices[j];
+            if (selectedTypeInt === 2 && selectedIndex === i) continue; // Skip selected
+
             const unit = state.drones[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 2, unitIndex: i };
@@ -437,12 +455,30 @@ export function updateLabelAssignments(camera) {
     }
 
     if (labelParams.showSatelliteLabels && unitCountParams.showSatellites) {
-        for (let j = 0; j < satelliteIndices.length && labelIdx < maxLabels; j++) {
+        for (let j = 0; j < satelliteIndices.length && labelIdx < generalLabelLimit; j++) {
             const i = satelliteIndices[j];
+            if (selectedTypeInt === 3 && selectedIndex === i) continue; // Skip selected
+
             const unit = state.satellites[i];
             if (!unit) continue;
             labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
             fillLabelBuffers(labelIdx, 3, unit, i);
+            labelIdx++;
+        }
+    }
+
+    // 2. Assign Selected Unit to the next available slot (effectively reserved)
+    if (hasSelectedLabelUnit) {
+        const { type, index } = state.selectedUnit;
+        let unit;
+        if (type === 'ship') unit = state.ships[index];
+        else if (type === 'aircraft') unit = state.aircraft[index];
+        else if (type === 'drone') unit = state.drones[index];
+        else unit = state.satellites[index];
+        
+        if (unit) {
+            labelAssignments.slots[labelIdx] = { type: selectedTypeInt, unitIndex: index };
+            fillLabelBuffers(labelIdx, selectedTypeInt, unit, index);
             labelIdx++;
         }
     }
