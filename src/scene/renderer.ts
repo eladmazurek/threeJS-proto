@@ -110,7 +110,7 @@ export function createControls(
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
   controls.minDistance = EARTH_RADIUS + 0.01;
-  controls.maxDistance = 15;
+  controls.maxDistance = 26;
   controls.enablePan = false;
 
   return controls;

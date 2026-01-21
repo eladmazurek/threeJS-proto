@@ -32,7 +32,7 @@ export const controls = new OrbitControls(camera, canvas as HTMLElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 controls.minDistance = EARTH_RADIUS + 0.00015; // ~500m altitude
-controls.maxDistance = 20;
+controls.maxDistance = 26;
 controls.minPolarAngle = 0;
 controls.maxPolarAngle = Math.PI;
 
