@@ -76,9 +76,9 @@ export function createGui(params) {
   gui.title("Controls");
 
   // ===========================================================================
-  // 1. SCENE APPEARANCE
+  // 1. APPEARANCE
   // ===========================================================================
-  const sceneFolder = gui.addFolder("Scene Appearance");
+  const sceneFolder = gui.addFolder("Appearance");
   
   // Earth Textures & Colors
   sceneFolder
@@ -146,9 +146,9 @@ export function createGui(params) {
 
 
   // ===========================================================================
-  // 2. LIVE DATA FEEDS
+  // 2. LIVE DATA
   // ===========================================================================
-  const feedFolder = gui.addFolder("Live Data Feeds");
+  const feedFolder = gui.addFolder("Live Data");
   
   // OpenSky toggle
   const openskyState = { enabled: false };
@@ -197,62 +197,9 @@ export function createGui(params) {
 
 
   // ===========================================================================
-  // 3. TRAFFIC & UNITS
+  // 3. SIMULATION
   // ===========================================================================
-  const trafficFolder = gui.addFolder("Traffic & Units");
-
-  // Filters
-  const filtersFolder = trafficFolder.addFolder("Filters");
-    
-  filtersFolder.add(unitCountParams, "showShips").name("Show Ships").onChange((value) => {
-      state.unitCounts.showShips = value;
-      shipMesh.visible = value && !h3Params.enabled;
-      shipTrailMesh.visible = value && trailParams.enabled && trailParams.shipTrails && !h3Params.enabled;
-      state.h3.lastResolution = -1;
-      refreshH3PopupIfVisible();
-  });
-  filtersFolder.add(unitCountParams, "showAircraft").name("Show Aircraft").onChange((value) => {
-      state.unitCounts.showAircraft = value;
-      aircraftMesh.visible = value && !h3Params.enabled;
-      aircraftTrailMesh.visible = value && trailParams.enabled && trailParams.aircraftTrails && !h3Params.enabled;
-      state.h3.lastResolution = -1;
-      refreshH3PopupIfVisible();
-  });
-  filtersFolder.add(unitCountParams, "showSatellites").name("Show Satellites").onChange((value) => {
-      state.unitCounts.showSatellites = value;
-      satelliteMesh.visible = value && !h3Params.enabled;
-      state.h3.lastResolution = -1;
-      refreshH3PopupIfVisible();
-  });
-  filtersFolder.add(unitCountParams, "showDrones").name("Show Drones").onChange((value) => {
-      state.unitCounts.showDrones = value;
-      droneMesh.visible = value && !h3Params.enabled;
-  });
-
-  // Annotations (Labels & Trails)
-  const visualsFolder = trafficFolder.addFolder("Annotations");
-  
-  // -- Labels --
-  visualsFolder.add(labelParams, "enabled").name("Enable Labels");
-  visualsFolder.add(labelParams, "maxLabels", 100, 1000, 50).name("Max Labels");
-  visualsFolder.add(labelParams, "fontSize", 0.005, 0.03, 0.001).name("Label Scale");
-  visualsFolder.add(labelParams, "labelOffset", 0, 0.1, 0.005).name("Label Offset").onChange((v) => { if(labelMaterial) labelMaterial.uniforms.uLabelOffset.value = v; });
-  visualsFolder.add(labelParams, "showShipLabels").name("Ship Labels");
-  visualsFolder.add(labelParams, "showAircraftLabels").name("Aircraft Labels");
-  visualsFolder.add(labelParams, "showSatelliteLabels").name("Sat Labels");
-  visualsFolder.add(labelParams, "showDroneLabels").name("Drone Labels");
-  
-  // -- Trails --
-  visualsFolder.add(trailParams, "enabled").name("Enable Trails").onChange(updateTrailAttributes);
-  visualsFolder.add(trailParams, "shipTrails").name("Ship Trails").onChange(updateTrailAttributes);
-  visualsFolder.add(trailParams, "aircraftTrails").name("Air Trails").onChange(updateTrailAttributes);
-  visualsFolder.add(trailParams, "opacity", 0.1, 1.0, 0.1).name("Trail Opacity").onChange(() => {
-    shipTrailMaterial.uniforms.uBaseOpacity.value = trailParams.opacity;
-    aircraftTrailMaterial.uniforms.uBaseOpacity.value = trailParams.opacity;
-  });
-
-  // Simulation
-  const simulationFolder = trafficFolder.addFolder("Simulation");
+  const simulationFolder = gui.addFolder("Simulation");
   simulationFolder.close();
 
   // Use K notation
@@ -290,12 +237,70 @@ export function createGui(params) {
 
 
   // ===========================================================================
-  // 4. OVERLAYS & GRIDS
+  // 4. FILTERS
+  // ===========================================================================
+  const filtersFolder = gui.addFolder("Filters");
+  filtersFolder.close();
+    
+  filtersFolder.add(unitCountParams, "showShips").name("Show Ships").onChange((value) => {
+      state.unitCounts.showShips = value;
+      shipMesh.visible = value && !h3Params.enabled;
+      shipTrailMesh.visible = value && trailParams.enabled && trailParams.shipTrails && !h3Params.enabled;
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showAircraft").name("Show Aircraft").onChange((value) => {
+      state.unitCounts.showAircraft = value;
+      aircraftMesh.visible = value && !h3Params.enabled;
+      aircraftTrailMesh.visible = value && trailParams.enabled && trailParams.aircraftTrails && !h3Params.enabled;
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showSatellites").name("Show Satellites").onChange((value) => {
+      state.unitCounts.showSatellites = value;
+      satelliteMesh.visible = value && !h3Params.enabled;
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showDrones").name("Show Drones").onChange((value) => {
+      state.unitCounts.showDrones = value;
+      droneMesh.visible = value && !h3Params.enabled;
+  });
+
+  // ===========================================================================
+  // 5. ANNOTATIONS
+  // ===========================================================================
+  const visualsFolder = gui.addFolder("Annotations");
+  visualsFolder.close();
+  
+  // -- Labels --
+  visualsFolder.add(labelParams, "enabled").name("Enable Labels");
+  visualsFolder.add(labelParams, "maxLabels", 100, 1000, 50).name("Max Labels");
+  visualsFolder.add(labelParams, "fontSize", 0.005, 0.03, 0.001).name("Label Scale");
+  visualsFolder.add(labelParams, "labelOffset", 0, 0.1, 0.005).name("Label Offset").onChange((v) => { if(labelMaterial) labelMaterial.uniforms.uLabelOffset.value = v; });
+  visualsFolder.add(labelParams, "showShipLabels").name("Ship Labels");
+  visualsFolder.add(labelParams, "showAircraftLabels").name("Aircraft Labels");
+  visualsFolder.add(labelParams, "showSatelliteLabels").name("Sat Labels");
+  visualsFolder.add(labelParams, "showDroneLabels").name("Drone Labels");
+  
+  // -- Trails --
+  visualsFolder.add(trailParams, "enabled").name("Enable Trails").onChange(updateTrailAttributes);
+  visualsFolder.add(trailParams, "shipTrails").name("Ship Trails").onChange(updateTrailAttributes);
+  visualsFolder.add(trailParams, "aircraftTrails").name("Air Trails").onChange(updateTrailAttributes);
+  visualsFolder.add(trailParams, "opacity", 0.1, 1.0, 0.1).name("Trail Opacity").onChange(() => {
+    shipTrailMaterial.uniforms.uBaseOpacity.value = trailParams.opacity;
+    aircraftTrailMaterial.uniforms.uBaseOpacity.value = trailParams.opacity;
+  });
+
+
+  // ===========================================================================
+  // 6. OVERLAYS & GRIDS
   // ===========================================================================
   const overlaysFolder = gui.addFolder("Overlays & Grids");
 
   // Weather
   const weatherFolder = overlaysFolder.addFolder("Weather");
+  weatherFolder.close();
   weatherFolder.add(weatherParams, "enabled").name("Show Weather").onChange(() => {
     weatherMesh.visible = weatherParams.enabled;
     updateWeatherLegend(weatherParams.layer, weatherParams.enabled);
@@ -369,17 +374,30 @@ export function createGui(params) {
 
 
   // ===========================================================================
-  // 5. CAMERA & VIEW
+  // 6. CAMERA & VIEW
   // ===========================================================================
   const cameraFolder = gui.addFolder("Camera Control");
   
   cameraFolder.add(cameraParams, "tiltAngle", 0, 90, 1).name("Tilt Angle").onChange(setCameraTilt);
   
   const presets = cameraFolder.addFolder("Presets");
+  presets.close();
   presets.add(tiltPresets, "Center").name("● Center");
   presets.add(tiltPresets, "Slight Tilt").name("◢ Slight Tilt");
   presets.add(tiltPresets, "Tracking").name("→ Tracking");
   presets.add(tiltPresets, "Horizon").name("— Horizon");
+
+  // Close all top-level folders
+  sceneFolder.close();
+  feedFolder.close();
+  simulationFolder.close();
+  filtersFolder.close();
+  visualsFolder.close();
+  overlaysFolder.close();
+  cameraFolder.close();
+
+  // Close the main GUI
+  gui.close();
 
   return gui;
 }
