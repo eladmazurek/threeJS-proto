@@ -38,6 +38,9 @@ export const unitCountParams = {
   showAircraft: true,
   showSatellites: true,
   showDrones: true,
+  showLEO: true,
+  showMEO: true,
+  showGEO: true,
 };
 
 function initShip(lat: number, lon: number, heading: number, index: number = 0): ShipState {

@@ -154,6 +154,9 @@ export interface UnitCountParams {
   showSatellites: boolean;
   showDrones: boolean;
   realisticRoutes: boolean;
+  showLEO: boolean;
+  showMEO: boolean;
+  showGEO: boolean;
 }
 
 /** Motion simulation parameters */

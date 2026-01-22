@@ -23,6 +23,7 @@ import type { SelectedUnit, UnitType, SatelliteState, DroneState } from "../type
 import { state } from '../state';
 import { AIRPORTS } from "../data/airports";
 import { getCountryFlag } from "../utils/country-flags";
+import { unitCountParams } from "../simulation/demo-data";
 // Lazy-loaded formatAircraftType to avoid import affecting startup
 let _formatAircraftType: ((code: string | undefined) => string) | null = null;
 async function loadFormatAircraftType() {
@@ -341,6 +342,10 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
         for (let i = 0; i < units.length; i++) {
             const unit = units[i];
             const altitude = typeof altitudeFn === 'function' ? altitudeFn(unit) : altitudeFn;
+            
+            // Skip hidden units (altitudeFn returned null)
+            if (altitude === null || altitude === undefined) continue;
+
             const worldPos = latLonTo3D(unit.lat, unit.lon, altitude).applyMatrix4(earth.matrixWorld);
             
             // Occlusion check: Raycast from camera to unit
@@ -369,7 +374,16 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
 
     if (state.unitCounts.showShips) checkUnits(state.ships, "ship", SHIP_ALTITUDE);
     if (state.unitCounts.showAircraft) checkUnits(state.aircraft, "aircraft", AIRCRAFT_ALTITUDE);
-    if (state.unitCounts.showSatellites) checkUnits(state.satellites, "satellite", unit => unit.altitude);
+    if (state.unitCounts.showSatellites) {
+        checkUnits(state.satellites, "satellite", (unit) => {
+            // Check visibility filters
+            const { showLEO, showMEO, showGEO } = unitCountParams;
+            if (unit.orbitTypeLabel === 'LEO' && !showLEO) return null;
+            if (unit.orbitTypeLabel === 'MEO' && !showMEO) return null;
+            if (unit.orbitTypeLabel === 'GEO' && !showGEO) return null;
+            return unit.altitude;
+        });
+    }
     if (state.unitCounts.showDrones) checkUnits(state.drones, "drone", unit => unit.altitude);
 
     if (closestUnit) {

@@ -143,10 +143,9 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
   }
 
   private getOrbitType(periodMin: number, inclination: number): string {
-    if (Math.abs(periodMin - 1436) < 10 && Math.abs(inclination) < 1) return "GEO";
-    if (periodMin < 120) return "LEO";
-    if (periodMin > 120 && periodMin < 1000) return "MEO";
-    return "Other";
+    if (periodMin > 1300) return "GEO"; // Synchronous and High Earth Orbits
+    if (periodMin < 128) return "LEO";  // Low Earth Orbits
+    return "MEO";                      // Medium Earth and everything else
   }
 
   private isMilitarySatellite(name: string): boolean {

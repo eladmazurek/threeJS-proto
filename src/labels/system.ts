@@ -465,12 +465,22 @@ export function updateLabelAssignments(camera) {
     }
 
     if (labelParams.showSatelliteLabels && unitCountParams.showSatellites) {
+        const { showLEO, showMEO, showGEO } = unitCountParams;
         for (let j = 0; j < satelliteIndices.length && labelIdx < generalLabelLimit; j++) {
             const i = satelliteIndices[j];
             if (selectedTypeInt === 3 && selectedIndex === i) continue; // Skip selected
 
             const unit = state.satellites[i];
             if (!unit) continue;
+
+            // Filter by orbit type
+            let visible = true;
+            if (unit.orbitTypeLabel === 'LEO' && !showLEO) visible = false;
+            else if (unit.orbitTypeLabel === 'MEO' && !showMEO) visible = false;
+            else if (unit.orbitTypeLabel === 'GEO' && !showGEO) visible = false;
+            
+            if (!visible) continue;
+
             labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
             fillLabelBuffers(labelIdx, 3, unit, i);
             labelIdx++;
