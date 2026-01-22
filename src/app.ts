@@ -307,10 +307,10 @@ function main() {
         aircraft: state.aircraft.length,
         satellites: state.satellites.length,
         drones: state.drones.length,
-        showShips: unitCountParams.showShips,
-        showAircraft: unitCountParams.showAircraft,
-        showSatellites: unitCountParams.showSatellites,
-        showDrones: unitCountParams.showDrones,
+        showShips: state.unitCounts.showShips,
+        showAircraft: state.unitCounts.showAircraft,
+        showSatellites: state.unitCounts.showSatellites,
+        showDrones: state.unitCounts.showDrones,
       },
     });
     updateAirportScales(cameraDistance);
