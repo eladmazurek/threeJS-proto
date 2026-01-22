@@ -28,10 +28,12 @@ interface GeometryUserData {
   lonArray: Float32Array;
   headingArray: Float32Array;
   scaleArray: Float32Array;
+  altitudeArray: Float32Array;
   latAttr: THREE.InstancedBufferAttribute;
   lonAttr: THREE.InstancedBufferAttribute;
   headingAttr: THREE.InstancedBufferAttribute;
   scaleAttr: THREE.InstancedBufferAttribute;
+  altitudeAttr: THREE.InstancedBufferAttribute;
 }
 
 interface AttributeDependencies {
@@ -145,7 +147,7 @@ export function updateSatelliteAttributes(): void {
   if (!deps) return;
 
   const userData = deps.satelliteGeometry.userData as GeometryUserData;
-  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = userData;
+  const { latArray, lonArray, headingArray, scaleArray, altitudeArray, latAttr, lonAttr, headingAttr, scaleAttr, altitudeAttr } = userData;
   const satelliteSimState = deps.getSatelliteSimState();
   const count = Math.min(satelliteSimState.length, MAX_SATELLITES);
 
@@ -154,12 +156,8 @@ export function updateSatelliteAttributes(): void {
     latArray[i] = sat.lat;
     lonArray[i] = sat.lon;
     headingArray[i] = sat.heading;
-    // Encode altitude and display scale in a single float:
-    // Integer part: display scale * 10 (includes camera scaling)
-    // Fractional part: altitude / 0.5 (normalized to 0-1 range)
-    const scaledDisplay = sat.scale * state.currentIconScale;
-    const normalizedAlt = sat.altitude / 0.5; // altitude 0-0.5 -> 0-1
-    scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
+    scaleArray[i] = sat.scale * state.currentIconScale;
+    altitudeArray[i] = sat.altitude;
   }
 
   // Mark for partial update (only upload active units)
@@ -167,6 +165,7 @@ export function updateSatelliteAttributes(): void {
   markAttributeForUpdate(lonAttr, count);
   markAttributeForUpdate(headingAttr, count);
   markAttributeForUpdate(scaleAttr, count);
+  markAttributeForUpdate(altitudeAttr, count);
 
   deps.satelliteGeometry.instanceCount = count;
 }
@@ -178,7 +177,7 @@ export function updateDroneAttributes(): void {
   if (!deps) return;
 
   const userData = deps.droneGeometry.userData as GeometryUserData;
-  const { latArray, lonArray, headingArray, scaleArray, latAttr, lonAttr, headingAttr, scaleAttr } = userData;
+  const { latArray, lonArray, headingArray, scaleArray, altitudeArray, latAttr, lonAttr, headingAttr, scaleAttr, altitudeAttr } = userData;
   const droneSimState = deps.getDroneSimState();
   const count = Math.min(droneSimState.length, MAX_DRONES);
 
@@ -187,12 +186,8 @@ export function updateDroneAttributes(): void {
     latArray[i] = drone.lat;
     lonArray[i] = drone.lon;
     headingArray[i] = drone.heading;
-    // Encode scale and altitude like satellites do:
-    // Integer part: display scale * 10 (includes camera scaling)
-    // Fractional part: altitude / 0.5 (normalized to 0-1 range)
-    const scaledDisplay = drone.scale * state.currentIconScale;
-    const normalizedAlt = drone.altitude / 0.5;
-    scaleArray[i] = Math.floor(scaledDisplay * 10) + Math.min(0.99, normalizedAlt);
+    scaleArray[i] = drone.scale * state.currentIconScale;
+    altitudeArray[i] = drone.altitude;
   }
 
   // Mark for partial update (only upload active units)
@@ -200,6 +195,7 @@ export function updateDroneAttributes(): void {
   markAttributeForUpdate(lonAttr, count);
   markAttributeForUpdate(headingAttr, count);
   markAttributeForUpdate(scaleAttr, count);
+  markAttributeForUpdate(altitudeAttr, count);
 
   deps.droneGeometry.instanceCount = count;
 }

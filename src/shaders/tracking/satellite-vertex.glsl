@@ -9,7 +9,8 @@
 attribute float aLat;       // Latitude in degrees (-90 to 90)
 attribute float aLon;       // Longitude in degrees (-180 to 180)
 attribute float aHeading;   // Heading in degrees (0 = North, clockwise)
-attribute float aScale;     // Scale factor (also encodes altitude: altitude = scale * 0.5)
+attribute float aScale;     // Scale factor
+attribute float aAltitude;  // Altitude above Earth surface (in scene units)
 
 // Uniforms
 uniform float uEarthRadius;  // Earth sphere radius
@@ -28,11 +29,9 @@ void main() {
   // Store local position for gradient effects in fragment shader
   vLocalPos = position.xz * 20.0;
 
-  // Decode altitude from scale attribute
-  // aScale encoding: integer part = displayScale * 10, fractional part = altitude / 0.5
-  // This allows both scale and altitude to be packed in a single float
-  float altitude = fract(aScale) * 0.5; // Fractional part * 0.5 = actual altitude
-  float displayScale = floor(aScale) * 0.1; // Integer part / 10 = actual display scale
+  // Use direct attribute values
+  float altitude = aAltitude;
+  float displayScale = aScale;
 
   // Convert lat/lon to radians
   float phi = (90.0 - aLat) * DEG_TO_RAD;

@@ -28,33 +28,40 @@ function createTrackingGeometry(baseGeometry, maxInstances) {
   const lonArray = new Float32Array(maxInstances);
   const headingArray = new Float32Array(maxInstances);
   const scaleArray = new Float32Array(maxInstances);
+  const altitudeArray = new Float32Array(maxInstances);
 
   scaleArray.fill(1.0);
+  altitudeArray.fill(0.0);
 
   const latAttr = new THREE.InstancedBufferAttribute(latArray, 1);
   const lonAttr = new THREE.InstancedBufferAttribute(lonArray, 1);
   const headingAttr = new THREE.InstancedBufferAttribute(headingArray, 1);
   const scaleAttr = new THREE.InstancedBufferAttribute(scaleArray, 1);
+  const altitudeAttr = new THREE.InstancedBufferAttribute(altitudeArray, 1);
 
   latAttr.setUsage(THREE.DynamicDrawUsage);
   lonAttr.setUsage(THREE.DynamicDrawUsage);
   headingAttr.setUsage(THREE.DynamicDrawUsage);
   scaleAttr.setUsage(THREE.DynamicDrawUsage);
+  altitudeAttr.setUsage(THREE.DynamicDrawUsage);
 
   instancedGeometry.setAttribute('aLat', latAttr);
   instancedGeometry.setAttribute('aLon', lonAttr);
   instancedGeometry.setAttribute('aHeading', headingAttr);
   instancedGeometry.setAttribute('aScale', scaleAttr);
+  instancedGeometry.setAttribute('aAltitude', altitudeAttr);
 
   instancedGeometry.userData = {
     latArray,
     lonArray,
     headingArray,
     scaleArray,
+    altitudeArray,
     latAttr,
     lonAttr,
     headingAttr,
     scaleAttr,
+    altitudeAttr,
   };
 
   return instancedGeometry;
