@@ -329,21 +329,33 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
     let closestDist = clickRadius;
 
     const cameraWorldPos = camera.position.clone();
-    const earthWorldPos = earth.position.clone().applyMatrix4(earth.parent?.matrixWorld || new THREE.Matrix4());
-
-    function isOnVisibleSide(unitWorldPos) {
-        const surfaceNormal = unitWorldPos.clone().sub(earthWorldPos).normalize();
-        const toCamera = cameraWorldPos.clone().sub(unitWorldPos).normalize();
-        return surfaceNormal.dot(toCamera) > 0;
-    }
+    
+    // Create a sphere representing Earth for occlusion checking
+    // Use slightly smaller radius (0.98 * EARTH_RADIUS) to be forgiving near horizon
+    const earthSphere = new THREE.Sphere(new THREE.Vector3(0,0,0), EARTH_RADIUS * 0.98);
 
     const checkUnits = (units, type, altitudeFn) => {
         for (let i = 0; i < units.length; i++) {
             const unit = units[i];
             const altitude = typeof altitudeFn === 'function' ? altitudeFn(unit) : altitudeFn;
             const worldPos = latLonTo3D(unit.lat, unit.lon, altitude).applyMatrix4(earth.matrixWorld);
+            
+            // Occlusion check: Raycast from camera to unit
+            // If ray intersects Earth sphere closer than unit, it's occluded
+            const distToUnit = cameraWorldPos.distanceTo(worldPos);
+            const rayDir = worldPos.clone().sub(cameraWorldPos).normalize();
+            const ray = new THREE.Ray(cameraWorldPos, rayDir);
+            const intersection = ray.intersectSphere(earthSphere, new THREE.Vector3());
+            
+            if (intersection) {
+                const distToEarth = cameraWorldPos.distanceTo(intersection);
+                // If intersection is significantly closer than unit (allow small margin), it's blocked
+                if (distToEarth < distToUnit - 0.1) continue;
+            }
+
             const screen = projectToScreen(worldPos, camera, canvas);
-            if (screen.z > 1 || !isOnVisibleSide(worldPos)) continue;
+            if (screen.z > 1) continue;
+            
             const dist = Math.sqrt((clickX - screen.x) ** 2 + (clickY - screen.y) ** 2);
             if (dist < closestDist) {
                 closestDist = dist;

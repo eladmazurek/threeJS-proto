@@ -53,25 +53,27 @@ self.onmessage = (e: MessageEvent) => {
         // Convert km altitude to scene units
         const alt = (geodetic.height / 6371) * EARTH_RADIUS;
         
-        // Heading
-        // (Simplified heading calc for performance in worker)
-        // We really need prev position for accurate heading, but let's try 
-        // to use velocity vector converted to ENU if possible, OR just skip heading for now 
-        // and let the main thread smooth it? 
-        // Actually, main thread having 8000 stateful objects is fine if we just update props.
-        // Let's keep it simple: just send positions. Main thread can compute heading if needed
-        // or we compute it here.
-        // Let's compute a basic heading from velocity? 
-        // Accurate heading requires ECI -> ECF -> ENU rotation. 
-        // Let's use the same "position delta" logic but we need to store prev state in worker.
-        // For now, let's just send 0 heading or fix it later. 
-        // WAIT: The visualizer needs heading.
+        // Calculate heading by propagating a small step forward (1 second)
+        // This gives us the ground track direction
+        const futureDate = new Date(time + 1000);
+        const futureGmst = satellite.gstime(futureDate);
+        const futurePosVel = satellite.propagate(sat.satrec, futureDate);
+        let heading = 0;
         
-        // Let's try the "velocity based" heading approximation which is cheaper than prev-delta
-        // but requires coordinate transforms. 
-        // Let's stick to the method that worked: calculate from orbital elements.
-        // Actually, let's just return 0 for heading for now to ensure smoothness first.
-        const heading = 0;
+        if (futurePosVel.position && typeof futurePosVel.position !== 'boolean') {
+           const futureGeo = satellite.eciToGeodetic(futurePosVel.position, futureGmst);
+           const lat1 = geodetic.latitude;
+           const lon1 = geodetic.longitude;
+           const lat2 = futureGeo.latitude;
+           const lon2 = futureGeo.longitude;
+           
+           // Calculate bearing
+           const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+           const x = Math.cos(lat1) * Math.sin(lat2) -
+                     Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+           heading = Math.atan2(y, x) * RAD_TO_DEG;
+           if (heading < 0) heading += 360;
+        }
 
         // Ascending Node (Visual alignment)
         // SGP4 gives us Inclination (sat.inclination) and we have Lat.
