@@ -259,7 +259,10 @@ export function updateSelectedUnitInfo() {
         if (!unitData) { deselectUnit(); return; }
         const altKm = (unitData.altitude * 6371 / EARTH_RADIUS).toFixed(0);
         altitude = `${altKm} km`;
-        speed = `${(7.8 - unitData.altitude * 2).toFixed(1)} km/s`;
+        // Accurate orbital speed calculation: sqrt(GM / r)
+        // GM = 398600 km^3/s^2, r = Earth Radius (6371 km) + Altitude (km)
+        const speedVal = Math.sqrt(398600 / (6371 + (unitData.altitude * (6371 / EARTH_RADIUS))));
+        speed = `${speedVal.toFixed(2)} km/s`;
         unitLabel1.textContent = "LAT"; unitLabel2.textContent = "LON"; unitLabel3.textContent = "HDG"; unitLabel4.textContent = "SPD"; unitLabel5.textContent = "ALT";
         unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
         unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;

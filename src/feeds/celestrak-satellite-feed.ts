@@ -72,22 +72,16 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
     // Fetch initial TLEs
     await this.fetchTLEs();
 
-    // Start propagation loop (request updates from worker)
+    // Start propagation loop (request-response style)
     if (this._worker) {
-      this._propagationInterval = setInterval(() => {
-        this._worker?.postMessage({
+        this._worker.postMessage({
           type: 'propagate',
           data: { time: Date.now() }
         });
-      }, 16); // 60 FPS target
     }
   }
 
   stop(): void {
-    if (this._propagationInterval) {
-      clearInterval(this._propagationInterval);
-      this._propagationInterval = null;
-    }
     super.stop();
   }
 
@@ -237,6 +231,14 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
             unit.ascendingNode = data[idx * 5 + 4];
             
             idx++;
+        }
+
+        // Request next update immediately (loop)
+        if (this._running && this._worker) {
+            this._worker.postMessage({
+                type: 'propagate',
+                data: { time: Date.now() }
+            });
         }
     }
   }
