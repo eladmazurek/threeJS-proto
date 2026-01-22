@@ -130,7 +130,9 @@ function handleSimulatedUpdates(updates: any[]): void {
             }
         }
         
-        satelliteFeedParams.trackedCount = state.satellites.length;
+        // For simulated mode, we don't want to show "tracked count" in the live feed UI
+        // or we should clarify it's simulated. For now, user requested 0 if not live.
+        satelliteFeedParams.trackedCount = 0;
         if (onAttributesUpdate) onAttributesUpdate();
     }
 }

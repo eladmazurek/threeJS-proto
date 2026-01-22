@@ -105,42 +105,39 @@ export function createGui(params) {
 
   sceneFolder.add(earthRotationParams, "enabled").name("Earth Rotation");
 
-  // Atmosphere
-  const atmosphereFolder = sceneFolder.addFolder("Atmosphere");
-  atmosphereFolder.close();
-  atmosphereFolder.addColor(earthParameters, "atmosphereDayColor").name("Day Color").onChange(() => {
+  // Atmosphere Header
+  sceneFolder.add({ h: "" }, "h").name("--- ATMOSPHERE ---").disable();
+  sceneFolder.addColor(earthParameters, "atmosphereDayColor").name("Day Color").onChange(() => {
     earthMaterial.uniforms.uAtmosphereDayColor.value.set(earthParameters.atmosphereDayColor);
     atmosphereMaterial.uniforms.uDayColor.value.set(earthParameters.atmosphereDayColor);
   });
-  atmosphereFolder.addColor(earthParameters, "atmosphereTwilightColor").name("Twilight Color").onChange(() => {
+  sceneFolder.addColor(earthParameters, "atmosphereTwilightColor").name("Twilight Color").onChange(() => {
     earthMaterial.uniforms.uAtmosphereTwilightColor.value.set(earthParameters.atmosphereTwilightColor);
     atmosphereMaterial.uniforms.uTwilightColor.value.set(earthParameters.atmosphereTwilightColor);
   });
-  atmosphereFolder.add(earthParameters, "atmosphereIntensity", 0, 1, 0.01).name("Intensity").onChange(() => {
+  sceneFolder.add(earthParameters, "atmosphereIntensity", 0, 1, 0.01).name("Intensity").onChange(() => {
     atmosphereMaterial.uniforms.uIntensity.value = earthParameters.atmosphereIntensity;
   });
 
-  // Clouds
-  const cloudsFolder = sceneFolder.addFolder("Clouds");
-  cloudsFolder.close();
-  cloudsFolder.add(earthParameters, "cloudsIntensity", 0, 1, 0.01).name("Opacity").onChange(() => {
+  // Clouds Header
+  sceneFolder.add({ h: "" }, "h").name("--- CLOUDS ---").disable();
+  sceneFolder.add(earthParameters, "cloudsIntensity", 0, 1, 0.01).name("Opacity").onChange(() => {
     earthMaterial.uniforms.uCloudsIntensity.value = earthParameters.cloudsIntensity;
     cloudMaterial.uniforms.uCloudsIntensity.value = earthParameters.cloudsIntensity;
   });
 
-  // Lighting
-  const lightingFolder = sceneFolder.addFolder("Lighting & Sun");
-  lightingFolder.close();
-  lightingFolder.add(earthParameters, "sunDirectionX", -1, 1, 0.01).name("Sun X").onChange(updateSunDirection);
-  lightingFolder.add(earthParameters, "sunDirectionY", -1, 1, 0.01).name("Sun Y").onChange(updateSunDirection);
-  lightingFolder.add(earthParameters, "sunDirectionZ", -1, 1, 0.01).name("Sun Z").onChange(updateSunDirection);
+  // Lighting Header
+  sceneFolder.add({ h: "" }, "h").name("--- LIGHTING ---").disable();
+  sceneFolder.add(earthParameters, "sunDirectionX", -1, 1, 0.01).name("Sun X").onChange(updateSunDirection);
+  sceneFolder.add(earthParameters, "sunDirectionY", -1, 1, 0.01).name("Sun Y").onChange(updateSunDirection);
+  sceneFolder.add(earthParameters, "sunDirectionZ", -1, 1, 0.01).name("Sun Z").onChange(updateSunDirection);
   
-  const specularFolder = lightingFolder.addFolder("Specular Reflections");
-  specularFolder.close();
-  specularFolder.add(earthParameters, "specularIntensity", 0, 3, 0.01).name("Intensity").onChange(() => {
+  // Specular Header
+  sceneFolder.add({ h: "" }, "h").name("--- SPECULAR ---").disable();
+  sceneFolder.add(earthParameters, "specularIntensity", 0, 3, 0.01).name("Intensity").onChange(() => {
       earthMaterial.uniforms.uSpecularIntensity.value = earthParameters.specularIntensity;
   });
-  specularFolder.add(earthParameters, "specularSharpness", 1, 128, 1).name("Sharpness").onChange(() => {
+  sceneFolder.add(earthParameters, "specularSharpness", 1, 128, 1).name("Sharpness").onChange(() => {
       earthMaterial.uniforms.uSpecularSharpness.value = earthParameters.specularSharpness;
   });
 
@@ -229,7 +226,7 @@ export function createGui(params) {
   simulationFolder.add(motionParams, "shipSpeed", 0, 10, 0.1).name("Ship Speed");
   simulationFolder.add(motionParams, "aircraftSpeed", 0, 10, 0.1).name("Aircraft Speed");
   simulationFolder.add(motionParams, "satelliteSpeed", 0, 50, 1).name("Satellite Speed");
-  simulationFolder.add(unitCountParams, "realisticRoutes").name("Use Routes").onChange(() => {
+  simulationFolder.add(unitCountParams, "realisticRoutes").name("Cluster on Routes").onChange(() => {
       updateUnitCounts();
       state.h3.lastResolution = -1;
   });

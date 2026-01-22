@@ -315,6 +315,7 @@ function encodeTextToBuffer(text, labelIdx) {
   
 let _lastLabelRebuild = 0;
 let _lastVisibilityVersion = 0;
+let _lastSelectedUnit = null;
   
 function fillLabelBuffers(labelIdx, unitType, unit, unitIndex) {
     let text;
@@ -388,11 +389,20 @@ export function updateLabelAssignments(camera) {
     const visibilityChanged = _labelVisibilityVersion !== _lastVisibilityVersion;
     const timeToRebuild = now - _lastLabelRebuild > 200;
     
+    // Check if selection changed (type or index)
+    const currentSelected = state.selectedUnit ? `${state.selectedUnit.type}:${state.selectedUnit.index}` : null;
+    const selectionChanged = currentSelected !== _lastSelectedUnit;
+
     // Always rebuild if there's a selected unit to ensure it stays prioritized/visible
-    if (!visibilityChanged && !timeToRebuild && !hasSelectedLabelUnit) return;
+    if (!visibilityChanged && !timeToRebuild && !selectionChanged && !hasSelectedLabelUnit) return;
+    
+    // If we have a selected unit and nothing else changed, we only need to rebuild if the selection ITSELF changed
+    // effectively stabilizing the buffer
+    if (!visibilityChanged && !timeToRebuild && !selectionChanged && hasSelectedLabelUnit) return;
   
     _lastVisibilityVersion = _labelVisibilityVersion;
     _lastLabelRebuild = now;
+    _lastSelectedUnit = currentSelected;
   
     const { shipIndices, aircraftIndices, droneIndices, satelliteIndices } = labelVisibility;
 
