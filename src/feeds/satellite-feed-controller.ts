@@ -137,33 +137,49 @@ function handleSimulatedUpdates(updates: any[]): void {
     }
 }
 
+let lastSyncTime = 0;
+
 /**
  * Sync live feed state to state.satellites and update GPU buffers.
  * Call this once per frame from the render loop.
  */
 export function syncSatelliteFeedState(): void {
-  if (satelliteFeedParams.mode !== "live" || !liveFeed) return;
+  const now = performance.now();
+  const deltaTime = lastSyncTime === 0 ? 0 : (now - lastSyncTime) / 1000;
+  lastSyncTime = now;
 
-  const needsUpdate = liveFeed.syncToState(state.satellites);
-  
-  // Update status when connected
-  if (state.satellites.length > 0 && satelliteFeedParams.indicatorStatus === "connecting") {
-      satelliteFeedParams.status = "connected";
-      satelliteFeedParams.indicatorStatus = "live";
-      updateLiveIndicator();
-  }
-
-  // Update error status
-  const error = (liveFeed as any).lastError;
-  if (error && satelliteFeedParams.indicatorStatus !== "error") {
-      satelliteFeedParams.status = "error";
-      satelliteFeedParams.indicatorStatus = "error";
-      satelliteFeedParams.lastError = error;
-      updateLiveIndicator();
-  }
-  
-  if (needsUpdate) {
-      satelliteFeedParams.trackedCount = state.satellites.length;
+  // Handle Simulated Mode
+  if (satelliteFeedParams.mode === "simulated" && simulatedFeed) {
+      // Drive simulation physics (60fps)
+      simulatedFeed.syncToState(state.satellites, deltaTime);
+      
       if (onAttributesUpdate) onAttributesUpdate();
+      return;
+  }
+
+  // Handle Live Mode
+  if (satelliteFeedParams.mode === "live" && liveFeed) {
+      const needsUpdate = liveFeed.syncToState(state.satellites);
+      
+      // Update status when connected
+      if (state.satellites.length > 0 && satelliteFeedParams.indicatorStatus === "connecting") {
+          satelliteFeedParams.status = "connected";
+          satelliteFeedParams.indicatorStatus = "live";
+          updateLiveIndicator();
+      }
+
+      // Update error status
+      const error = (liveFeed as any).lastError;
+      if (error && satelliteFeedParams.indicatorStatus !== "error") {
+          satelliteFeedParams.status = "error";
+          satelliteFeedParams.indicatorStatus = "error";
+          satelliteFeedParams.lastError = error;
+          updateLiveIndicator();
+      }
+      
+      if (needsUpdate) {
+          satelliteFeedParams.trackedCount = state.satellites.length;
+          if (onAttributesUpdate) onAttributesUpdate();
+      }
   }
 }

@@ -185,10 +185,14 @@ export function updateMotionSimulation(currentTime, attributeUpdaters) {
     }
   }
 
+  // Satellites are now handled by SatelliteFeedController (for both simulated and live modes)
+  // to ensure consistent architecture and smooth animation driven by the feed.
+  /*
   const satSpeedMultiplier = motionParams.satelliteSpeed;
   for (let i = 0; i < satelliteSimState.length; i++) {
     updateSatelliteMotion(satelliteSimState[i], physicsDelta, satSpeedMultiplier);
   }
+  */
 
   const droneSpeedMultiplier = motionParams.droneSpeed;
   for (let i = 0; i < droneSimState.length; i++) {

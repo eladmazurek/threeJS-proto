@@ -170,31 +170,35 @@ export class SimulatedSatelliteFeed extends BaseFeed<SatelliteUpdate, SatelliteS
   }
 
   protected tick(): void {
-    const now = performance.now();
-    const deltaTime = (now - this._lastTickTime) / 1000;
-    this._lastTickTime = now;
+    // Tick is now only used for stats updates in the base class.
+    // Motion is handled via syncToState called from the render loop.
+    return;
+  }
 
-    if (deltaTime > 1) return;
-
-    const updates: SatelliteUpdate[] = [];
+  /**
+   * Synchronize the feed state to the application state.
+   * This is called every frame to drive the simulation smoothy.
+   */
+  public syncToState(stateUnits: SatelliteState[], deltaTime: number): void {
     const speedMultiplier = this._config.speedMultiplier;
 
-    for (const [noradId, sat] of this._units) {
+    // 1. Update internal physics for all satellites
+    for (const sat of this._units.values()) {
       this.updateOrbitalPosition(sat, deltaTime, speedMultiplier);
-
-      updates.push({
-        noradId,
-        name: sat.name,
-        lat: sat.lat,
-        lon: sat.lon,
-        altitude: sat.altitude,
-        heading: sat.heading,
-        orbitType: sat.orbitTypeLabel as "LEO" | "MEO" | "GEO",
-        timestamp: now,
-      });
     }
 
-    this.emit(updates);
+    // 2. Sync to global state array
+    // Resize target array if needed
+    if (stateUnits.length !== this._units.size) {
+        stateUnits.length = this._units.size;
+    }
+    
+    // Copy data
+    let i = 0;
+    for (const sat of this._units.values()) {
+        stateUnits[i] = sat; // Reference copy is fine as we updated the object in place
+        i++;
+    }
   }
 
   private updateOrbitalPosition(
