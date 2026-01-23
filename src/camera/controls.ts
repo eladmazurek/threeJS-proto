@@ -94,3 +94,65 @@ export const tiltPresets = {
   Tracking: () => setCameraTilt(55),
   Horizon: () => setCameraTilt(80),
 };
+
+// =============================================================================
+// DYNAMIC CONTROL SPEEDS
+// =============================================================================
+
+// Rotate speed bounds
+// MIN_ROTATE_SPEED: Floor to prevent "stuck" feeling at very low altitudes (100m - 10km)
+// MAX_ROTATE_SPEED: Ceiling to prevent overly sensitive panning at extreme zoom out
+const MIN_ROTATE_SPEED = 0.2;
+const MAX_ROTATE_SPEED = 1.5;
+
+// Base multiplier for distance-proportional rotation.
+// At distance = EARTH_RADIUS (surface), this gives rotateSpeed = 0.08 * 1 = 0.08
+// At distance = 10 * EARTH_RADIUS (~57,000 km), gives rotateSpeed = 0.08 * 10 = 0.8
+const ROTATE_SPEED_FACTOR = 0.08;
+
+// Zoom speed boost threshold (km altitude)
+// Below this altitude, zoom speed increases to help user "escape" low altitude
+const ZOOM_BOOST_THRESHOLD_KM = 50;
+
+// Maximum zoom speed when boosted at very low altitude
+const MAX_ZOOM_SPEED = 2.0;
+
+// Normal zoom speed at altitude above threshold
+const BASE_ZOOM_SPEED = 1.0;
+
+// Conversion factor: scene units to kilometers
+// EARTH_RADIUS = 2.0 scene units = 6371 km, so 1 scene unit = 3185.5 km
+const SCENE_UNITS_TO_KM = 3185.5;
+
+/**
+ * Update camera control speeds based on current altitude.
+ *
+ * Rotate speed: Scales with distance so panning feels consistent at all zoom levels.
+ * - Close to surface: slower rotation for precise control
+ * - Far from surface: faster rotation to cover the visible area
+ *
+ * Zoom speed: Boosted at very low altitudes to prevent "stuck" feeling.
+ * - Below 50km: progressively faster zoom to help escape
+ * - Above 50km: normal zoom speed
+ *
+ * Call this once per frame from the render loop.
+ */
+export function updateCameraControlSpeeds(): void {
+  if (!camera || !controls) return;
+
+  const distance = camera.position.length();
+
+  // Rotate speed: proportional to distance, clamped to usable range
+  const rawRotateSpeed = ROTATE_SPEED_FACTOR * (distance / EARTH_RADIUS);
+  controls.rotateSpeed = Math.max(MIN_ROTATE_SPEED, Math.min(MAX_ROTATE_SPEED, rawRotateSpeed));
+
+  // Zoom speed: boost when very close to help escape low altitude
+  const altitudeKm = (distance - EARTH_RADIUS) * SCENE_UNITS_TO_KM;
+  if (altitudeKm < ZOOM_BOOST_THRESHOLD_KM) {
+    // Linear ramp: 2.0 at 0km, 1.0 at 50km
+    const boostFactor = (ZOOM_BOOST_THRESHOLD_KM - altitudeKm) / ZOOM_BOOST_THRESHOLD_KM;
+    controls.zoomSpeed = Math.min(MAX_ZOOM_SPEED, BASE_ZOOM_SPEED + boostFactor);
+  } else {
+    controls.zoomSpeed = BASE_ZOOM_SPEED;
+  }
+}

@@ -3,6 +3,7 @@
  */
 import * as THREE from "three";
 import { scene, camera, renderer, controls, clock, canvas } from "./core/scene.js";
+import { initCameraModule, updateCameraControlSpeeds, cameraParams, tiltPresets, setCameraTilt } from "./camera/controls";
 import { createMainOverlay } from "./ui/main-overlay";
 import { createGui } from "./ui/gui";
 import { updateMotionSimulation, motionParams } from "./simulation/motion";
@@ -84,6 +85,7 @@ function main() {
   initAirports(scene);
   initLabelSystem(scene);
   initSelectionVisuals(scene);
+  initCameraModule(camera, controls);
 
   // Set up attribute dependencies for GPU buffer updates
   setAttributeDependencies({
@@ -214,9 +216,9 @@ function main() {
     airportGroup,
     updateAirportLabels,
     motionParams,
-    cameraParams: { tiltAngle: 0 },
-    setCameraTilt: () => {},
-    tiltPresets: { Center: () => {}, "Slight Tilt": () => {}, Tracking: () => {}, Horizon: () => {} },
+    cameraParams,
+    setCameraTilt,
+    tiltPresets,
     earthRotationParams,
     tilesParams,
     setTransitionAltitude: () => {},
@@ -285,17 +287,8 @@ function main() {
     debugTiming.trails += t1 - t0;
     t0 = t1;
 
-    // Adjust rotation speed based on zoom level
-    const zoomFactor = (cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance);
-    // specific non-linear curve for smoother close-range control
-    const controlScale = zoomFactor * zoomFactor;
-
-    // Additional slowdown below 1500km altitude (proportional, capped at 50%)
-    const lowAltFactor = altitudeKm < 1500 ? 0.5 + (altitudeKm / 1500) * 0.5 : 2.0;
-
-    controls.rotateSpeed = (0.05 + controlScale * 0.95) * lowAltFactor;
-    controls.panSpeed = (0.01 + controlScale * 0.99) * lowAltFactor;
-    controls.zoomSpeed = lowAltFactor;
+    // Adjust rotation/zoom speeds based on altitude (see camera/controls.ts for details)
+    updateCameraControlSpeeds();
 
     controls.update();
     updateTelemetry({
