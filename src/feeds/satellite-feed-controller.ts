@@ -44,10 +44,6 @@ export function initSatelliteFeedController(deps: SatelliteFeedDependencies): vo
     group: satelliteFeedParams.liveGroup,
   });
 
-  // For simulated feed, we handle updates via callback (legacy way)
-  // For live feed, we'll use syncToState in the render loop for performance
-  simulatedFeed.onUpdate(handleSimulatedUpdates);
-  
   console.log("[SatelliteFeedController] Initialized");
 }
 
@@ -108,33 +104,11 @@ export function setSatelliteFeedMode(mode: SatelliteFeedMode): void {
 }
 
 export function getSatelliteFeedStats() {
-    return {
-        mode: satelliteFeedParams.mode,
-        trackedCount: state.satellites.length,
-        status: satelliteFeedParams.status,
-    };
-}
-
-// Handler for simulated updates (callback based)
-function handleSimulatedUpdates(updates: any[]): void {
-    if (activeFeed !== simulatedFeed) return;
-    
-    if (simulatedFeed) {
-        const units = simulatedFeed.getUnits();
-        // Sync to global state
-        if (state.satellites.length !== units.length) {
-            state.satellites = [...units];
-        } else {
-            for(let i=0; i<units.length; i++) {
-                state.satellites[i] = units[i];
-            }
-        }
-        
-        // For simulated mode, we don't want to show "tracked count" in the live feed UI
-        // or we should clarify it's simulated. For now, user requested 0 if not live.
-        satelliteFeedParams.trackedCount = 0;
-        if (onAttributesUpdate) onAttributesUpdate();
-    }
+  return {
+    mode: satelliteFeedParams.mode,
+    trackedCount: state.satellites.length,
+    status: satelliteFeedParams.status,
+  };
 }
 
 let lastSyncTime = 0;

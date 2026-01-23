@@ -120,7 +120,6 @@ self.onmessage = (e: MessageEvent) => {
     }
     
     // Transfer buffer back to main thread
-    // @ts-ignore - TS definitions for Worker postMessage transferables can be finicky
-    self.postMessage({ type: 'update', buffer }, [buffer.buffer]);
+    self.postMessage({ type: 'update', buffer }, { transfer: [buffer.buffer] });
   }
 };

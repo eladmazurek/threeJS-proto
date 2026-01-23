@@ -49,6 +49,8 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
   private _fetchError: string | null = null;
   private _worker: Worker | null = null;
 
+  private _isDirty = false;
+
   constructor(config: Partial<CelesTrakFeedConfig> = {}) {
     super();
     this._config = { ...DEFAULT_CELESTRAK_CONFIG, ...config };
@@ -63,7 +65,13 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
     }
   }
 
-  // ... (getters)
+  get lastError(): string | null {
+    return this._fetchError;
+  }
+
+  get unitCount(): number {
+    return this._units.size;
+  }
 
   async start(): Promise<void> {
     if (this._running) return;
@@ -83,11 +91,22 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
 
   stop(): void {
     super.stop();
+    // Worker will stop its loop automatically when _running becomes false
+    // since handleWorkerMessage checks _running before requesting next update
   }
 
-  // Abstract method implementation (unused as we override start/stop loop)
+  dispose(): void {
+    this.stop();
+    if (this._worker) {
+      this._worker.terminate();
+      this._worker = null;
+    }
+    this._units.clear();
+  }
+
+  // Abstract method implementation (unused as we handle updates via worker)
   protected async tick(): Promise<void> {
-    // We handle updates via fetchTLEs and propagateTick (worker)
+    // Updates are driven by the worker message loop, not by tick()
   }
 
   protected initializeUnits(): void {
@@ -98,29 +117,43 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
     return unit.name;
   }
 
+  /**
+   * Sync internal state to the provided state array.
+   * Returns true if GPU buffers need updating.
+   */
   public syncToState(stateArray: SatelliteState[]): boolean {
-    if (stateArray.length !== this._units.size) {
-        stateArray.length = 0;
-        for (const unit of this._units.values()) {
-            stateArray.push({ ...unit });
-        }
-        return true;
+    // Skip if no updates since last sync
+    if (!this._isDirty && stateArray.length === this._units.size) {
+      return false;
     }
 
+    // Reset dirty flag
+    this._isDirty = false;
+
+    // Handle size changes (rebuild array)
+    if (stateArray.length !== this._units.size) {
+      stateArray.length = 0;
+      for (const unit of this._units.values()) {
+        stateArray.push({ ...unit });
+      }
+      return true;
+    }
+
+    // Update existing entries in-place
     let i = 0;
     for (const unit of this._units.values()) {
-        const target = stateArray[i];
-        target.lat = unit.lat;
-        target.lon = unit.lon;
-        target.altitude = unit.altitude;
-        target.heading = unit.heading;
-        target.name = unit.name;
-        target.isMilitary = unit.isMilitary;
-        target.ascendingNode = unit.ascendingNode;
-        target.inclination = unit.inclination;
-        target.orbitalPeriod = unit.orbitalPeriod;
-        target.orbitTypeLabel = unit.orbitTypeLabel;
-        i++;
+      const target = stateArray[i];
+      target.lat = unit.lat;
+      target.lon = unit.lon;
+      target.altitude = unit.altitude;
+      target.heading = unit.heading;
+      target.name = unit.name;
+      target.isMilitary = unit.isMilitary;
+      target.ascendingNode = unit.ascendingNode;
+      target.inclination = unit.inclination;
+      target.orbitalPeriod = unit.orbitalPeriod;
+      target.orbitTypeLabel = unit.orbitTypeLabel;
+      i++;
     }
     return true;
   }
@@ -216,31 +249,32 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
   private handleWorkerMessage(e: MessageEvent): void {
     const { type, buffer } = e.data;
     if (type === 'update' && buffer) {
-        const data = new Float32Array(buffer);
-        let idx = 0;
-        
-        // Iterate map in insertion order (must match worker order)
-        for (const unit of this._units.values()) {
-            if (idx * 5 >= data.length) break;
-            
-            unit.lat = data[idx * 5];
-            unit.lon = data[idx * 5 + 1];
-            unit.altitude = data[idx * 5 + 2];
-            unit.heading = data[idx * 5 + 3];
-            unit.ascendingNode = data[idx * 5 + 4];
-            
-            idx++;
-        }
+      const data = new Float32Array(buffer);
+      let idx = 0;
 
-        // Request next update immediately (loop)
-        if (this._running && this._worker) {
-            this._worker.postMessage({
-                type: 'propagate',
-                data: { time: Date.now() }
-            });
-        }
+      // Iterate map in insertion order (must match worker order)
+      for (const unit of this._units.values()) {
+        if (idx * 5 >= data.length) break;
+
+        unit.lat = data[idx * 5];
+        unit.lon = data[idx * 5 + 1];
+        unit.altitude = data[idx * 5 + 2];
+        unit.heading = data[idx * 5 + 3];
+        unit.ascendingNode = data[idx * 5 + 4];
+
+        idx++;
+      }
+
+      // Mark dirty so next syncToState triggers GPU update
+      this._isDirty = true;
+
+      // Request next update immediately (loop)
+      if (this._running && this._worker) {
+        this._worker.postMessage({
+          type: 'propagate',
+          data: { time: Date.now() }
+        });
+      }
     }
   }
-
-  // ... (helpers)
 }
