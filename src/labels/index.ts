@@ -386,7 +386,7 @@ export interface LabelMeshRefs {
  */
 export function createLabelSystem(
   fontAtlasTexture: THREE.Texture,
-  maxLabels: number = 100,
+  maxLabels: number = 10,
   labelOffset: number = 0.025
 ): LabelMeshRefs {
   const buffer = createLabelBuffer(maxLabels);

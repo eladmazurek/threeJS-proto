@@ -286,7 +286,7 @@ export function createGui(params) {
   
   // -- Labels --
   visualsFolder.add(labelParams, "enabled").name("Enable Labels");
-  visualsFolder.add(labelParams, "maxLabels", 100, 1000, 50).name("Max Labels");
+  visualsFolder.add(labelParams, "maxLabels", 5, 1000, 5).name("Max Labels");
   visualsFolder.add(labelParams, "fontSize", 0.005, 0.03, 0.001).name("Label Scale");
   visualsFolder.add(labelParams, "labelOffset", 0, 0.1, 0.005).name("Label Offset").onChange((v) => { if(labelMaterial) labelMaterial.uniforms.uLabelOffset.value = v; });
   visualsFolder.add(labelParams, "showShipLabels").name("Ship Labels");
