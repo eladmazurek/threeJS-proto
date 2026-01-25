@@ -49,6 +49,17 @@ export function createGui(params) {
     updateWeatherLegend,
     setWeatherLayer,
     weatherMaterial,
+    // Real Weather System (GIBS + Particles)
+    gibsParams,
+    particleParams,
+    setGibsEnabled,
+    setGibsLayer,
+    setGibsOpacity,
+    setParticlesEnabled,
+    setFlowType,
+    getWeatherSystemStatus,
+    gibsOverlay,
+    particleMesh,
     airportParams,
     airportGroup,
     updateAirportLabels,
@@ -313,6 +324,33 @@ export function createGui(params) {
     weatherMaterial.uniforms.uOpacity.value = weatherParams.opacity;
   });
   weatherFolder.add(weatherParams, "animate").name("Animate");
+
+  // Real Weather Data (NASA GIBS + Particle Flow)
+  const realWeatherFolder = overlaysFolder.addFolder("Real Weather Data");
+  realWeatherFolder.close();
+
+  // GIBS Imagery
+  const gibsFolder = realWeatherFolder.addFolder("NASA GIBS Imagery");
+  gibsFolder.add(gibsParams, "enabled").name("Enable GIBS").onChange(async (value) => {
+    await setGibsEnabled(value);
+  });
+  gibsFolder.add(gibsParams, "layer", ["clouds", "precipitation"]).name("Layer").onChange(async (value) => {
+    await setGibsLayer(value);
+  });
+  gibsFolder.add(gibsParams, "opacity", 0.1, 1.0, 0.05).name("Opacity").onChange((value) => {
+    setGibsOpacity(value);
+  });
+
+  // Particle Flow
+  const flowFolder = realWeatherFolder.addFolder("Flow Visualization");
+  flowFolder.add(particleParams, "enabled").name("Enable Particles").onChange((value) => {
+    setParticlesEnabled(value);
+  });
+  flowFolder.add(particleParams, "flowType", ["wind", "ocean", "both"]).name("Flow Type").onChange((value) => {
+    setFlowType(value);
+  });
+  flowFolder.add(particleParams, "speedScale", 0.1, 5.0, 0.1).name("Speed Scale");
+  flowFolder.add(particleParams, "opacity", 0.1, 1.0, 0.05).name("Opacity");
 
   // Lat/Lon Grid
   const gridFolder = overlaysFolder.addFolder("Lat/Lon Grid");

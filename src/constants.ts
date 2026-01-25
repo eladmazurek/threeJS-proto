@@ -162,6 +162,34 @@ export const ORBIT_LINE_SEGMENTS = 128;
 export const PATROL_CIRCLE_SEGMENTS = 64;
 
 // =============================================================================
+// PARTICLE FLOW SYSTEM
+// =============================================================================
+
+/** Maximum particles for wind/ocean flow visualization */
+export const MAX_PARTICLES = 15000;
+
+/** Trail length (positions stored per particle) */
+export const TRAIL_POSITIONS = 16;
+
+/** Particle state texture dimensions
+ * Width = particles per row * trail positions
+ * Height = number of rows
+ * Total particles = (WIDTH / TRAIL_POSITIONS) * HEIGHT
+ */
+export const PARTICLE_TEXTURE_WIDTH = 1920; // 120 particles per row * 16 trail positions
+export const PARTICLE_TEXTURE_HEIGHT = 125; // 120 * 125 = 15,000 particles
+
+/** Altitude for flow particles (between surface and weather overlay) */
+export const PARTICLE_ALTITUDE = 0.004;
+
+/** Vector field texture dimensions (1 degree resolution) */
+export const VECTOR_FIELD_WIDTH = 360;
+export const VECTOR_FIELD_HEIGHT = 180;
+
+/** GIBS overlay altitude (same as weather) */
+export const GIBS_ALTITUDE = 0.006;
+
+// =============================================================================
 // MATH CONSTANTS
 // =============================================================================
 

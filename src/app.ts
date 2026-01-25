@@ -53,6 +53,18 @@ import {
   h3LineMaterial,
 } from "./scene/h3-grid";
 import { EARTH_RADIUS } from "./constants.js";
+import {
+  initWeatherSystem,
+  updateWeatherSystem,
+  gibsParams,
+  particleParams,
+  setGibsEnabled,
+  setGibsLayer,
+  setGibsOpacity,
+  setParticlesEnabled,
+  setFlowType,
+  getWeatherSystemStatus,
+} from "./weather";
 import { initAircraftFeedController, startAircraftFeed, syncLiveFeedState, initSatelliteFeedController, startSatelliteFeed, syncSatelliteFeedState } from "./feeds";
 
 function main() {
@@ -73,6 +85,12 @@ function main() {
 
   scene.add(earthRefs.mesh, atmosphereRefs.mesh);
   earthRefs.mesh.add(cloudRefs.mesh, weatherRefs.mesh);
+
+  // Real Weather System (GIBS + Particle Flow)
+  const sunDirection = new THREE.Vector3().fromArray(Object.values(DEFAULT_EARTH_PARAMS).slice(4, 7));
+  const realWeatherRefs = initWeatherSystem(renderer, sunDirection);
+  earthRefs.mesh.add(realWeatherRefs.gibsOverlay);
+  scene.add(realWeatherRefs.particleMesh);
 
   const shipTrailRefs = createShipTrailMesh();
   const aircraftTrailRefs = createAircraftTrailMesh();
@@ -212,6 +230,17 @@ function main() {
     updateWeatherLegend,
     setWeatherLayer,
     weatherMaterial: weatherRefs.material,
+    // Real Weather System (GIBS + Particles)
+    gibsParams,
+    particleParams,
+    setGibsEnabled,
+    setGibsLayer,
+    setGibsOpacity,
+    setParticlesEnabled,
+    setFlowType,
+    getWeatherSystemStatus,
+    gibsOverlay: realWeatherRefs.gibsOverlay,
+    particleMesh: realWeatherRefs.particleMesh,
     airportParams,
     airportGroup,
     updateAirportLabels,
@@ -240,6 +269,7 @@ function main() {
   let frameStartTime = 0;
   let frameCount = 0;
   const frameTimes: number[] = [];
+  let lastFrameTimestamp = performance.now(); // For accurate deltaTime calculation
 
   // Debug timing (temporary)
   let debugTiming = { motion: 0, trails: 0, labels: 0, h3: 0, other: 0, gpu: 0, count: 0 };
@@ -273,6 +303,13 @@ function main() {
     setOrbitLineRotation(earthRotY);
 
     if (weatherParams.enabled && weatherParams.animate) weatherRefs.material.uniforms.uTime.value = elapsedTime;
+
+    // Update real weather system (GIBS + particle flow)
+    // Calculate actual wall-clock deltaTime (clock.getDelta() returns 0 after getElapsedTime)
+    const currentTime = performance.now();
+    const weatherDeltaTime = (currentTime - lastFrameTimestamp) / 1000;
+    lastFrameTimestamp = currentTime;
+    updateWeatherSystem(weatherDeltaTime, elapsedTime);
 
     updateIconScale(cameraDistance);
     updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });
