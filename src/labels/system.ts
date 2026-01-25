@@ -22,6 +22,9 @@ import { getCameraLatLon } from '../utils/coordinates';
 import { getH3Worker } from '../scene/h3-grid';
 import { unitCountParams } from '../simulation/demo-data';
 
+// Pre-allocate buffers for this many labels (runtime maxLabels is capped to this)
+const LABEL_BUFFER_CAPACITY = 500;
+
 export const labelParams = {
   enabled: true,
   maxLabels: 10,
@@ -199,7 +202,7 @@ for (let i = 0; i < CHAR_SET.length; i++) {
 }
 const fontAtlasTexture = generateFontAtlas();
 
-const totalInstances = labelParams.maxLabels * MAX_LABEL_CHARS;
+const totalInstances = LABEL_BUFFER_CAPACITY * MAX_LABEL_CHARS;
 const labelBuffer = {
   positions: new Float32Array(totalInstances * 3),
   charUVs: new Float32Array(totalInstances * 4),
@@ -208,7 +211,7 @@ const labelBuffer = {
   charIndices: new Float32Array(totalInstances),
   activeCount: 0,
 };
-for (let label = 0; label < labelParams.maxLabels; label++) {
+for (let label = 0; label < LABEL_BUFFER_CAPACITY; label++) {
   for (let char = 0; char < MAX_LABEL_CHARS; char++) {
     labelBuffer.charIndices[label * MAX_LABEL_CHARS + char] = char;
   }
@@ -406,7 +409,8 @@ export function updateLabelAssignments(camera) {
   
     const { shipIndices, aircraftIndices, droneIndices, satelliteIndices } = labelVisibility;
 
-    const maxLabels = labelParams.maxLabels;
+    // Cap to buffer capacity to prevent WebGL buffer overflow
+    const maxLabels = Math.min(labelParams.maxLabels, LABEL_BUFFER_CAPACITY);
     // Reserve one slot for the selected unit if it exists
     const generalLabelLimit = hasSelectedLabelUnit ? maxLabels - 1 : maxLabels;
     
