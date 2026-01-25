@@ -66,6 +66,14 @@ import {
   getWeatherSystemStatus,
 } from "./weather";
 import { initAircraftFeedController, startAircraftFeed, syncLiveFeedState, initSatelliteFeedController, startSatelliteFeed, syncSatelliteFeedState } from "./feeds";
+import {
+  getSimulatedDate,
+  resetSimulatedTime,
+  getEarthRotation,
+  getSeasonalSunDirection,
+  DEFAULT_SUN_PARAMS,
+  type SunParams,
+} from "./utils/solar";
 
 function main() {
   createMainOverlay();
@@ -86,8 +94,24 @@ function main() {
   scene.add(earthRefs.mesh, atmosphereRefs.mesh);
   earthRefs.mesh.add(cloudRefs.mesh, weatherRefs.mesh);
 
+  // Sun position (realistic by default, based on current date/time)
+  const sunParams: SunParams = { ...DEFAULT_SUN_PARAMS };
+  const sunDirection = new THREE.Vector3();
+
+  // Initialize sun direction from current date (seasonal position)
+  getSeasonalSunDirection(new Date(), sunDirection);
+
+  // Function to update sun direction across all materials
+  const updateAllSunDirection = (dir: THREE.Vector3) => {
+    earthRefs.material.uniforms.uSunDirection.value.copy(dir);
+    atmosphereRefs.material.uniforms.uSunDirection.value.copy(dir);
+    cloudRefs.material.uniforms.uSunDirection.value.copy(dir);
+  };
+
+  // Apply initial sun direction
+  updateAllSunDirection(sunDirection);
+
   // Real Weather System (GIBS + Particle Flow)
-  const sunDirection = new THREE.Vector3().fromArray(Object.values(DEFAULT_EARTH_PARAMS).slice(4, 7));
   const realWeatherRefs = initWeatherSystem(renderer, sunDirection);
   earthRefs.mesh.add(realWeatherRefs.gibsOverlay);
   scene.add(realWeatherRefs.particleMesh);
@@ -206,7 +230,19 @@ function main() {
     earthParameters: DEFAULT_EARTH_PARAMS,
     atmosphereMaterial: atmosphereRefs.material,
     cloudMaterial: cloudRefs.material,
-    updateSunDirection: () => {},
+    // Manual sun direction update (when realistic mode is off)
+    updateSunDirection: () => {
+      const dir = new THREE.Vector3(
+        DEFAULT_EARTH_PARAMS.sunDirectionX,
+        DEFAULT_EARTH_PARAMS.sunDirectionY,
+        DEFAULT_EARTH_PARAMS.sunDirectionZ
+      ).normalize();
+      updateAllSunDirection(dir);
+    },
+    // Realistic sun params
+    sunParams,
+    resetSimulatedTime: () => resetSimulatedTime(sunParams),
+    sunDirection,
     gridParams,
     updateGridVisibility,
     updateGridOpacity,
@@ -282,15 +318,29 @@ function main() {
     const elapsedTime = clock.getElapsedTime();
     const cameraDistance = camera.position.length();
 
-    // Earth rotation (only at high altitude, when enabled)
-    const scaleFactor = 6371 / EARTH_RADIUS;
-    const altitudeKm = (camera.position.length() - EARTH_RADIUS) * (6371 / EARTH_RADIUS);
-    if (earthRotationParams.enabled) {
-      const rotationFactor = Math.max(0, Math.min(1, (altitudeKm - 9000) / 3000));
-      if (rotationFactor > 0) earthRefs.mesh.rotation.y += 0.0003 * rotationFactor;
-    }
+    // Calculate simulated time (for both sun position and earth rotation)
+    const currentTime = performance.now();
+    const frameDeltaTime = (currentTime - lastFrameTimestamp) / 1000;
+    lastFrameTimestamp = currentTime;
 
-    const earthRotY = earthRefs.mesh.rotation.y;
+    // Clamp deltaTime to prevent jumps on first frame or after tab switch
+    const clampedDeltaMs = Math.min(frameDeltaTime * 1000, 100);
+    const simDate = getSimulatedDate(sunParams, sunParams.realistic ? clampedDeltaMs : 0);
+
+    // Earth rotation based on simulated time (realistic rotation at all altitudes)
+    let earthRotY: number;
+    if (sunParams.realistic) {
+      // Realistic: Earth rotation derived from simulated time
+      earthRotY = getEarthRotation(simDate);
+      earthRefs.mesh.rotation.y = earthRotY;
+
+      // Sun direction based on season only (Earth rotation handles daily cycle)
+      getSeasonalSunDirection(simDate, sunDirection);
+      updateAllSunDirection(sunDirection);
+    } else {
+      // Manual mode: no automatic rotation, user controls sun direction
+      earthRotY = earthRefs.mesh.rotation.y;
+    }
     state.earthRotation.y = earthRotY;
     setAirportRotation(earthRotY);
     // Sync unit/trail mesh rotation with earth (avoid forEach to reduce GC)
@@ -305,11 +355,7 @@ function main() {
     if (weatherParams.enabled && weatherParams.animate) weatherRefs.material.uniforms.uTime.value = elapsedTime;
 
     // Update real weather system (GIBS + particle flow)
-    // Calculate actual wall-clock deltaTime (clock.getDelta() returns 0 after getElapsedTime)
-    const currentTime = performance.now();
-    const weatherDeltaTime = (currentTime - lastFrameTimestamp) / 1000;
-    lastFrameTimestamp = currentTime;
-    updateWeatherSystem(weatherDeltaTime, elapsedTime);
+    updateWeatherSystem(frameDeltaTime, elapsedTime);
 
     updateIconScale(cameraDistance);
     updateMotionSimulation(elapsedTime, { updateShipAttributes, updateAircraftAttributes, updateSatelliteAttributes, updateDroneAttributes });

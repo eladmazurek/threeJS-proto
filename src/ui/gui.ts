@@ -26,6 +26,9 @@ export function createGui(params) {
     atmosphereMaterial,
     cloudMaterial,
     updateSunDirection,
+    sunParams,
+    resetSimulatedTime,
+    sunDirection,
     gridParams,
     updateGridVisibility,
     updateGridOpacity,
@@ -139,9 +142,37 @@ export function createGui(params) {
 
   // Lighting Header
   sceneFolder.add({ h: "" }, "h").name("--- LIGHTING ---").disable();
-  sceneFolder.add(earthParameters, "sunDirectionX", -1, 1, 0.01).name("Sun X").onChange(updateSunDirection);
-  sceneFolder.add(earthParameters, "sunDirectionY", -1, 1, 0.01).name("Sun Y").onChange(updateSunDirection);
-  sceneFolder.add(earthParameters, "sunDirectionZ", -1, 1, 0.01).name("Sun Z").onChange(updateSunDirection);
+
+  // Realistic sun controls
+  let realisticSunCtrl: any = null;
+  if (sunParams) {
+    realisticSunCtrl = sceneFolder.add(sunParams, "realistic").name("Realistic Sun").onChange((value: boolean) => {
+      if (value && resetSimulatedTime) {
+        resetSimulatedTime();
+      }
+    });
+
+    const timeMultiplierOptions = {
+      "Real-time (1×)": 1,
+      "1 min/sec (60×)": 60,
+      "1 hr/sec (3600×)": 3600,
+      "6 hr/sec": 21600,
+      "24 hr/sec": 86400,
+    };
+    sceneFolder.add(sunParams, "timeMultiplier", timeMultiplierOptions).name("Time Speed");
+  }
+
+  // Manual sun controls - dragging turns off realistic mode
+  const onManualSunChange = () => {
+    if (sunParams && sunParams.realistic) {
+      sunParams.realistic = false;
+      if (realisticSunCtrl) realisticSunCtrl.updateDisplay();
+    }
+    updateSunDirection();
+  };
+  sceneFolder.add(earthParameters, "sunDirectionX", -1, 1, 0.01).name("Sun X (manual)").onChange(onManualSunChange);
+  sceneFolder.add(earthParameters, "sunDirectionY", -1, 1, 0.01).name("Sun Y (manual)").onChange(onManualSunChange);
+  sceneFolder.add(earthParameters, "sunDirectionZ", -1, 1, 0.01).name("Sun Z (manual)").onChange(onManualSunChange);
   
   // Specular Header
   sceneFolder.add({ h: "" }, "h").name("--- SPECULAR ---").disable();
