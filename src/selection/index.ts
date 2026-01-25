@@ -36,6 +36,11 @@ async function loadFormatAircraftType() {
 
 // Cache for formatted aircraft type strings
 const formattedTypeCache = new Map<string, string>();
+
+// Track displayed position for staleness reset
+let lastDisplayedPositionKey = "";
+let lastPositionChangeTime = Date.now();
+
 function getCachedAircraftType(icaoTypeCode: string | undefined, fallback: string | undefined): string | undefined {
   if (!icaoTypeCode) return fallback;
 
@@ -119,6 +124,10 @@ export function deselectUnit() {
 }
 
 function selectUnit(type, index) {
+    // Reset staleness tracking for new selection
+    lastDisplayedPositionKey = "";
+    lastPositionChangeTime = Date.now();
+
     let unitData;
     let typeLabel;
     let typeClass;
@@ -232,17 +241,22 @@ export function updateSelectedUnitInfo() {
       unitHdgEl.textContent = speed;
       const flag = getCountryFlag(country);
       unitSpdEl.textContent = flag ? `${flag} ${country}` : country;
-      unitAltEl.textContent = `${altFeet.toLocaleString()} ft`;
-      
-      // Update staleness (Time since last update received)
+      // Altitude with climb/descend indicator (arrow on left for stable layout)
+      let altArrow = "";
+      if (unitData.altitudeTrend === 1) altArrow = "↑ ";
+      else if (unitData.altitudeTrend === -1) altArrow = "↓ ";
+      unitAltEl.textContent = `${altArrow}${altFeet.toLocaleString()} ft`;
+
+      // Update staleness - reset when displayed position changes
       if (unitStalenessEl) {
-        if (unitData.lastUpdate) {
-          const nowUnix = Date.now() / 1000;
-          const staleness = Math.max(0, Math.floor(nowUnix - unitData.lastUpdate));
-          unitStalenessEl.textContent = `+${staleness}s`;
-        } else {
-          unitStalenessEl.textContent = "";
+        // Track displayed position (rounded to match what's shown in UI)
+        const posKey = `${unitData.lat.toFixed(2)}|${unitData.lon.toFixed(2)}|${altFeet}`;
+        if (posKey !== lastDisplayedPositionKey) {
+          lastDisplayedPositionKey = posKey;
+          lastPositionChangeTime = Date.now();
         }
+        const staleness = Math.floor((Date.now() - lastPositionChangeTime) / 1000);
+        unitStalenessEl.textContent = `+${staleness}s`;
       }
 
       // Show aircraft type in 6th row only if available

@@ -125,6 +125,9 @@ export class SimulatedAircraftFeed extends BaseFeed<AircraftUpdate, AircraftStat
       flightLevel: Math.floor(altitude / 100),
       aircraftType: icaoType.category,
       icaoTypeCode: icaoType.icao,
+      // Simulated aircraft don't have altitude trends (static altitude)
+      altitudeTrend: 0,
+      prevAltitude: altitude,
     };
   }
 

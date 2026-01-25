@@ -400,6 +400,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
       const altitudeFeet = altitudeMeters * 3.28084;
       const velocityMs = (state[OS.VELOCITY] as number) || 0;
       const groundSpeedKnots = velocityMs * 1.94384;
+      const verticalRateMs = state[OS.VERTICAL_RATE] as number | null; // m/s, positive = climbing
+      const verticalRateFpm = verticalRateMs != null ? Math.round(verticalRateMs * 196.85) : undefined; // Convert to ft/min
       const timePosition = (state[OS.TIME_POSITION] as number) || nowUnix;
 
       // PROJECT POSITION FORWARD TO CURRENT TIME
@@ -452,6 +454,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           icaoTypeCode: icaoTypecode,
           scale: 1.0,
           flightLevel: Math.floor(altitudeFeet / 100),
+          prevAltitude: Math.round(altitudeFeet), // For altitude trend tracking
+          altitudeTrend: 0, // No trend yet for new aircraft
           // Simulation properties (unused for live aircraft, but required by type)
           targetHeading: heading,
           baseSpeed: 0,
@@ -491,10 +495,17 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         aircraft.apiHeading = heading; 
         aircraft.heading = heading; 
         
-        aircraft.apiAltitude = altitudeFeet;
         aircraft.apiGroundSpeed = groundSpeedKnots;
-        aircraft.groundSpeed = groundSpeedKnots; 
-        
+        aircraft.groundSpeed = groundSpeedKnots;
+
+        // Calculate altitude trend when altitude changes
+        const roundedAlt = Math.round(altitudeFeet);
+        if (aircraft.prevAltitude !== undefined && roundedAlt !== aircraft.prevAltitude) {
+          aircraft.altitudeTrend = roundedAlt > aircraft.prevAltitude ? 1 : -1;
+        }
+        aircraft.prevAltitude = roundedAlt;
+        aircraft.apiAltitude = altitudeFeet;
+
         if (isNewData) {
           aircraft.apiTimestamp = timePosition; // Store Unix timestamp
           aircraft.lastUpdate = nowUnix; // Store local arrival time
@@ -669,6 +680,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
           flightLevel: aircraft.flightLevel,
           apiTimestamp: aircraft.apiTimestamp, // Pass through timestamp
           lastUpdate: aircraft.lastUpdate, // Pass through local arrival time
+          altitudeTrend: aircraft.altitudeTrend,
+          prevAltitude: aircraft.prevAltitude,
           // Simulation properties (unused for live aircraft, but required by type)
           targetHeading: aircraft.heading,
           baseSpeed: 0,
@@ -689,6 +702,8 @@ export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState>
         target.icaoTypeCode = aircraft.icaoTypeCode;
         target.apiTimestamp = aircraft.apiTimestamp; // Update timestamp
         target.lastUpdate = aircraft.lastUpdate; // Update local arrival time
+        target.altitudeTrend = aircraft.altitudeTrend;
+        target.prevAltitude = aircraft.prevAltitude;
       }
       i++;
     }

@@ -39,6 +39,10 @@ const unitLabel6 = document.getElementById("unit-label-6");
 const unitRow6 = document.getElementById("unit-row-6");
 const unitExtra = document.getElementById("unit-extra");
 
+// Track last position for staleness reset detection
+let lastPositionKey = "";
+let lastPositionChangeTime = 0;
+
 // =============================================================================
 // STATE GETTERS (set via setSelectionDependencies)
 // =============================================================================
@@ -87,6 +91,17 @@ export function showPanel(): void {
 export function hidePanel(): void {
   unitInfoPanel?.classList.add("hidden");
   hideDroneFeed();
+  // Reset position tracking for staleness counter
+  lastPositionKey = "";
+  lastPositionChangeTime = 0;
+}
+
+/**
+ * Reset staleness tracking (call when selecting a new unit)
+ */
+export function resetStalenessTracking(): void {
+  lastPositionKey = "";
+  lastPositionChangeTime = Date.now();
 }
 
 /**
@@ -174,9 +189,9 @@ function updateAircraftPanel(unitData: AircraftState): void {
   if (unitSpdEl) unitSpdEl.textContent = country;
   if (unitAltEl) unitAltEl.textContent = `${altFeet} ft`;
 
-  // Update staleness counter
+  // Update staleness counter - reset when position actually changes
   let unitStalenessEl = document.getElementById("unit-staleness");
-  
+
   // Self-healing: Create element if missing (fixes HMR/hot-reload issues)
   if (!unitStalenessEl) {
     const header = document.querySelector(".unit-info-header");
@@ -190,19 +205,28 @@ function updateAircraftPanel(unitData: AircraftState): void {
       } else {
         header.appendChild(unitStalenessEl);
       }
-      console.log("[UI] Created missing unit-staleness element");
     }
   }
 
   if (unitStalenessEl) {
-    if (unitData.apiTimestamp) {
-      const nowUnix = Date.now() / 1000;
-      const staleness = Math.max(0, Math.floor(nowUnix - unitData.apiTimestamp));
-      console.log(`[UI] Staleness: ${staleness}s (Now: ${nowUnix.toFixed(0)}, API: ${unitData.apiTimestamp.toFixed(0)})`);
+    // Create a key from position values to detect actual changes
+    // Use fixed precision to avoid floating point noise
+    const positionKey = `${unitData.lat.toFixed(5)}|${unitData.lon.toFixed(5)}|${(unitData.altitude || 0).toFixed(0)}`;
+
+    // Check if position has actually changed
+    if (positionKey !== lastPositionKey) {
+      lastPositionKey = positionKey;
+      lastPositionChangeTime = Date.now();
+    }
+
+    // Calculate staleness from last position change
+    const stalenessMs = Date.now() - lastPositionChangeTime;
+    const staleness = Math.floor(stalenessMs / 1000);
+
+    if (staleness > 0) {
       unitStalenessEl.textContent = `+${staleness}s`;
-      unitStalenessEl.style.display = "inline"; // Force display
+      unitStalenessEl.style.display = "inline";
     } else {
-      console.log(`[UI] No apiTimestamp for unit`, unitData);
       unitStalenessEl.textContent = "";
     }
   }

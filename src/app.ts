@@ -177,17 +177,20 @@ function main() {
     updateAircraftAttributes,
     // Show/hide simulated-only units when switching feed modes
     onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
-      // Ships, drones are simulated-only (satellites handled by their own feed now)
+      // Hide all simulated units when live mode is active
       shipMesh.visible = showSimulatedUnits && unitCountParams.showShips;
       droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
+      satelliteMesh.visible = showSimulatedUnits && unitCountParams.showSatellites;
       // Trails for ships (aircraft trails stay since we have live aircraft)
       shipTrailRefs.mesh.visible = showSimulatedUnits && unitCountParams.showShips && trailParams.enabled && trailParams.shipTrails;
-      // Also hide labels for simulated-only units
+      // Also hide labels for simulated units
       labelParams.showShipLabels = showSimulatedUnits;
       labelParams.showDroneLabels = showSimulatedUnits;
+      labelParams.showSatelliteLabels = showSimulatedUnits;
       // Update state.unitCounts so click detection respects visibility
       state.unitCounts.showShips = showSimulatedUnits && unitCountParams.showShips;
       state.unitCounts.showDrones = showSimulatedUnits && unitCountParams.showDrones;
+      state.unitCounts.showSatellites = showSimulatedUnits && unitCountParams.showSatellites;
     },
   });
   // Start with simulated feed (default)

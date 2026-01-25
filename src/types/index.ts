@@ -40,6 +40,10 @@ export interface AircraftState extends BaseUnitState {
   aircraftType?: string;
   /** ICAO type designator (e.g., "B738", "A320") */
   icaoTypeCode?: string;
+  /** Altitude trend: 1 = climbing, -1 = descending, 0 = level */
+  altitudeTrend?: number;
+  /** Previous altitude for trend calculation */
+  prevAltitude?: number;
   /** Timestamp of the last API update (unix seconds) - Source time */
   apiTimestamp?: number;
   /** Timestamp when the update was received locally (unix seconds) */
