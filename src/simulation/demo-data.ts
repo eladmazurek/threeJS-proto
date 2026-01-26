@@ -30,7 +30,7 @@ const droneSimState = state.drones;
 export const unitCountParams = {
   shipCount: 200,
   aircraftCount: 300,
-  satelliteCount: 4000,
+  satelliteCount: 200,
   droneCount: 5,
   totalCount: 500,
   realisticRoutes: false,
@@ -41,6 +41,8 @@ export const unitCountParams = {
   showLEO: true,
   showMEO: true,
   showGEO: true,
+  showHighSpeedShips: false,
+  showExtendedDataShips: false,
 };
 
 function initShip(lat: number, lon: number, heading: number, index: number = 0): ShipState {

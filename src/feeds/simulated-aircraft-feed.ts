@@ -98,8 +98,9 @@ export class SimulatedAircraftFeed extends BaseFeed<AircraftUpdate, AircraftStat
 
     const heading = Math.random() * 360;
     const speedVariation = 0.8 + Math.random() * 0.4;
+    // Use index directly to ensure unique callsigns for any count
     const airlineCode = AIRLINE_CODES[index % AIRLINE_CODES.length];
-    const flightNum = 100 + (index % 900);
+    const flightNum = Math.floor(index / AIRLINE_CODES.length);
 
     // Get aircraft type from ICAO database
     const icaoType = getWeightedRandomAircraftType();
@@ -210,6 +211,7 @@ export class SimulatedAircraftFeed extends BaseFeed<AircraftUpdate, AircraftStat
    * Update the number of aircraft.
    */
   setAircraftCount(count: number): void {
+    console.log(`[SimulatedAircraftFeed] setAircraftCount(${count}), wasRunning=${this._running}`);
     const wasRunning = this._running;
     if (wasRunning) this.stop();
 

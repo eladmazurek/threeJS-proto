@@ -21,6 +21,7 @@ import { MAX_CANDIDATES, EARTH_RADIUS, SHIP_ALTITUDE, AIRCRAFT_ALTITUDE } from '
 import { getCameraLatLon } from '../utils/coordinates';
 import { getH3Worker } from '../scene/h3-grid';
 import { unitCountParams } from '../simulation/demo-data';
+import { satelliteFeedParams, aisFeedParams } from '../feeds/shared'; // Added
 
 // Pre-allocate buffers for this many labels (runtime maxLabels is capped to this)
 const LABEL_BUFFER_CAPACITY = 500;
@@ -430,12 +431,22 @@ export function updateLabelAssignments(camera) {
 
     // 1. Fill slots with general visible units (up to generalLabelLimit)
     if (labelParams.showShipLabels && unitCountParams.showShips) {
+        const { showHighSpeedShips, showExtendedDataShips } = unitCountParams;
         for (let j = 0; j < shipIndices.length && labelIdx < generalLabelLimit; j++) {
             const i = shipIndices[j];
             if (selectedTypeInt === 0 && selectedIndex === i) continue; // Skip selected
 
             const unit = state.ships[i];
             if (!unit) continue;
+            
+            // Apply speed filter
+            if (showHighSpeedShips && (!unit.sog || unit.sog <= 25)) continue;
+            
+            // Apply extended data filter
+            if (showExtendedDataShips) {
+                if (!unit.name || unit.name === "Unknown" || unit.name.trim() === "" || !unit.destination || unit.destination.trim() === "") continue;
+            }
+
             labelAssignments.slots[labelIdx] = { type: 0, unitIndex: i };
             fillLabelBuffers(labelIdx, 0, unit, i);
             labelIdx++;
@@ -469,25 +480,30 @@ export function updateLabelAssignments(camera) {
     }
 
     if (labelParams.showSatelliteLabels && unitCountParams.showSatellites) {
-        const { showLEO, showMEO, showGEO } = unitCountParams;
-        for (let j = 0; j < satelliteIndices.length && labelIdx < generalLabelLimit; j++) {
-            const i = satelliteIndices[j];
-            if (selectedTypeInt === 3 && selectedIndex === i) continue; // Skip selected
+        // HIDE SIMULATED SATELLITES when Live AIS is on (consistent with mesh visibility)
+        const hideSimSats = (aisFeedParams.mode === "live" && satelliteFeedParams.mode === "simulated");
+        
+        if (!hideSimSats) {
+            const { showLEO, showMEO, showGEO } = unitCountParams;
+            for (let j = 0; j < satelliteIndices.length && labelIdx < generalLabelLimit; j++) {
+                const i = satelliteIndices[j];
+                if (selectedTypeInt === 3 && selectedIndex === i) continue; // Skip selected
 
-            const unit = state.satellites[i];
-            if (!unit) continue;
+                const unit = state.satellites[i];
+                if (!unit) continue;
 
-            // Filter by orbit type
-            let visible = true;
-            if (unit.orbitTypeLabel === 'LEO' && !showLEO) visible = false;
-            else if (unit.orbitTypeLabel === 'MEO' && !showMEO) visible = false;
-            else if (unit.orbitTypeLabel === 'GEO' && !showGEO) visible = false;
-            
-            if (!visible) continue;
+                // Filter by orbit type
+                let visible = true;
+                if (unit.orbitTypeLabel === 'LEO' && !showLEO) visible = false;
+                else if (unit.orbitTypeLabel === 'MEO' && !showMEO) visible = false;
+                else if (unit.orbitTypeLabel === 'GEO' && !showGEO) visible = false;
+                
+                if (!visible) continue;
 
-            labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
-            fillLabelBuffers(labelIdx, 3, unit, i);
-            labelIdx++;
+                labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
+                fillLabelBuffers(labelIdx, 3, unit, i);
+                labelIdx++;
+            }
         }
     }
 

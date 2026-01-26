@@ -50,6 +50,8 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
   private _worker: Worker | null = null;
 
   private _isDirty = false;
+  private _updateCount: number = 0;
+  private _lastRateTime: number = 0;
 
   constructor(config: Partial<CelesTrakFeedConfig> = {}) {
     super();
@@ -155,6 +157,7 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
       target.orbitTypeLabel = unit.orbitTypeLabel;
       i++;
     }
+
     return true;
   }
 
@@ -267,6 +270,15 @@ export class CelesTrakSatelliteFeed extends BaseFeed<any, SatelliteState> {
 
       // Mark dirty so next syncToState triggers GPU update
       this._isDirty = true;
+
+      // Track update rate for throughput calculation
+      this._updateCount += this._units.size;
+      const now = performance.now();
+      if (now - this._lastRateTime >= 1000) {
+        this._messagesPerSec = this._updateCount / ((now - this._lastRateTime) / 1000);
+        this._updateCount = 0;
+        this._lastRateTime = now;
+      }
 
       // Request next update immediately (loop)
       if (this._running && this._worker) {

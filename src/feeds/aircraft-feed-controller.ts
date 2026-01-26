@@ -202,9 +202,11 @@ export function setInterpolation(enabled: boolean): void {
  * Update simulated aircraft count.
  */
 export function setSimulatedCount(count: number): void {
+  console.log(`[AircraftFeedController] setSimulatedCount(${count}), simulatedFeed=${!!simulatedFeed}`);
   aircraftFeedParams.simulatedCount = count;
 
-  if (simulatedFeed && aircraftFeedParams.mode === "simulated") {
+  // Always update the feed (it will regenerate units)
+  if (simulatedFeed) {
     simulatedFeed.setAircraftCount(count);
   }
 }
@@ -297,12 +299,22 @@ export function getFeedStats() {
  * This avoids the overhead of emitting 7000+ updates via callbacks at 60fps.
  */
 export function syncLiveFeedState(): void {
+  // Update stats for both modes
+  if (aircraftFeedParams.mode === "simulated" && simulatedFeed) {
+    const stats = simulatedFeed.getStats();
+    aircraftFeedParams.trackedCount = stats.activeUnits;
+    aircraftFeedParams.msgRate = stats.messagesPerSec;
+    return;
+  }
+
   if (aircraftFeedParams.mode !== "live" || !liveFeed) return;
 
   // Sync interpolated positions directly to state array
   // Returns true only if positions actually changed
   const needsGpuUpdate = liveFeed.syncToState(state.aircraft);
+  const stats = liveFeed.getStats();
   aircraftFeedParams.trackedCount = state.aircraft.length;
+  aircraftFeedParams.msgRate = stats.messagesPerSec;
 
   // Update selected unit index if it's an aircraft (indices may have shifted)
   if (state.selectedUnit?.type === "aircraft" && state.selectedUnit.id) {

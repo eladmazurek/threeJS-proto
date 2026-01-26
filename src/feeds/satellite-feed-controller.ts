@@ -126,7 +126,11 @@ export function syncSatelliteFeedState(): void {
   if (satelliteFeedParams.mode === "simulated" && simulatedFeed) {
       // Drive simulation physics (60fps)
       simulatedFeed.syncToState(state.satellites, deltaTime);
-      
+
+      const stats = simulatedFeed.getStats();
+      satelliteFeedParams.trackedCount = stats.activeUnits;
+      satelliteFeedParams.msgRate = stats.messagesPerSec;
+
       if (onAttributesUpdate) onAttributesUpdate();
       return;
   }
@@ -134,7 +138,11 @@ export function syncSatelliteFeedState(): void {
   // Handle Live Mode
   if (satelliteFeedParams.mode === "live" && liveFeed) {
       const needsUpdate = liveFeed.syncToState(state.satellites);
-      
+
+      const stats = liveFeed.getStats();
+      satelliteFeedParams.trackedCount = state.satellites.length;
+      satelliteFeedParams.msgRate = stats.messagesPerSec;
+
       // Update status when connected
       if (state.satellites.length > 0 && satelliteFeedParams.indicatorStatus === "connecting") {
           satelliteFeedParams.status = "connected";
@@ -150,10 +158,20 @@ export function syncSatelliteFeedState(): void {
           satelliteFeedParams.lastError = error;
           updateLiveIndicator();
       }
-      
-      if (needsUpdate) {
-          satelliteFeedParams.trackedCount = state.satellites.length;
-          if (onAttributesUpdate) onAttributesUpdate();
+
+      if (needsUpdate && onAttributesUpdate) {
+          onAttributesUpdate();
       }
+  }
+}
+
+/**
+ * Update the simulated satellite count.
+ */
+export function setSimulatedSatelliteCount(count: number): void {
+  satelliteFeedParams.simulatedCount = count;
+
+  if (simulatedFeed) {
+    simulatedFeed.setSatelliteCount(count);
   }
 }

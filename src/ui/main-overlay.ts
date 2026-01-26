@@ -114,6 +114,14 @@ export function createMainOverlay() {
           <span class="unit-info-label" id="unit-label-6">TYPE</span>
           <span class="unit-info-value" id="unit-extra">—</span>
         </div>
+        <div class="unit-info-row" id="unit-row-7" style="display: none;">
+          <span class="unit-info-label" id="unit-label-7">DEST</span>
+          <span class="unit-info-value" id="unit-dest">—</span>
+        </div>
+        <div class="unit-info-row" id="unit-row-8" style="display: none;">
+          <span class="unit-info-label" id="unit-label-8">SIZE</span>
+          <span class="unit-info-value" id="unit-size">—</span>
+        </div>
       </div>
     </div>
 

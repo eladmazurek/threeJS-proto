@@ -104,6 +104,12 @@ let unitLabel5: HTMLElement | null = null;
 let unitLabel6: HTMLElement | null = null;
 let unitRow6: HTMLElement | null = null;
 let unitExtra: HTMLElement | null = null;
+let unitRow7: HTMLElement | null = null;
+let unitLabel7: HTMLElement | null = null;
+let unitDest: HTMLElement | null = null;
+let unitRow8: HTMLElement | null = null;
+let unitLabel8: HTMLElement | null = null;
+let unitSize: HTMLElement | null = null;
 let droneFeedPanel: HTMLElement | null = null;
 let droneFeedCoords: HTMLElement | null = null;
 let droneVideo: HTMLVideoElement | null = null;
@@ -144,6 +150,12 @@ function getDomElements() {
     unitLabel6 = document.getElementById("unit-label-6");
     unitRow6 = document.getElementById("unit-row-6");
     unitExtra = document.getElementById("unit-extra");
+    unitRow7 = document.getElementById("unit-row-7");
+    unitLabel7 = document.getElementById("unit-label-7");
+    unitDest = document.getElementById("unit-dest");
+    unitRow8 = document.getElementById("unit-row-8");
+    unitLabel8 = document.getElementById("unit-label-8");
+    unitSize = document.getElementById("unit-size");
     droneFeedPanel = document.getElementById("drone-feed");
     droneFeedCoords = document.getElementById("drone-feed-coords");
     droneVideo = document.getElementById("drone-video") as HTMLVideoElement;
@@ -298,11 +310,21 @@ export function updateSelectedUnitInfo() {
       safeSetText(unitSpdEl, unitData.mmsi || "—");
       safeSetText(unitAltEl, typeStr || "—");
       
-      // Header update
+      // Update header (Name only) - Make clickable
       if (unitTypeEl && unitIdEl) {
           unitTypeEl.textContent = "SHIP";
           unitTypeEl.className = `unit-info-type ${typeClass}`;
           unitIdEl.textContent = unitData.name || `#${unitData.mmsi}`;
+          
+          if (unitData.name && unitData.name !== "Unknown") {
+              unitIdEl.style.cursor = "pointer";
+              unitIdEl.style.textDecoration = "underline";
+              unitIdEl.title = "Click to search ship info";
+          } else {
+              unitIdEl.style.cursor = "default";
+              unitIdEl.style.textDecoration = "none";
+              unitIdEl.title = "";
+          }
       }
 
       // Country row
@@ -314,9 +336,31 @@ export function updateSelectedUnitInfo() {
         if (unitRow6) unitRow6.style.display = "none";
       }
       
+      // Destination row (Row 7)
+      if (unitData.destination && unitRow7 && unitLabel7 && unitDest) {
+          unitRow7.style.display = "";
+          unitLabel7.textContent = "DEST";
+          unitDest.textContent = unitData.destination;
+      } else if (unitRow7) {
+          unitRow7.style.display = "none";
+      }
+
+      // Size row (Row 8)
+      if (unitData.length && unitData.width && unitRow8 && unitLabel8 && unitSize) {
+          unitRow8.style.display = "";
+          unitLabel8.textContent = "SIZE";
+          unitSize.textContent = `${unitData.length}m × ${unitData.width}m`;
+      } else if (unitRow8) {
+          unitRow8.style.display = "none";
+      }
+      
       if (unitStalenessEl) unitStalenessEl.textContent = "";
 
     } else if (type === "aircraft") {
+      // Hide extra rows for aircraft
+      if (unitRow7) unitRow7.style.display = "none";
+      if (unitRow8) unitRow8.style.display = "none";
+      
       unitData = state.aircraft[index];
       if (!unitData) { deselectUnit(); return; }
       const altFeet = unitData.altitude ? Math.round(unitData.altitude) : 0;
@@ -361,6 +405,10 @@ export function updateSelectedUnitInfo() {
       }
 
     } else if (type === "satellite") {
+        // Hide extra rows
+        if (unitRow7) unitRow7.style.display = "none";
+        if (unitRow8) unitRow8.style.display = "none";
+
         unitData = state.satellites[index];
         if (!unitData) { deselectUnit(); return; }
         const altKm = (unitData.altitude * 6371 / EARTH_RADIUS).toFixed(0);
@@ -384,6 +432,9 @@ export function updateSelectedUnitInfo() {
         if (unitStalenessEl) unitStalenessEl.textContent = "";
 
     } else if (type === "drone") {
+        if (unitRow7) unitRow7.style.display = "none";
+        if (unitRow8) unitRow8.style.display = "none";
+
         unitData = state.drones[index];
         if (!unitData) { deselectUnit(); return; }
         const altFeet = Math.round(unitData.altitude * 6371 / EARTH_RADIUS * 3281);
@@ -407,6 +458,9 @@ export function updateSelectedUnitInfo() {
         if (unitStalenessEl) unitStalenessEl.textContent = "";
 
     } else if (type === "airport") {
+        if (unitRow7) unitRow7.style.display = "none";
+        if (unitRow8) unitRow8.style.display = "none";
+
         const airport = AIRPORTS[index];
         if (!airport) { deselectUnit(); return; }
         safeSetText(unitLabel1, "NAME");
@@ -487,7 +541,17 @@ function onCanvasClick(event: MouseEvent, camera: THREE.Camera, canvas: HTMLCanv
         }
     };
 
-    if (state.unitCounts.showShips) checkUnits(state.ships, "ship", SHIP_ALTITUDE);
+    if (state.unitCounts.showShips) {
+        checkUnits(state.ships, "ship", (unit) => {
+            // Check High Speed filter
+            if (unitCountParams.showHighSpeedShips && (!unit.sog || unit.sog <= 25)) return null;
+            // Check Extended Data filter
+            if (unitCountParams.showExtendedDataShips) {
+                if (!unit.name || unit.name === "Unknown" || unit.name.trim() === "" || !unit.destination || unit.destination.trim() === "") return null;
+            }
+            return SHIP_ALTITUDE;
+        });
+    }
     if (state.unitCounts.showAircraft) checkUnits(state.aircraft, "aircraft", AIRCRAFT_ALTITUDE);
     if (state.unitCounts.showSatellites) {
         checkUnits(state.satellites, "satellite", (unit: any) => {
@@ -512,5 +576,17 @@ export function initSelectionHandling(camera: THREE.Camera, canvas: HTMLCanvasEl
     canvas.addEventListener("click", (event) => onCanvasClick(event, camera, canvas, earth, h3Params));
     unitCloseBtn?.addEventListener("click", () => {
         deselectUnit();
+    });
+
+    // Search handler for Ship Name (OSINT link) attached to the Header ID
+    unitIdEl?.addEventListener("click", () => {
+        if (state.selectedUnit && state.selectedUnit.type === "ship") {
+            const unit = state.ships[state.selectedUnit.index];
+            if (unit && unit.name && unit.name !== "Unknown") {
+                const query = `Ship ${unit.name} MMSI ${unit.mmsi}`;
+                const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+                window.open(url, "_blank");
+            }
+        }
     });
 }

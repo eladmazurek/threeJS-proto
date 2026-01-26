@@ -20,6 +20,7 @@ export interface AircraftFeedParams {
   simulatedCount: number;
   lastError: string;
   trackedCount: number;
+  msgRate: number;
   status: string;
   indicatorStatus: "simulated" | "live" | "connecting" | "error";
 }
@@ -32,6 +33,7 @@ export interface SatelliteFeedParams {
   indicatorStatus: "simulated" | "live" | "connecting" | "error";
   lastError: string;
   trackedCount: number;
+  msgRate: number;
 }
 
 export interface AISFeedParams {
@@ -40,6 +42,7 @@ export interface AISFeedParams {
   indicatorStatus: "simulated" | "live" | "connecting" | "error";
   lastError: string;
   trackedCount: number;
+  msgRate: number;
 }
 
 // =============================================================================
@@ -53,6 +56,7 @@ export const aircraftFeedParams: AircraftFeedParams = {
   simulatedCount: 500,
   lastError: "",
   trackedCount: 0,
+  msgRate: 0,
   status: "idle",
   indicatorStatus: "simulated",
 };
@@ -65,6 +69,7 @@ export const satelliteFeedParams: SatelliteFeedParams = {
   indicatorStatus: "simulated",
   lastError: "",
   trackedCount: 0,
+  msgRate: 0,
 };
 
 export const aisFeedParams: AISFeedParams = {
@@ -73,6 +78,7 @@ export const aisFeedParams: AISFeedParams = {
   indicatorStatus: "simulated",
   lastError: "",
   trackedCount: 0,
+  msgRate: 0,
 };
 
 // =============================================================================

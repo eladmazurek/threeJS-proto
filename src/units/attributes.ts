@@ -20,6 +20,28 @@ export const iconScaleParams = {
   multiplier: 1.0,
 };
 
+/**
+ * Check if a ship passes the current visibility filters
+ */
+function isShipVisible(ship: ShipState): boolean {
+  const { showHighSpeedShips, showExtendedDataShips } = unitCountParams;
+
+  // Filter by speed: only show ships going faster than 25 knots
+  if (showHighSpeedShips && (!ship.sog || ship.sog <= 25)) {
+    return false;
+  }
+
+  // Filter by extended data: only show ships with name AND destination
+  if (showExtendedDataShips) {
+    if (!ship.name || ship.name === "Unknown" || ship.name.trim() === "" ||
+        !ship.destination || ship.destination.trim() === "") {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // =============================================================================
 // GEOMETRY REFERENCES (set via dependency injection)
 // =============================================================================
@@ -98,10 +120,12 @@ export function updateShipAttributes(): void {
 
   for (let i = 0; i < count; i++) {
     const ship = shipSimState[i];
+    const visible = isShipVisible(ship);
+
     latArray[i] = ship.lat;
     lonArray[i] = ship.lon;
     headingArray[i] = ship.heading;
-    scaleArray[i] = ship.scale * state.currentIconScale;
+    scaleArray[i] = visible ? ship.scale * state.currentIconScale : 0;
   }
 
   // Mark for partial update (only upload active units)
@@ -207,6 +231,27 @@ export function updateDroneAttributes(): void {
   markAttributeForUpdate(altitudeAttr, count);
 
   deps.droneGeometry.instanceCount = count;
+}
+
+/**
+ * Get the number of currently visible ships based on active filters
+ */
+export function getVisibleShipCount(): number {
+  if (!deps) return 0;
+  const shipSimState = deps.getShipSimState();
+  const count = Math.min(shipSimState.length, MAX_SHIPS);
+  const { showHighSpeedShips, showExtendedDataShips } = unitCountParams;
+
+  // Optimization: If no filters, return total count
+  if (!showHighSpeedShips && !showExtendedDataShips) return count;
+
+  let visibleCount = 0;
+  for (let i = 0; i < count; i++) {
+    if (isShipVisible(shipSimState[i])) {
+      visibleCount++;
+    }
+  }
+  return visibleCount;
 }
 
 /**

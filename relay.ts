@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 const AIS_STREAM_URL = 'wss://stream.aisstream.io/v0/stream';
 const PORT = 8080;
+const MAX_QUEUE_SIZE = 100; // Prevent unbounded memory growth if remote is slow to connect
 
 const wss = new WebSocketServer({ port: PORT });
 
@@ -20,8 +21,10 @@ wss.on('connection', (clientWs) => {
         // console.log('[AIS Relay] Client -> Remote:', msg);
         if (remoteWs.readyState === WebSocket.OPEN) {
             remoteWs.send(msg);
-        } else {
+        } else if (messageQueue.length < MAX_QUEUE_SIZE) {
             messageQueue.push(msg);
+        } else {
+            console.warn('[AIS Relay] Queue full, dropping message');
         }
     });
 

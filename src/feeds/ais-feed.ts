@@ -142,6 +142,9 @@ export class AISStreamFeed extends BaseFeed<ShipUpdate, ShipState> {
                   if (u.name) ship.name = u.name;
                   if (u.flag) ship.country = u.flag;
                   if (u.type) ship.shipType = u.type;
+                  if (u.dest) ship.destination = u.dest;
+                  if (u.len) ship.length = u.len;
+                  if (u.width) ship.width = u.width;
               }
 
               shipUpdates.push({

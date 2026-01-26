@@ -29,6 +29,9 @@ export interface ShipState extends BaseUnitState {
   sog: number; // Speed over ground
   country?: string;
   shipType?: number;
+  destination?: string;
+  length?: number;
+  width?: number;
 }
 
 /** Aircraft unit state */
@@ -163,6 +166,8 @@ export interface UnitCountParams {
   showLEO: boolean;
   showMEO: boolean;
   showGEO: boolean;
+  showHighSpeedShips: boolean;
+  showExtendedDataShips: boolean;
 }
 
 /** Motion simulation parameters */

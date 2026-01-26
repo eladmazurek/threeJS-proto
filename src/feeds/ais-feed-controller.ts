@@ -154,19 +154,21 @@ export function syncAISFeedState() {
         if (isLive && liveFeed) {
             const stats = liveFeed.getStats();
             aisFeedParams.trackedCount = stats.activeUnits;
-            
+            aisFeedParams.msgRate = stats.messagesPerSec;
+
             if (stats.messagesPerSec > 0) {
-                 aisFeedParams.status = `Live (${stats.messagesPerSec.toFixed(1)} msg/s | Q:${liveFeed.queueSize})`;
+                 aisFeedParams.status = "Live";
                  aisFeedParams.indicatorStatus = "live";
             } else if (liveFeed.lastError) {
                  aisFeedParams.status = `Error: ${liveFeed.lastError}`;
                  aisFeedParams.indicatorStatus = "error";
             } else {
-                 aisFeedParams.status = "Connected (Waiting for data...)";
-                 // Keep "connecting" or "live"
+                 aisFeedParams.status = "Connecting...";
             }
         } else if (simulatedFeed) {
-            aisFeedParams.trackedCount = simulatedFeed.getStats().activeUnits;
+            const stats = simulatedFeed.getStats();
+            aisFeedParams.trackedCount = stats.activeUnits;
+            aisFeedParams.msgRate = stats.messagesPerSec;
             aisFeedParams.status = "Simulated";
             aisFeedParams.indicatorStatus = "simulated";
         }
@@ -178,4 +180,13 @@ export function getAISFeedStats() {
     if (isLive && liveFeed) return liveFeed.getStats();
     if (simulatedFeed) return simulatedFeed.getStats();
     return null;
+}
+
+/**
+ * Update the simulated ship count
+ */
+export function setSimulatedShipCount(count: number) {
+    if (simulatedFeed) {
+        simulatedFeed.setShipCount(count);
+    }
 }

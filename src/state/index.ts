@@ -311,6 +311,11 @@ export const config = {
     showSatellites: true,
     showDrones: true,
     realisticRoutes: true,
+    showLEO: true,
+    showMEO: true,
+    showGEO: true,
+    showHighSpeedShips: false,
+    showExtendedDataShips: false,
   } as UnitCountParams,
 
   // -------------------------------------------------------------------------

@@ -71,6 +71,8 @@ export class SimulatedSatelliteFeed extends BaseFeed<SatelliteUpdate, SatelliteS
   protected _config: SatelliteFeedConfig;
   protected _units: Map<string, SatelliteState> = new Map();
   private _lastTickTime: number = 0;
+  private _updateCount: number = 0;
+  private _lastRateTime: number = 0;
 
   constructor(config: Partial<SatelliteFeedConfig> = {}) {
     super();
@@ -192,12 +194,21 @@ export class SimulatedSatelliteFeed extends BaseFeed<SatelliteUpdate, SatelliteS
     if (stateUnits.length !== this._units.size) {
         stateUnits.length = this._units.size;
     }
-    
+
     // Copy data
     let i = 0;
     for (const sat of this._units.values()) {
         stateUnits[i] = sat; // Reference copy is fine as we updated the object in place
         i++;
+    }
+
+    // Track update rate for throughput calculation
+    this._updateCount += this._units.size;
+    const now = performance.now();
+    if (now - this._lastRateTime >= 1000) {
+      this._messagesPerSec = this._updateCount / ((now - this._lastRateTime) / 1000);
+      this._updateCount = 0;
+      this._lastRateTime = now;
     }
   }
 

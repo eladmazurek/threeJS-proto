@@ -95,6 +95,7 @@ export {
   setSatelliteFeedMode,
   getSatelliteFeedStats,
   syncSatelliteFeedState,
+  setSimulatedSatelliteCount,
 } from "./satellite-feed-controller";
 export type { SatelliteFeedDependencies } from "./satellite-feed-controller";
 
@@ -105,4 +106,5 @@ export {
   setAISFeedMode,
   getAISFeedStats,
   syncAISFeedState,
+  setSimulatedShipCount,
 } from "./ais-feed-controller";

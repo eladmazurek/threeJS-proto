@@ -26,6 +26,7 @@ import {
   updateSatelliteAttributes,
   updateDroneAttributes,
   iconScaleParams,
+  getVisibleShipCount, // Added
 } from "./units/attributes";
 import { initSelectionVisuals, setVisualsDependencies, updateSelectionRing, setOrbitLineRotation, selectionRingMaterial } from "./selection/visuals";
 import {
@@ -76,6 +77,7 @@ import {
   startAISFeed,          // Added
   syncAISFeedState,      // Added
   satelliteFeedParams,   // Added
+  aisFeedParams,         // Added
 } from "./feeds";
 import {
   getSimulatedDate,
@@ -205,9 +207,13 @@ function main() {
   initSatelliteFeedController({
     updateSatelliteAttributes,
     onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
+      // Satellites switching modes - restore visibility based on user toggle
+      // (May have been hidden by AIS controller when sats were simulated)
+      satelliteMesh.visible = unitCountParams.showSatellites;
+
       // Drones are simulated-only
       droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
-      
+
       // Labels for drones
       labelParams.showDroneLabels = showSimulatedUnits;
       // Unit counts for click detection
@@ -242,6 +248,12 @@ function main() {
     },
   });
   startAISFeed();
+
+  // Force check visibility state after initialization
+  // If AIS is live on startup, ensure simulated satellites are hidden
+  if (aisFeedParams.mode === "live" && satelliteFeedParams.mode === "simulated") {
+      satelliteMesh.visible = false;
+  }
 
   const trailHistory = initTrailHistory(state.ships.length, state.aircraft.length);
   state.trails = trailHistory;
@@ -406,15 +418,23 @@ function main() {
     updateCameraControlSpeeds();
 
     controls.update();
+
+    // Determine effective counts based on visibility rules (Hide Sim if AIS Live)
+    const aisIsLive = aisFeedParams.mode === "live";
+    const satIsSim = satelliteFeedParams.mode === "simulated";
+    const visibleSatCount = (aisIsLive && satIsSim) ? 0 : state.satellites.length;
+    // Drones are always simulated, so hide if AIS is live
+    const visibleDroneCount = aisIsLive ? 0 : state.drones.length;
+
     updateTelemetry({
       cameraDistance,
       cameraPosition: camera.position,
       earth: earthRefs.mesh,
       unitCounts: {
-        ships: state.ships.length,
+        ships: getVisibleShipCount(),
         aircraft: state.aircraft.length,
-        satellites: state.satellites.length,
-        drones: state.drones.length,
+        satellites: visibleSatCount,
+        drones: visibleDroneCount,
         showShips: state.unitCounts.showShips,
         showAircraft: state.unitCounts.showAircraft,
         showSatellites: state.unitCounts.showSatellites,

@@ -35,6 +35,9 @@ interface ShipData {
     type: number;
     name: string;
     flag: string;
+    destination: string;
+    length: number;
+    width: number;
     lastUpdate: number;
 }
 
@@ -42,10 +45,12 @@ let socket: WebSocket | null = null;
 const ships = new Map<number, ShipData>();
 let apiKey = "";
 let boundingBox: number[][] | null = null; // [[lat_min, lon_min], [lat_max, lon_max]]
+let relayUrl = "ws://localhost:8080"; // Default, can be overridden via init
 
 // Message buffer
 let messageQueue: any[] = [];
-let processInterval: any = null;
+let processInterval: ReturnType<typeof setInterval> | null = null;
+let pruneInterval: ReturnType<typeof setInterval> | null = null;
 
 // Config
 const PRUNE_INTERVAL = 60000; // Prune stale ships every minute
@@ -59,14 +64,17 @@ self.onmessage = (e: MessageEvent) => {
         if (data.boundingBox) {
             boundingBox = data.boundingBox;
         }
+        if (data.relayUrl) {
+            relayUrl = data.relayUrl;
+        }
         connect();
         
         // Start periodic processing loop (10Hz)
         // We buffer high-frequency messages and send batches to main thread
         processInterval = setInterval(processQueue, 100);
-        
+
         // Start pruning loop
-        setInterval(pruneStaleShips, PRUNE_INTERVAL);
+        pruneInterval = setInterval(pruneStaleShips, PRUNE_INTERVAL);
     } 
     else if (type === 'stop') {
         if (socket) {
@@ -75,18 +83,23 @@ self.onmessage = (e: MessageEvent) => {
         }
         if (processInterval) {
             clearInterval(processInterval);
+            processInterval = null;
         }
+        if (pruneInterval) {
+            clearInterval(pruneInterval);
+            pruneInterval = null;
+        }
+        // Clear state
+        ships.clear();
+        messageQueue = [];
     }
 };
 
 function connect() {
     if (socket) return;
 
-    // Connect to local relay server
-    const url = 'ws://localhost:8080';
-
-    console.log(`[AISWorker] Connecting to ${url}...`);
-    socket = new WebSocket(url);
+    console.log(`[AISWorker] Connecting to ${relayUrl}...`);
+    socket = new WebSocket(relayUrl);
 
     socket.onopen = () => {
         console.log('[AISWorker] Connected');
@@ -152,6 +165,9 @@ function processQueue() {
                 type: 0,
                 name: msg.MetaData.ShipName || "",
                 flag: msg.MetaData.Flag || "",
+                destination: "",
+                length: 0,
+                width: 0,
                 lastUpdate: 0
             };
             ships.set(mmsi, ship);
@@ -185,7 +201,17 @@ function processQueue() {
             const report = msg.Message.ShipStaticData;
             ship.name = report.Name;
             ship.type = getShipCategory(report.Type);
-            // We could also get dimensions here
+            
+            // Clean destination text
+            if (report.Destination) {
+                ship.destination = report.Destination.replace(/[^A-Za-z0-9\s]/g, "").trim();
+            }
+            
+            // Dimensions (A+B = Length, C+D = Width)
+            if (report.Dimension) {
+                ship.length = (report.Dimension.A || 0) + (report.Dimension.B || 0);
+                ship.width = (report.Dimension.C || 0) + (report.Dimension.D || 0);
+            }
             
             // If we have a position, send an update with the new metadata
             if (ship.lat !== 0 && ship.lon !== 0) {
@@ -197,21 +223,26 @@ function processQueue() {
                     sog: ship.speed,
                     name: ship.name,
                     type: ship.type,
-                    flag: ship.flag
+                    flag: ship.flag,
+                    dest: ship.destination,
+                    len: ship.length,
+                    wid: ship.width
                 });
             }
         }
     }
     
+    // Capture queue size BEFORE clearing
+    const processedQueueSize = queueSize;
     messageQueue = []; // Clear queue
 
     if (batchUpdates.size > 0) {
         // Convert map values to array
         const updateArray = Array.from(batchUpdates.values());
-        self.postMessage({ 
-            type: 'update', 
+        self.postMessage({
+            type: 'update',
             updates: updateArray,
-            queueSize: messageQueue.length 
+            queueSize: processedQueueSize
         });
     }
 }

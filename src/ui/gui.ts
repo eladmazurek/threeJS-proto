@@ -9,11 +9,14 @@ import {
   setFeedMode,
   setCoverageMode,
   setInterpolation,
+  setSimulatedCount,
   startAircraftFeed,
   satelliteFeedParams,
   setSatelliteFeedMode,
+  setSimulatedSatelliteCount,
   startAISFeed,
   setAISFeedMode,
+  setSimulatedShipCount,
   aisFeedParams,
 } from '../feeds';
 import type { CoverageMode } from '../feeds';
@@ -191,8 +194,46 @@ export function createGui(params) {
   // 2. LIVE DATA
   // ===========================================================================
   const feedFolder = gui.addFolder("Live Data");
-  
-  // OpenSky toggle
+
+  // Formatted display objects for throughput (updated via listen())
+  const aisDisplay = { rate: "—" };
+  const airDisplay = { rate: "—" };
+  const satDisplay = { rate: "—" };
+
+  // Estimated bytes per update (based on typical payload sizes)
+  const BYTES_PER_SHIP = 120;      // lat, lon, heading, sog, name, mmsi, country, type, dest
+  const BYTES_PER_AIRCRAFT = 100;  // lat, lon, heading, alt, speed, callsign, country, type
+  const BYTES_PER_SATELLITE = 80;  // lat, lon, alt, heading, name, orbital params
+
+  // Format throughput as KB/s or MB/s
+  const formatThroughput = (bytesPerSec: number): string => {
+    if (bytesPerSec <= 0) return "—";
+    if (bytesPerSec >= 1024 * 1024) {
+      return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+    }
+    return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  };
+
+  // Update throughput display periodically
+  setInterval(() => {
+    aisDisplay.rate = formatThroughput(aisFeedParams.msgRate * BYTES_PER_SHIP);
+    airDisplay.rate = formatThroughput(aircraftFeedParams.msgRate * BYTES_PER_AIRCRAFT);
+    satDisplay.rate = formatThroughput(satelliteFeedParams.msgRate * BYTES_PER_SATELLITE);
+  }, 500);
+
+  // --- AIS (Ships) ---
+  const aisState = { enabled: aisFeedParams.mode === "live" };
+  feedFolder
+    .add(aisState, "enabled")
+    .name("AIS Stream (Ships)")
+    .onChange((value: boolean) => {
+      setAISFeedMode(value ? "live" : "simulated");
+    });
+  feedFolder.add(aisFeedParams, "status").name("  Status").listen().disable();
+  feedFolder.add(aisFeedParams, "trackedCount").name("  Tracked").listen().disable();
+  feedFolder.add(aisDisplay, "rate").name("  Rate").listen().disable();
+
+  // --- OpenSky (Aircraft) ---
   const openskyState = { enabled: false };
   feedFolder
     .add(openskyState, "enabled")
@@ -201,8 +242,6 @@ export function createGui(params) {
       setFeedMode(value ? "live" : "simulated");
       startAircraftFeed();
     });
-
-  // Coverage mode
   const coverageOptions: Record<string, CoverageMode> = {
     "Worldwide": "worldwide",
     "Viewport Only": "viewport",
@@ -210,22 +249,21 @@ export function createGui(params) {
   const coverageDisplay = { coverage: "Worldwide" };
   feedFolder
     .add(coverageDisplay, "coverage", Object.keys(coverageOptions))
-    .name("Coverage")
+    .name("  Coverage")
     .onChange((value: string) => {
       setCoverageMode(coverageOptions[value]);
     });
-
   feedFolder
     .add(aircraftFeedParams, "interpolation")
-    .name("Smooth Motion")
+    .name("  Smooth Motion")
     .onChange((value: boolean) => {
       setInterpolation(value);
     });
+  feedFolder.add(aircraftFeedParams, "status").name("  Status").listen().disable();
+  feedFolder.add(aircraftFeedParams, "trackedCount").name("  Tracked").listen().disable();
+  feedFolder.add(airDisplay, "rate").name("  Rate").listen().disable();
 
-  feedFolder.add(aircraftFeedParams, "status").name("Air Status").listen().disable();
-  feedFolder.add(aircraftFeedParams, "trackedCount").name("Air Tracked").listen().disable();
-  
-  // CelesTrak toggle
+  // --- CelesTrak (Satellites) ---
   const celestrakState = { enabled: false };
   feedFolder
     .add(celestrakState, "enabled")
@@ -233,21 +271,9 @@ export function createGui(params) {
     .onChange((value: boolean) => {
       setSatelliteFeedMode(value ? "live" : "simulated");
     });
-
-  // AIS toggle
-  const aisState = { enabled: false };
-  feedFolder
-    .add(aisState, "enabled")
-    .name("AIS Stream (Ships)")
-    .onChange((value: boolean) => {
-      setAISFeedMode(value ? "live" : "simulated");
-    });
-  
-  feedFolder.add(aisFeedParams, "status").name("AIS Status").listen().disable();
-  feedFolder.add(aisFeedParams, "trackedCount").name("AIS Tracked").listen().disable();
-
-  feedFolder.add(satelliteFeedParams, "status").name("Sat Status").listen().disable();
-  feedFolder.add(satelliteFeedParams, "trackedCount").name("Sat Tracked").listen().disable();
+  feedFolder.add(satelliteFeedParams, "status").name("  Status").listen().disable();
+  feedFolder.add(satelliteFeedParams, "trackedCount").name("  Tracked").listen().disable();
+  feedFolder.add(satDisplay, "rate").name("  Rate").listen().disable();
 
 
   // ===========================================================================
@@ -268,6 +294,13 @@ export function createGui(params) {
     .name("Ships/Air (K)")
     .onChange((value) => {
       unitCountParams.totalCount = Math.round(value * 1000);
+      const shipCount = Math.floor(unitCountParams.totalCount * 0.4);
+      const aircraftCount = Math.floor(unitCountParams.totalCount * 0.6);
+
+      // Update simulated feed unit counts
+      setSimulatedShipCount(shipCount);
+      setSimulatedCount(aircraftCount);
+
       updateUnitCounts();
       state.h3.lastResolution = -1;
     });
@@ -276,7 +309,7 @@ export function createGui(params) {
     .name("Satellites (K)")
     .onChange((value) => {
       unitCountParams.satelliteCount = Math.round(value * 1000);
-      generateSatelliteData(unitCountParams.satelliteCount);
+      setSimulatedSatelliteCount(unitCountParams.satelliteCount);
       state.h3.lastResolution = -1;
     });
 
@@ -301,6 +334,17 @@ export function createGui(params) {
       shipMesh.visible = value && !h3Params.enabled;
       shipTrailMesh.visible = value && trailParams.enabled && trailParams.shipTrails && !h3Params.enabled;
       state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showHighSpeedShips").name("   ↳ High Speed (>25kts)").onChange(() => {
+      // Trigger GPU update to re-evaluate visibility
+      // The updateShipAttributes function runs every frame if data changes, but if simulation is paused or data is static, we might need to force it?
+      // Since motion simulation updates attributes every frame, and live feed updates frequently, this should pick up automatically.
+      // But let's trigger h3 refresh just in case
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showExtendedDataShips").name("   ↳ With Info Only").onChange(() => {
       refreshH3PopupIfVisible();
   });
   filtersFolder.add(unitCountParams, "showAircraft").name("Show Aircraft").onChange((value) => {
