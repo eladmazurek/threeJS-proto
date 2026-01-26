@@ -191,8 +191,26 @@ export class FeedManagerImpl implements IFeedManager {
 
   private handleShipUpdates(updates: ShipUpdate[]): void {
     for (const update of updates) {
-      const index = this._shipIndex.get(update.mmsi);
-      if (index !== undefined && index < state.ships.length) {
+      let index = this._shipIndex.get(update.mmsi);
+      if (index === undefined) {
+          // Add new ship
+          index = state.ships.length;
+          state.ships.push({
+              mmsi: update.mmsi,
+              lat: update.lat,
+              lon: update.lon,
+              heading: update.heading,
+              sog: update.sog,
+              name: update.name || "Unknown",
+              scale: 1.0,
+              // BaseUnitState defaults
+              targetHeading: update.heading,
+              baseSpeed: 0,
+              baseTurnRate: 0,
+              nextCourseChange: 0
+          });
+          this._shipIndex.set(update.mmsi, index);
+      } else if (index < state.ships.length) {
         // Update existing ship
         const ship = state.ships[index];
         ship.lat = update.lat;

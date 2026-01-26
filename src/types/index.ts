@@ -27,6 +27,8 @@ export interface ShipState extends BaseUnitState {
   name: string;
   mmsi: string;
   sog: number; // Speed over ground
+  country?: string;
+  shipType?: number;
 }
 
 /** Aircraft unit state */

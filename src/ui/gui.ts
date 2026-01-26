@@ -12,6 +12,9 @@ import {
   startAircraftFeed,
   satelliteFeedParams,
   setSatelliteFeedMode,
+  startAISFeed,
+  setAISFeedMode,
+  aisFeedParams,
 } from '../feeds';
 import type { CoverageMode } from '../feeds';
 
@@ -230,7 +233,19 @@ export function createGui(params) {
     .onChange((value: boolean) => {
       setSatelliteFeedMode(value ? "live" : "simulated");
     });
+
+  // AIS toggle
+  const aisState = { enabled: false };
+  feedFolder
+    .add(aisState, "enabled")
+    .name("AIS Stream (Ships)")
+    .onChange((value: boolean) => {
+      setAISFeedMode(value ? "live" : "simulated");
+    });
   
+  feedFolder.add(aisFeedParams, "status").name("AIS Status").listen().disable();
+  feedFolder.add(aisFeedParams, "trackedCount").name("AIS Tracked").listen().disable();
+
   feedFolder.add(satelliteFeedParams, "status").name("Sat Status").listen().disable();
   feedFolder.add(satelliteFeedParams, "trackedCount").name("Sat Tracked").listen().disable();
 

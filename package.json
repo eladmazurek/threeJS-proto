@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bunx --bun vite",
     "build": "bunx --bun vite build",
-    "preview": "bunx --bun vite preview"
+    "preview": "bunx --bun vite preview",
+    "relay": "bun relay.ts"
   },
   "devDependencies": {
     "@types/three": "^0.182.0",
@@ -16,10 +17,12 @@
     "vite-plugin-restart": "^2.0.0"
   },
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "3d-tiles-renderer": "^0.4.19",
     "h3-js": "^4.4.0",
     "lil-gui": "^0.21.0",
     "satellite.js": "^6.0.2",
-    "three": "^0.182.0"
+    "three": "^0.182.0",
+    "ws": "^8.19.0"
   }
 }

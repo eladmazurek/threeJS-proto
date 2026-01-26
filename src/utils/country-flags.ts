@@ -67,6 +67,17 @@ const FLAG_MAP: Record<string, string> = {
   "Kuwait": "🇰🇼",
   "Luxembourg": "🇱🇺",
   "Iceland": "🇮🇸",
+  "Liberia": "🇱🇷",
+  "Panama": "🇵🇦",
+  "Marshall Islands": "🇲🇭",
+  "Bahamas": "🇧🇸",
+  "Malta": "🇲🇹",
+  "Cyprus": "🇨🇾",
+  "Bermuda": "🇧🇲",
+  "Cayman Islands": "🇰🇾",
+  "Belize": "🇧🇿",
+  "Antigua and Barbuda": "🇦🇬",
+  "Saint Vincent and the Grenadines": "🇻🇨",
   "Unknown": "",
 };
 

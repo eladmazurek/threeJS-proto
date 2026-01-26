@@ -152,19 +152,23 @@ export function updatePanelHeader(typeLabel: string, typeClass: string, unitId: 
  */
 function updateShipPanel(unitData: ShipState): void {
   const speed = unitData.sog ? `${unitData.sog.toFixed(1)} kts` : "0.0 kts";
+  const mmsi = unitData.mmsi || "Unknown";
 
   if (unitLabel1) unitLabel1.textContent = "LAT";
   if (unitLabel2) unitLabel2.textContent = "LON";
   if (unitLabel3) unitLabel3.textContent = "HDG";
   if (unitLabel4) unitLabel4.textContent = "SPD";
-  if (unitLabel5) unitLabel5.textContent = "ALT";
+  if (unitLabel5) unitLabel5.textContent = "MMSI";
 
   if (unitLatEl) unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
   if (unitLonEl) unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
   if (unitHdgEl) unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
   if (unitSpdEl) unitSpdEl.textContent = speed;
-  if (unitAltEl) unitAltEl.textContent = "0 ft";
-  if (unitRow6) unitRow6.style.display = "none";
+  if (unitAltEl) unitAltEl.textContent = mmsi;
+  
+  if (unitRow6) unitRow6.style.display = "";
+  if (unitLabel6) unitLabel6.textContent = "NAME";
+  if (unitExtra) unitExtra.textContent = unitData.name || "Unknown";
   
   if (unitStalenessEl) unitStalenessEl.textContent = "";
 }

@@ -62,12 +62,16 @@ export type { OpenSkyFeedConfig, BoundingBox } from "./opensky-aircraft-feed";
 export { CelesTrakSatelliteFeed } from "./celestrak-satellite-feed";
 export type { CelesTrakFeedConfig } from "./celestrak-satellite-feed";
 
+export { AISStreamFeed } from "./ais-feed";
+export type { AISFeedConfig } from "./ais-feed";
+
 // Feed manager
 export { FeedManagerImpl, feedManager } from "./feed-manager";
 export type { FeedManagerConfig } from "./feed-manager";
 
 // Shared feed status and params
 export * from "./shared";
+export { aisFeedParams } from "./shared"; // Explicit export if * doesn't cover it or for clarity
 
 // Aircraft feed controller
 export {
@@ -93,3 +97,12 @@ export {
   syncSatelliteFeedState,
 } from "./satellite-feed-controller";
 export type { SatelliteFeedDependencies } from "./satellite-feed-controller";
+
+// AIS feed controller
+export {
+  initAISFeedController,
+  startAISFeed,
+  setAISFeedMode,
+  getAISFeedStats,
+  syncAISFeedState,
+} from "./ais-feed-controller";

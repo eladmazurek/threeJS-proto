@@ -2,6 +2,18 @@
  * Unit Selection System
  */
 import * as THREE from "three";
+import {
+  EARTH_RADIUS,
+  SHIP_ALTITUDE,
+  AIRCRAFT_ALTITUDE,
+  DEG_TO_RAD,
+} from "../constants";
+import type { SelectedUnit, UnitType, SatelliteState, DroneState, ShipState, AircraftState } from "../types";
+import { state } from '../state';
+import { AIRPORTS } from "../data/airports";
+import { getCountryFlag } from "../utils/country-flags";
+import { MID_TO_COUNTRY } from "../data/mmsi-mid";
+import { unitCountParams } from "../simulation/demo-data";
 
 // Selection colors for each unit type (matches unit icon colors)
 export const SELECTION_COLORS = {
@@ -11,19 +23,25 @@ export const SELECTION_COLORS = {
   drone: 0x84cc16,     // Lime green
   airport: 0xffffff,   // White
 };
-import {
-  EARTH_RADIUS,
-  SHIP_ALTITUDE,
-  AIRCRAFT_ALTITUDE,
-  ORBIT_LINE_SEGMENTS,
-  PATROL_CIRCLE_SEGMENTS,
-  DEG_TO_RAD,
-} from "../constants";
-import type { SelectedUnit, UnitType, SatelliteState, DroneState } from "../types";
-import { state } from '../state';
-import { AIRPORTS } from "../data/airports";
-import { getCountryFlag } from "../utils/country-flags";
-import { unitCountParams } from "../simulation/demo-data";
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/**
+ * Get panel labels for different unit types
+ */
+export function getUnitTypeInfo(type: UnitType): { label: string; cssClass: string } {
+  const typeMap: Record<UnitType, { label: string; cssClass: string }> = {
+    ship: { label: "SHIP", cssClass: "ship" },
+    aircraft: { label: "AIRCRAFT", cssClass: "aircraft" },
+    satellite: { label: "SATELLITE", cssClass: "satellite" },
+    drone: { label: "DRONE/UAV", cssClass: "drone" },
+    airport: { label: "AIRPORT", cssClass: "airport" },
+  };
+  return typeMap[type] || { label: "UNKNOWN", cssClass: "" };
+}
+
 // Lazy-loaded formatAircraftType to avoid import affecting startup
 let _formatAircraftType: ((code: string | undefined) => string) | null = null;
 async function loadFormatAircraftType() {
@@ -63,11 +81,32 @@ function getCachedAircraftType(icaoTypeCode: string | undefined, fallback: strin
   return cached;
 }
 
+// =============================================================================
+// DOM MANAGEMENT
+// =============================================================================
+
 // DOM elements for unit info panel
-let unitInfoPanel, unitTypeEl, unitIdEl, unitStalenessEl, unitLatEl, unitLonEl, unitHdgEl, unitSpdEl, unitAltEl, unitCloseBtn;
-let droneFeedPanel, droneFeedCoords, droneVideo;
-let unitLabel1, unitLabel2, unitLabel3, unitLabel4, unitLabel5, unitLabel6;
-let unitRow6, unitExtra;
+let unitInfoPanel: HTMLElement | null = null;
+let unitTypeEl: HTMLElement | null = null;
+let unitIdEl: HTMLElement | null = null;
+let unitStalenessEl: HTMLElement | null = null;
+let unitLatEl: HTMLElement | null = null;
+let unitLonEl: HTMLElement | null = null;
+let unitHdgEl: HTMLElement | null = null;
+let unitSpdEl: HTMLElement | null = null;
+let unitAltEl: HTMLElement | null = null;
+let unitCloseBtn: HTMLElement | null = null;
+let unitLabel1: HTMLElement | null = null;
+let unitLabel2: HTMLElement | null = null;
+let unitLabel3: HTMLElement | null = null;
+let unitLabel4: HTMLElement | null = null;
+let unitLabel5: HTMLElement | null = null;
+let unitLabel6: HTMLElement | null = null;
+let unitRow6: HTMLElement | null = null;
+let unitExtra: HTMLElement | null = null;
+let droneFeedPanel: HTMLElement | null = null;
+let droneFeedCoords: HTMLElement | null = null;
+let droneVideo: HTMLVideoElement | null = null;
 
 function getDomElements() {
     unitInfoPanel = document.getElementById("unit-info");
@@ -99,38 +138,36 @@ function getDomElements() {
     unitCloseBtn = document.getElementById("unit-close");
     unitLabel1 = document.getElementById("unit-label-1");
     unitLabel2 = document.getElementById("unit-label-2");
-    droneFeedPanel = document.getElementById("drone-feed");
-    droneFeedCoords = document.getElementById("drone-feed-coords");
-    droneVideo = document.getElementById("drone-video");
     unitLabel3 = document.getElementById("unit-label-3");
     unitLabel4 = document.getElementById("unit-label-4");
     unitLabel5 = document.getElementById("unit-label-5");
     unitLabel6 = document.getElementById("unit-label-6");
     unitRow6 = document.getElementById("unit-row-6");
     unitExtra = document.getElementById("unit-extra");
+    droneFeedPanel = document.getElementById("drone-feed");
+    droneFeedCoords = document.getElementById("drone-feed-coords");
+    droneVideo = document.getElementById("drone-video") as HTMLVideoElement;
 }
 
-
-// Raycaster for click detection
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+// =============================================================================
+// SELECTION LOGIC
+// =============================================================================
 
 export function deselectUnit() {
     state.selectedUnit = null;
     unitInfoPanel?.classList.add("hidden");
     droneFeedPanel?.classList.add("hidden");
     if (droneVideo) droneVideo.pause();
-    // hideAllSelectionVisuals(); // This will be handled by the visuals module
 }
 
-function selectUnit(type, index) {
+function selectUnit(type: UnitType, index: number) {
     // Reset staleness tracking for new selection
     lastDisplayedPositionKey = "";
     lastPositionChangeTime = Date.now();
 
-    let unitData;
-    let typeLabel;
-    let typeClass;
+    let unitData: any;
+    let typeLabel = "";
+    let typeClass = "";
   
     if (type === "ship") {
       unitData = state.ships[index];
@@ -170,23 +207,33 @@ function selectUnit(type, index) {
 
     state.selectedUnit = { type, index, id, data: unitData };
 
-    // For aircraft/satellites, hide the type label and show ID prominently
-    if (type === "aircraft" && unitData.callsign) {
+    if (!unitInfoPanel) getDomElements();
+
+    // Header logic
+    if (type === "aircraft" && unitData.callsign && unitTypeEl && unitIdEl) {
       unitTypeEl.textContent = "";
       unitTypeEl.className = `unit-info-type ${typeClass}`;
       unitIdEl.textContent = unitData.callsign;
-    } else if (type === "satellite" && unitData.name) {
+    } else if (type === "ship" && (unitData.name || unitData.mmsi) && unitTypeEl && unitIdEl) {
+      unitTypeEl.textContent = "SHIP";
+      unitTypeEl.className = `unit-info-type ${typeClass}`;
+      unitIdEl.textContent = unitData.name || `#${unitData.mmsi}`;
+    } else if (type === "satellite" && unitData.name && unitTypeEl && unitIdEl) {
       unitTypeEl.textContent = "SATELLITE";
       unitTypeEl.className = `unit-info-type ${typeClass}`;
       unitIdEl.textContent = unitData.name;
-    } else if (type === "airport") {
+    } else if (type === "airport" && unitTypeEl && unitIdEl) {
       unitTypeEl.textContent = typeLabel;
       unitTypeEl.className = `unit-info-type ${typeClass}`;
       unitIdEl.textContent = unitData.code;
     } else {
-      unitTypeEl.textContent = typeLabel;
-      unitTypeEl.className = `unit-info-type ${typeClass}`;
-      unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
+      if (unitTypeEl) {
+          unitTypeEl.textContent = typeLabel;
+          unitTypeEl.className = `unit-info-type ${typeClass}`;
+      }
+      if (unitIdEl) {
+          unitIdEl.textContent = `#${String(index).padStart(4, "0")}`;
+      }
     }
   
     unitInfoPanel?.classList.remove("hidden");
@@ -204,52 +251,97 @@ function selectUnit(type, index) {
     }
 
     updateSelectedUnitInfo();
-
-    // Visuals like orbit line will be updated in the main loop
 }
 
 export function updateSelectedUnitInfo() {
     if (!state.selectedUnit) return;
   
     const { type, index } = state.selectedUnit;
-    let unitData;
+    let unitData: any;
     let altitude;
     let speed;
+    const typeInfo = getUnitTypeInfo(type);
+    const typeClass = typeInfo.cssClass;
   
+    // Helper to safely update text content
+    const safeSetText = (el: HTMLElement | null, text: string) => {
+        if (el) el.textContent = text;
+    };
+
     if (type === "ship") {
       unitData = state.ships[index];
       if (!unitData) { deselectUnit(); return; }
-      altitude = "0 ft";
-      speed = unitData.sog ? `${unitData.sog.toFixed(1)} kts` : "0.0 kts";
-      unitLabel1.textContent = "LAT"; unitLabel2.textContent = "LON"; unitLabel3.textContent = "HDG"; unitLabel4.textContent = "SPD"; unitLabel5.textContent = "ALT";
-      unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-      unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-      unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-      unitSpdEl.textContent = speed;
-      unitAltEl.textContent = altitude;
-      if (unitRow6) unitRow6.style.display = "none";
+      
+      const speed = unitData.sog ? `${unitData.sog.toFixed(1)} kts` : "0.0 kts";
+      const shipTypes = ["", "Cargo", "Tanker", "Passenger", "Fishing", "Military", "Pleasure"];
+      const typeStr = unitData.shipType !== undefined && unitData.shipType > 0 && unitData.shipType < shipTypes.length 
+          ? shipTypes[unitData.shipType] 
+          : "";
+
+      // Derive country from MMSI
+      let countryName = "";
+      if (unitData.mmsi) {
+          const mid = String(unitData.mmsi).padStart(9, '0').substring(0, 3);
+          countryName = MID_TO_COUNTRY[mid] || "";
+      }
+      const flag = countryName ? getCountryFlag(countryName) : "";
+
+      safeSetText(unitLabel1, "POS");
+      safeSetText(unitLabel2, "HDG");
+      safeSetText(unitLabel3, "SPD");
+      safeSetText(unitLabel4, "MMSI");
+      safeSetText(unitLabel5, "TYPE");
+
+      safeSetText(unitLatEl, `${unitData.lat.toFixed(4)}° ${unitData.lon.toFixed(4)}°`);
+      safeSetText(unitLonEl, `${unitData.heading.toFixed(0)}°`);
+      safeSetText(unitHdgEl, speed);
+      safeSetText(unitSpdEl, unitData.mmsi || "—");
+      safeSetText(unitAltEl, typeStr || "—");
+      
+      // Header update
+      if (unitTypeEl && unitIdEl) {
+          unitTypeEl.textContent = "SHIP";
+          unitTypeEl.className = `unit-info-type ${typeClass}`;
+          unitIdEl.textContent = unitData.name || `#${unitData.mmsi}`;
+      }
+
+      // Country row
+      if (countryName) {
+        if (unitRow6) unitRow6.style.display = "";
+        if (unitLabel6) unitLabel6.textContent = "COUNTRY";
+        if (unitExtra) unitExtra.textContent = `${flag} ${countryName}`.trim();
+      } else {
+        if (unitRow6) unitRow6.style.display = "none";
+      }
+      
       if (unitStalenessEl) unitStalenessEl.textContent = "";
+
     } else if (type === "aircraft") {
       unitData = state.aircraft[index];
       if (!unitData) { deselectUnit(); return; }
       const altFeet = unitData.altitude ? Math.round(unitData.altitude) : 0;
       speed = unitData.groundSpeed ? `${Math.round(unitData.groundSpeed)} kts` : "0 kts";
       const country = unitData.originCountry || "—";
-      unitLabel1.textContent = "POS"; unitLabel2.textContent = "HDG"; unitLabel3.textContent = "SPD"; unitLabel4.textContent = "REG"; unitLabel5.textContent = "ALT";
-      unitLatEl.textContent = `${unitData.lat.toFixed(2)}° ${unitData.lon.toFixed(2)}°`;
-      unitLonEl.textContent = `${unitData.heading.toFixed(0)}°`;
-      unitHdgEl.textContent = speed;
+      
+      safeSetText(unitLabel1, "POS");
+      safeSetText(unitLabel2, "HDG");
+      safeSetText(unitLabel3, "SPD");
+      safeSetText(unitLabel4, "REG");
+      safeSetText(unitLabel5, "ALT");
+
+      safeSetText(unitLatEl, `${unitData.lat.toFixed(2)}° ${unitData.lon.toFixed(2)}°`);
+      safeSetText(unitLonEl, `${unitData.heading.toFixed(0)}°`);
+      safeSetText(unitHdgEl, speed);
+      
       const flag = getCountryFlag(country);
-      unitSpdEl.textContent = flag ? `${flag} ${country}` : country;
-      // Altitude with climb/descend indicator (arrow on left for stable layout)
+      safeSetText(unitSpdEl, flag ? `${flag} ${country}` : country);
+      
       let altArrow = "";
       if (unitData.altitudeTrend === 1) altArrow = "↑ ";
       else if (unitData.altitudeTrend === -1) altArrow = "↓ ";
-      unitAltEl.textContent = `${altArrow}${altFeet.toLocaleString()} ft`;
+      safeSetText(unitAltEl, `${altArrow}${altFeet.toLocaleString()} ft`);
 
-      // Update staleness - reset when displayed position changes
       if (unitStalenessEl) {
-        // Track displayed position (rounded to match what's shown in UI)
         const posKey = `${unitData.lat.toFixed(2)}|${unitData.lon.toFixed(2)}|${altFeet}`;
         if (posKey !== lastDisplayedPositionKey) {
           lastDisplayedPositionKey = posKey;
@@ -259,70 +351,89 @@ export function updateSelectedUnitInfo() {
         unitStalenessEl.textContent = `+${staleness}s`;
       }
 
-      // Show aircraft type in 6th row only if available
-      // Prefer ICAO type code with full name, fall back to category
       const typeDisplay = getCachedAircraftType(unitData.icaoTypeCode, unitData.aircraftType);
       if (typeDisplay) {
         if (unitRow6) unitRow6.style.display = "";
-        if (unitLabel6) unitLabel6.textContent = "TYPE";
-        if (unitExtra) unitExtra.textContent = typeDisplay;
+        safeSetText(unitLabel6, "TYPE");
+        safeSetText(unitExtra, typeDisplay);
       } else {
         if (unitRow6) unitRow6.style.display = "none";
       }
+
     } else if (type === "satellite") {
         unitData = state.satellites[index];
         if (!unitData) { deselectUnit(); return; }
         const altKm = (unitData.altitude * 6371 / EARTH_RADIUS).toFixed(0);
         altitude = `${altKm} km`;
-        // Accurate orbital speed calculation: sqrt(GM / r)
-        // GM = 398600 km^3/s^2, r = Earth Radius (6371 km) + Altitude (km)
         const speedVal = Math.sqrt(398600 / (6371 + (unitData.altitude * (6371 / EARTH_RADIUS))));
         speed = `${speedVal.toFixed(2)} km/s`;
-        unitLabel1.textContent = "LAT"; unitLabel2.textContent = "LON"; unitLabel3.textContent = "HDG"; unitLabel4.textContent = "SPD"; unitLabel5.textContent = "ALT";
-        unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-        unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-        unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-        unitSpdEl.textContent = speed;
-        unitAltEl.textContent = altitude;
+        
+        safeSetText(unitLabel1, "LAT");
+        safeSetText(unitLabel2, "LON");
+        safeSetText(unitLabel3, "HDG");
+        safeSetText(unitLabel4, "SPD");
+        safeSetText(unitLabel5, "ALT");
+
+        safeSetText(unitLatEl, `${unitData.lat.toFixed(4)}°`);
+        safeSetText(unitLonEl, `${unitData.lon.toFixed(4)}°`);
+        safeSetText(unitHdgEl, `${unitData.heading.toFixed(0)}°`);
+        safeSetText(unitSpdEl, speed);
+        safeSetText(unitAltEl, altitude);
+        
         if (unitRow6) unitRow6.style.display = "none";
         if (unitStalenessEl) unitStalenessEl.textContent = "";
+
     } else if (type === "drone") {
         unitData = state.drones[index];
         if (!unitData) { deselectUnit(); return; }
         const altFeet = Math.round(unitData.altitude * 6371 / EARTH_RADIUS * 3281);
         altitude = `${altFeet.toLocaleString()} ft`;
         speed = `120 kts`;
-        unitLabel1.textContent = "LAT"; unitLabel2.textContent = "LON"; unitLabel3.textContent = "HDG"; unitLabel4.textContent = "SPD"; unitLabel5.textContent = "ALT";
-        unitLatEl.textContent = `${unitData.lat.toFixed(4)}°`;
-        unitLonEl.textContent = `${unitData.lon.toFixed(4)}°`;
-        unitHdgEl.textContent = `${unitData.heading.toFixed(0)}°`;
-        unitSpdEl.textContent = speed;
-        unitAltEl.textContent = altitude;
+        
+        safeSetText(unitLabel1, "LAT");
+        safeSetText(unitLabel2, "LON");
+        safeSetText(unitLabel3, "HDG");
+        safeSetText(unitLabel4, "SPD");
+        safeSetText(unitLabel5, "ALT");
+
+        safeSetText(unitLatEl, `${unitData.lat.toFixed(4)}°`);
+        safeSetText(unitLonEl, `${unitData.lon.toFixed(4)}°`);
+        safeSetText(unitHdgEl, `${unitData.heading.toFixed(0)}°`);
+        safeSetText(unitSpdEl, speed);
+        safeSetText(unitAltEl, altitude);
+        
         if (droneFeedCoords) droneFeedCoords.textContent = `TGT: ${unitData.targetLat.toFixed(4)}° ${unitData.targetLon.toFixed(4)}°`;
         if (unitRow6) unitRow6.style.display = "none";
         if (unitStalenessEl) unitStalenessEl.textContent = "";
+
     } else if (type === "airport") {
         const airport = AIRPORTS[index];
         if (!airport) { deselectUnit(); return; }
-        unitLabel1.textContent = "NAME"; unitLabel2.textContent = "LAT"; unitLabel3.textContent = "LON"; unitLabel4.textContent = "ELEV"; unitLabel5.textContent = "TYPE";
-        unitLatEl.textContent = airport.name;
-        unitLonEl.textContent = `${airport.lat.toFixed(4)}°`;
-        unitHdgEl.textContent = `${airport.lon.toFixed(4)}°`;
-        unitSpdEl.textContent = "—";
-        unitAltEl.textContent = "INTL";
+        safeSetText(unitLabel1, "NAME");
+        safeSetText(unitLabel2, "LAT");
+        safeSetText(unitLabel3, "LON");
+        safeSetText(unitLabel4, "ELEV");
+        safeSetText(unitLabel5, "TYPE");
+
+        safeSetText(unitLatEl, airport.name);
+        safeSetText(unitLonEl, `${airport.lat.toFixed(4)}°`);
+        safeSetText(unitHdgEl, `${airport.lon.toFixed(4)}°`);
+        safeSetText(unitSpdEl, "—");
+        safeSetText(unitAltEl, "INTL");
+        
         if (unitRow6) unitRow6.style.display = "none";
         if (unitStalenessEl) unitStalenessEl.textContent = "";
     }
 }
 
-function latLonTo3D(lat, lon, altitude = 0) {
+function latLonTo3D(lat: number, lon: number, altitude = 0) {
     const phi = (90 - lat) * DEG_TO_RAD;
     const theta = (lon + 180) * DEG_TO_RAD;
     const radius = EARTH_RADIUS + altitude;
     return new THREE.Vector3(-radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi), radius * Math.sin(phi) * Math.sin(theta));
 }
 
-function projectToScreen(position, camera, canvas) {
+function projectToScreen(position: THREE.Vector3, camera: THREE.Camera, canvas: HTMLCanvasElement) {
     const projected = position.clone().project(camera);
     return {
         x: (projected.x + 1) / 2 * canvas.clientWidth,
@@ -331,39 +442,30 @@ function projectToScreen(position, camera, canvas) {
     };
 }
 
-function onCanvasClick(event, camera, canvas, earth, h3Params) {
-    if (event.target.closest(".lil-gui") || event.target.closest("#unit-info")) return;
+function onCanvasClick(event: MouseEvent, camera: THREE.Camera, canvas: HTMLCanvasElement, earth: THREE.Object3D, h3Params: any) {
+    if ((event.target as HTMLElement).closest(".lil-gui") || (event.target as HTMLElement).closest("#unit-info")) return;
     if (h3Params.enabled) return;
 
     const rect = canvas.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
     const clickY = event.clientY - rect.top;
 
-    // Increase click radius when zoomed out to make selection easier
     const camDist = camera.position.length();
     const clickRadius = camDist > 5 ? 40 : 20;
     
-    let closestUnit = null;
+    let closestUnit: { type: UnitType, index: number } | null = null;
     let closestDist = clickRadius;
 
     const cameraWorldPos = camera.position.clone();
-    
-    // Create a sphere representing Earth for occlusion checking
-    // Use slightly smaller radius (0.98 * EARTH_RADIUS) to be forgiving near horizon
     const earthSphere = new THREE.Sphere(new THREE.Vector3(0,0,0), EARTH_RADIUS * 0.98);
 
-    const checkUnits = (units, type, altitudeFn) => {
+    const checkUnits = (units: any[], type: UnitType, altitudeFn: any) => {
         for (let i = 0; i < units.length; i++) {
             const unit = units[i];
             const altitude = typeof altitudeFn === 'function' ? altitudeFn(unit) : altitudeFn;
-            
-            // Skip hidden units (altitudeFn returned null)
             if (altitude === null || altitude === undefined) continue;
 
             const worldPos = latLonTo3D(unit.lat, unit.lon, altitude).applyMatrix4(earth.matrixWorld);
-            
-            // Occlusion check: Raycast from camera to unit
-            // If ray intersects Earth sphere closer than unit, it's occluded
             const distToUnit = cameraWorldPos.distanceTo(worldPos);
             const rayDir = worldPos.clone().sub(cameraWorldPos).normalize();
             const ray = new THREE.Ray(cameraWorldPos, rayDir);
@@ -371,7 +473,6 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
             
             if (intersection) {
                 const distToEarth = cameraWorldPos.distanceTo(intersection);
-                // If intersection is significantly closer than unit (allow small margin), it's blocked
                 if (distToEarth < distToUnit - 0.1) continue;
             }
 
@@ -389,8 +490,7 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
     if (state.unitCounts.showShips) checkUnits(state.ships, "ship", SHIP_ALTITUDE);
     if (state.unitCounts.showAircraft) checkUnits(state.aircraft, "aircraft", AIRCRAFT_ALTITUDE);
     if (state.unitCounts.showSatellites) {
-        checkUnits(state.satellites, "satellite", (unit) => {
-            // Check visibility filters
+        checkUnits(state.satellites, "satellite", (unit: any) => {
             const { showLEO, showMEO, showGEO } = unitCountParams;
             if (unit.orbitTypeLabel === 'LEO' && !showLEO) return null;
             if (unit.orbitTypeLabel === 'MEO' && !showMEO) return null;
@@ -398,16 +498,16 @@ function onCanvasClick(event, camera, canvas, earth, h3Params) {
             return unit.altitude;
         });
     }
-    if (state.unitCounts.showDrones) checkUnits(state.drones, "drone", unit => unit.altitude);
+    if (state.unitCounts.showDrones) checkUnits(state.drones, "drone", (unit: any) => unit.altitude);
 
     if (closestUnit) {
-        selectUnit(closestUnit.type, closestUnit.index);
+        selectUnit((closestUnit as any).type, (closestUnit as any).index);
     } else {
         deselectUnit();
     }
 }
 
-export function initSelectionHandling(camera, canvas, earth, h3Params) {
+export function initSelectionHandling(camera: THREE.Camera, canvas: HTMLCanvasElement, earth: THREE.Object3D, h3Params: any) {
     getDomElements();
     canvas.addEventListener("click", (event) => onCanvasClick(event, camera, canvas, earth, h3Params));
     unitCloseBtn?.addEventListener("click", () => {

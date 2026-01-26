@@ -34,6 +34,14 @@ export interface SatelliteFeedParams {
   trackedCount: number;
 }
 
+export interface AISFeedParams {
+  mode: FeedMode;
+  status: string;
+  indicatorStatus: "simulated" | "live" | "connecting" | "error";
+  lastError: string;
+  trackedCount: number;
+}
+
 // =============================================================================
 // STATE
 // =============================================================================
@@ -53,6 +61,14 @@ export const satelliteFeedParams: SatelliteFeedParams = {
   mode: "simulated",
   simulatedCount: 200,
   liveGroup: "active",
+  status: "idle",
+  indicatorStatus: "simulated",
+  lastError: "",
+  trackedCount: 0,
+};
+
+export const aisFeedParams: AISFeedParams = {
+  mode: "simulated",
   status: "idle",
   indicatorStatus: "simulated",
   lastError: "",
@@ -85,12 +101,13 @@ export function updateLiveIndicator(): void {
 
   const air = aircraftFeedParams.indicatorStatus;
   const sat = satelliteFeedParams.indicatorStatus;
+  const ais = aisFeedParams.indicatorStatus;
 
-  if (air === "error" || sat === "error") {
+  if (air === "error" || sat === "error" || ais === "error") {
     status = "error";
-  } else if (air === "connecting" || sat === "connecting") {
+  } else if (air === "connecting" || sat === "connecting" || ais === "connecting") {
     status = "connecting";
-  } else if (air === "live" || sat === "live") {
+  } else if (air === "live" || sat === "live" || ais === "live") {
     status = "live";
   }
 
