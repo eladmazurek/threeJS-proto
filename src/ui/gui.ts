@@ -240,7 +240,6 @@ export function createGui(params) {
     .name("OpenSky (Aircraft)")
     .onChange((value: boolean) => {
       setFeedMode(value ? "live" : "simulated");
-      startAircraftFeed();
     });
   const coverageOptions: Record<string, CoverageMode> = {
     "Worldwide": "worldwide",
