@@ -75,9 +75,8 @@ function buildGibsUrl(layer: GibsLayer, resolution: number, date?: Date): string
 
   // Different layers have different latencies:
   // - VIIRS/MODIS: ~2-3 days
-  // - IMERG precipitation: ~6 hours (use yesterday for reliability)
-  const isPrecipitation = layer === "precipitation";
-  const daysAgo = isPrecipitation ? 1 : 2;
+  // - IMERG precipitation: ~6 hours, but use 2 days for timezone safety
+  const daysAgo = 2;
   const dateStr = new Date(targetDate.getTime() - daysAgo * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
