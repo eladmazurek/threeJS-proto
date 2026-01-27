@@ -46,6 +46,7 @@ interface ShipData {
 let socket: WebSocket | null = null;
 const ships = new Map<number, ShipData>();
 let relayUrl = ""; // Passed via init
+let shouldReconnect = true;
 
 // Message buffer
 let messageQueue: any[] = [];
@@ -61,6 +62,7 @@ self.onmessage = (e: MessageEvent) => {
 
     if (type === 'init') {
         relayUrl = data.relayUrl;
+        shouldReconnect = true;
         connect();
         
         // Start periodic processing loop (10Hz)
@@ -71,6 +73,7 @@ self.onmessage = (e: MessageEvent) => {
         pruneInterval = setInterval(pruneStaleShips, PRUNE_INTERVAL);
     } 
     else if (type === 'stop') {
+        shouldReconnect = false;
         if (socket) {
             socket.close();
             socket = null;
@@ -112,8 +115,12 @@ function connect() {
     socket.onclose = (event) => {
         console.log('[AISWorker] Disconnected:', event.code, event.reason);
         socket = null;
-        // Simple reconnect logic (exponential backoff could be better)
-        setTimeout(connect, 5000);
+        
+        // Only reconnect if we didn't explicitly stop
+        if (shouldReconnect) {
+            // Simple reconnect logic (exponential backoff could be better)
+            setTimeout(connect, 5000);
+        }
     };
     
     socket.onerror = (error) => {

@@ -130,35 +130,14 @@ The system uses a modular feed architecture that cleanly separates data sources 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Swapping Data Sources
+### Data Feeds
 
-To use real data (e.g., OpenSky, FlightAware), create a new feed class:
+The application uses a modular feed system. Real-time data is currently provided via WebSocket relay servers:
 
-```typescript
-// src/feeds/opensky-aircraft-feed.ts
-export class OpenSkyAircraftFeed extends BaseFeed<AircraftUpdate, AircraftState> {
-  readonly id = "opensky-live";
+- **Aircraft**: `OpenSkyRelayFeed` connects to OpenSky data via a relay server.
+- **Ships**: `AISStreamFeed` connects to AIS data via a relay server.
 
-  protected async tick(): Promise<void> {
-    const response = await fetch('https://opensky-network.org/api/states/all');
-    const data = await response.json();
-
-    const updates = data.states.map(s => ({
-      callsign: s[1]?.trim(),
-      lat: s[6],
-      lon: s[5],
-      heading: s[10] || 0,
-      altitude: s[7] * 3.28084,    // meters → feet
-      groundSpeed: s[9] * 1.94384, // m/s → knots
-    }));
-
-    this.emit(updates);
-  }
-}
-
-// Register it
-feedManager.registerAircraftFeed(new OpenSkyAircraftFeed({ updateRateMs: 10000 }));
-```
+These feeds handle real-time updates and interpolation, syncing data to the global state for GPU rendering.
 
 ## License
 

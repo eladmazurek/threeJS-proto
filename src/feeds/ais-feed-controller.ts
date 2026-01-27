@@ -43,7 +43,7 @@ export function initAISFeedController(params: {
   }
 
   if (!feedManager.getShipFeed("ais-live")) {
-    const relayUrl = import.meta.env.VITE_AIS_RELAY_URL || "wss://ais-relay-server-722040785601.us-central1.run.app";
+    const relayUrl = import.meta.env.VITE_AIS_RELAY_URL || "wss://ais-relay-server-722040785601.us-central1.run.app/ais";
 
     liveFeed = new AISStreamFeed({
       relayUrl,
