@@ -111,18 +111,10 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
     // Calculate relay URL if not provided
     if (!config.relayUrl) {
       const baseRelay = import.meta.env.VITE_RELAY_SERVER;
-      const legacyUrl = import.meta.env.VITE_AIS_RELAY_URL;
 
       if (baseRelay && typeof baseRelay === 'string') {
         // Preferred: Base URL + /opensky
         this._config.relayUrl = `${baseRelay.replace(/\/$/, '')}/opensky`;
-      } else if (legacyUrl && typeof legacyUrl === 'string') {
-        // Legacy: Check if it's a specific endpoint or base
-        if (legacyUrl.endsWith('/ais')) {
-          this._config.relayUrl = legacyUrl.replace(/\/ais$/, '/opensky');
-        } else {
-          this._config.relayUrl = `${legacyUrl.replace(/\/$/, '')}/opensky`;
-        }
       } else {
         // Default
         this._config.relayUrl = `${DEFAULT_RELAY_SERVER}/opensky`;

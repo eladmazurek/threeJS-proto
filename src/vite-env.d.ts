@@ -1,10 +1,9 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_GOOGLE_TILES_API_KEY: string;
-  readonly VITE_OPEN_SKY_CLIENT_ID?: string;
-  readonly VITE_OPEN_SKY_CLIENT_KEY?: string;
-  readonly VITE_AIS_RELAY_URL?: string;
+  readonly VITE_APP_TITLE: string;
+  readonly VITE_RELAY_SERVER?: string;
+  readonly VITE_CESIUM_TOKEN?: string;
 }
 
 interface ImportMeta {
