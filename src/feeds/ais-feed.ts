@@ -14,16 +14,15 @@ import type { ShipState } from "../types";
 // =============================================================================
 
 export interface AISFeedConfig extends FeedConfig {
-  apiKey: string;
-  /** Bounding box [[lat_min, lon_min], [lat_max, lon_max]] */
-  boundingBox?: number[][];
+  /** WebSocket relay URL */
+  relayUrl: string;
 }
 
 const DEFAULT_AIS_CONFIG: AISFeedConfig = {
   ...DEFAULT_FEED_CONFIG,
   updateRateMs: 100, // Process worker updates every 100ms
   maxUnits: 50000,
-  apiKey: "",
+  relayUrl: "wss://ais-relay-server-722040785601.us-central1.run.app",
 };
 
 // =============================================================================
@@ -59,12 +58,6 @@ export class AISStreamFeed extends BaseFeed<ShipUpdate, ShipState> {
 
   start(): void {
     if (this._running) return;
-    
-    if (!this._config.apiKey) {
-        console.warn(`[${this.id}] No API Key provided. Set VITE_AIS_KEY.`);
-        this._fetchError = "Missing API Key";
-        return;
-    }
 
     super.start();
 
@@ -72,8 +65,7 @@ export class AISStreamFeed extends BaseFeed<ShipUpdate, ShipState> {
         this._worker.postMessage({
             type: 'init',
             data: {
-                apiKey: this._config.apiKey,
-                boundingBox: this._config.boundingBox
+                relayUrl: this._config.relayUrl
             }
         });
     }

@@ -1,8 +1,10 @@
 /**
  * AIS Data Worker
- * 
- * Handles WebSocket connection to AISStream.io, buffering, and parsing.
+ *
+ * Handles WebSocket connection to AIS relay server, buffering, and parsing.
  * Offloads JSON parsing and state management from the main thread.
+ *
+ * The relay server handles subscription - this worker just connects and receives data.
  */
 
 // Mapping for AIS Ship Types to our internal visualization types
@@ -43,9 +45,7 @@ interface ShipData {
 
 let socket: WebSocket | null = null;
 const ships = new Map<number, ShipData>();
-let apiKey = "";
-let boundingBox: number[][] | null = null; // [[lat_min, lon_min], [lat_max, lon_max]]
-let relayUrl = "ws://localhost:8080"; // Default, can be overridden via init
+let relayUrl = ""; // Passed via init
 
 // Message buffer
 let messageQueue: any[] = [];
@@ -60,13 +60,7 @@ self.onmessage = (e: MessageEvent) => {
     const { type, data } = e.data;
 
     if (type === 'init') {
-        apiKey = data.apiKey;
-        if (data.boundingBox) {
-            boundingBox = data.boundingBox;
-        }
-        if (data.relayUrl) {
-            relayUrl = data.relayUrl;
-        }
+        relayUrl = data.relayUrl;
         connect();
         
         // Start periodic processing loop (10Hz)
@@ -102,15 +96,8 @@ function connect() {
     socket = new WebSocket(relayUrl);
 
     socket.onopen = () => {
-        console.log('[AISWorker] Connected');
-        const subscriptionMessage = {
-            APIKey: apiKey,
-            BoundingBoxes: boundingBox || [[[-90, -180], [90, 180]]], // Global if not specified
-            // Filter only for PositionReports (1,2,3) and ShipStaticData (5,24) 
-            // to reduce bandwidth, though aisstream filters mainly by box
-            FilterMessageTypes: ["PositionReport", "ShipStaticData"] 
-        };
-        socket?.send(JSON.stringify(subscriptionMessage));
+        console.log('[AISWorker] Connected to relay server');
+        // Relay server handles subscription - no message needed
     };
 
     socket.onmessage = (event) => {

@@ -43,19 +43,12 @@ export function initAISFeedController(params: {
   }
 
   if (!feedManager.getShipFeed("ais-live")) {
-    const apiKey = import.meta.env.VITE_AIS_KEY || "";
-    
-    // Default to English Channel for high density if global is too much initially
-    // Or just global. Let's try English Channel for safer demo.
-    // [lat_min, lon_min], [lat_max, lon_max]
-    // English Channel: [[48.0, -6.0], [52.0, 2.0]]
-    // Global: undefined
-    
+    const relayUrl = import.meta.env.VITE_AIS_RELAY_URL || "wss://ais-relay-server-722040785601.us-central1.run.app";
+
     liveFeed = new AISStreamFeed({
-      apiKey,
+      relayUrl,
       maxUnits: 50000,
-      updateRateMs: 100, // Check worker buffer every 100ms
-      // boundingBox: [[48.0, -6.0], [52.0, 2.0]] // English Channel
+      updateRateMs: 100,
     });
     feedManager.registerShipFeed(liveFeed);
   } else {

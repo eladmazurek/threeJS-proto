@@ -35,7 +35,7 @@ jobs:
           VITE_GOOGLE_TILES_API_KEY: ${{ secrets.VITE_GOOGLE_TILES_API_KEY }}
           VITE_OPEN_SKY_CLIENT_ID: ${{ secrets.VITE_OPEN_SKY_CLIENT_ID }}
           VITE_OPEN_SKY_CLIENT_KEY: ${{ secrets.VITE_OPEN_SKY_CLIENT_KEY }}
-          VITE_AIS_KEY: ${{ secrets.VITE_AIS_KEY }}
+          VITE_AIS_RELAY_URL: ${{ secrets.VITE_AIS_RELAY_URL }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
