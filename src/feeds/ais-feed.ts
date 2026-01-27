@@ -22,7 +22,7 @@ const DEFAULT_AIS_CONFIG: AISFeedConfig = {
   ...DEFAULT_FEED_CONFIG,
   updateRateMs: 100, // Process worker updates every 100ms
   maxUnits: 50000,
-  relayUrl: "wss://ais-relay-server-722040785601.us-central1.run.app",
+  relayUrl: "wss://ais-relay-server-722040785601.us-central1.run.app/ais",
 };
 
 // =============================================================================

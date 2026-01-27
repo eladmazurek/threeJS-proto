@@ -59,6 +59,9 @@ export type { DroneFeedConfig } from "./simulated-drone-feed";
 export { OpenSkyAircraftFeed } from "./opensky-aircraft-feed";
 export type { OpenSkyFeedConfig, BoundingBox } from "./opensky-aircraft-feed";
 
+export { OpenSkyRelayFeed } from "./opensky-relay-feed";
+export type { OpenSkyRelayConfig } from "./opensky-relay-feed";
+
 export { CelesTrakSatelliteFeed } from "./celestrak-satellite-feed";
 export type { CelesTrakFeedConfig } from "./celestrak-satellite-feed";
 

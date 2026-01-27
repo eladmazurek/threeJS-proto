@@ -7,11 +7,9 @@
 
 import * as THREE from "three";
 import { SimulatedAircraftFeed } from "./simulated-aircraft-feed";
-import { OpenSkyAircraftFeed } from "./opensky-aircraft-feed";
+import { OpenSkyRelayFeed } from "./opensky-relay-feed";
 import type { AircraftUpdate } from "./types";
-import type { AircraftState } from "../types";
 import { state } from "../state";
-import { getViewportBoundingBox } from "../utils/coordinates";
 import { aircraftFeedParams } from "./shared";
 import type { FeedMode, CoverageMode, AircraftFeedParams } from "./shared";
 import { updateLiveIndicator } from "./shared";
@@ -24,8 +22,8 @@ export { aircraftFeedParams };
 // =============================================================================
 
 let simulatedFeed: SimulatedAircraftFeed | null = null;
-let liveFeed: OpenSkyAircraftFeed | null = null;
-let activeFeed: SimulatedAircraftFeed | OpenSkyAircraftFeed | null = null;
+let liveFeed: OpenSkyRelayFeed | null = null;
+let activeFeed: SimulatedAircraftFeed | OpenSkyRelayFeed | null = null;
 
 // Dependencies
 let cameraRef: THREE.Camera | null = null;
@@ -56,39 +54,22 @@ export function initAircraftFeedController(deps: FeedControllerDependencies): vo
   onAttributesUpdate = deps.updateAircraftAttributes;
   onUnitVisibilityChange = deps.onUnitVisibilityChange || null;
 
-  // Get OpenSky credentials from environment
-  const clientId = import.meta.env.VITE_OPEN_SKY_CLIENT_ID || "";
-  const clientKey = import.meta.env.VITE_OPEN_SKY_CLIENT_KEY || "";
-
   // Create simulated feed
   simulatedFeed = new SimulatedAircraftFeed({
     maxUnits: aircraftFeedParams.simulatedCount,
     updateRateMs: 100,
   });
 
-  // Create live feed
-  liveFeed = new OpenSkyAircraftFeed({
-    clientId,
-    clientKey,
-    updateRateMs: clientId ? 5000 : 10000,
+  // Create live feed (uses relay server - no credentials needed client-side)
+  liveFeed = new OpenSkyRelayFeed({
     interpolatePositions: aircraftFeedParams.interpolation,
-    useViewportFilter: aircraftFeedParams.coverage === "viewport",
-    getViewportBounds: () => getViewportBounds(),
   });
 
   // Register update handlers
   simulatedFeed.onUpdate(handleAircraftUpdates);
   liveFeed.onUpdate(handleAircraftUpdates);
 
-  // Log credential status
-  if (clientId) {
-    console.log(`[AircraftFeedController] OpenSky credentials found (${clientId.substring(0, 3)}...), using authenticated mode (5s rate limit)`);
-  } else {
-    console.log("[AircraftFeedController] No OpenSky credentials, using anonymous mode (10s rate limit)");
-    console.log("[AircraftFeedController] Expected env vars: VITE_OPEN_SKY_CLIENT_ID, VITE_OPEN_SKY_CLIENT_KEY");
-  }
-
-  console.log("[AircraftFeedController] Initialized");
+  console.log("[AircraftFeedController] Initialized (using relay server for live data)");
 }
 
 // =============================================================================
@@ -129,7 +110,6 @@ export function startAircraftFeed(): void {
     state.aircraft.length = 0;
     aircraftIndex.clear();
 
-    liveFeed.setViewportFilter(aircraftFeedParams.coverage === "viewport");
     liveFeed.setInterpolation(aircraftFeedParams.interpolation);
     // Set activeFeed BEFORE start() for consistency
     activeFeed = liveFeed;
@@ -178,13 +158,11 @@ export function setFeedMode(mode: FeedMode): void {
 
 /**
  * Set coverage mode for live feed.
+ * Note: Relay server always sends global data, filtering is done client-side if needed.
  */
 export function setCoverageMode(coverage: CoverageMode): void {
   aircraftFeedParams.coverage = coverage;
-
-  if (liveFeed) {
-    liveFeed.setViewportFilter(coverage === "viewport");
-  }
+  // Relay server sends all data - no viewport filtering at API level
 }
 
 /**
@@ -248,19 +226,6 @@ function handleAircraftUpdates(updates: AircraftUpdate[]): void {
   if (onAttributesUpdate) {
     onAttributesUpdate();
   }
-}
-
-// =============================================================================
-// VIEWPORT BOUNDS
-// =============================================================================
-
-function getViewportBounds() {
-  if (!cameraRef || !getEarthRotation) return null;
-
-  const earthRotY = getEarthRotation();
-  const bounds = getViewportBoundingBox(cameraRef, earthRotY);
-
-  return bounds;
 }
 
 // =============================================================================
