@@ -9,6 +9,7 @@ import { BaseFeed, DEFAULT_FEED_CONFIG } from "./base-feed";
 import type { AircraftUpdate, FeedConfig, FeedStats } from "./types";
 import type { AircraftState } from "../types";
 import { lookupICAO24, lookupTypecode } from "../data/icao-aircraft";
+import { DEFAULT_RELAY_SERVER } from "./shared";
 
 // =============================================================================
 // CONFIGURATION
@@ -27,7 +28,7 @@ const DEFAULT_CONFIG: OpenSkyRelayConfig = {
   ...DEFAULT_FEED_CONFIG,
   updateRateMs: 5000,
   maxUnits: 15000,
-  relayUrl: "wss://ais-relay-server-722040785601.us-central1.run.app/opensky",
+  relayUrl: "", // Calculated in constructor
   interpolatePositions: true,
   interpolationSpeed: 1.0,
 };
@@ -107,20 +108,24 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
     super();
     this._config = { ...DEFAULT_CONFIG, ...config };
 
-    // Use environment variable if available and config didn't override it
+    // Calculate relay URL if not provided
     if (!config.relayUrl) {
-      const envUrl = import.meta.env.VITE_AIS_RELAY_URL;
-      if (envUrl && typeof envUrl === 'string') {
-        // Replace /ais suffix with /opensky, or append if missing
-        if (envUrl.endsWith('/ais')) {
-          this._config.relayUrl = envUrl.replace(/\/ais$/, '/opensky');
+      const baseRelay = import.meta.env.VITE_RELAY_SERVER;
+      const legacyUrl = import.meta.env.VITE_AIS_RELAY_URL;
+
+      if (baseRelay && typeof baseRelay === 'string') {
+        // Preferred: Base URL + /opensky
+        this._config.relayUrl = `${baseRelay.replace(/\/$/, '')}/opensky`;
+      } else if (legacyUrl && typeof legacyUrl === 'string') {
+        // Legacy: Check if it's a specific endpoint or base
+        if (legacyUrl.endsWith('/ais')) {
+          this._config.relayUrl = legacyUrl.replace(/\/ais$/, '/opensky');
         } else {
-           // Fallback logic: if it doesn't end in /ais, maybe it's the base URL?
-           // Or maybe it's just a different full URL. 
-           // If it doesn't match the pattern, we leave the default or what was passed.
-           // But let's assume if it contains 'ais' we swap it.
-           // Actually, safest is just the replacement above.
+          this._config.relayUrl = `${legacyUrl.replace(/\/$/, '')}/opensky`;
         }
+      } else {
+        // Default
+        this._config.relayUrl = `${DEFAULT_RELAY_SERVER}/opensky`;
       }
     }
   }

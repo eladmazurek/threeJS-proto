@@ -8,7 +8,7 @@ import { feedManager } from "./feed-manager";
 import { SimulatedShipFeed } from "./simulated-ship-feed";
 import { AISStreamFeed, type AISFeedConfig } from "./ais-feed";
 import { state } from "../state";
-import { aisFeedParams, updateLiveIndicator } from "./shared";
+import { aisFeedParams, updateLiveIndicator, DEFAULT_RELAY_SERVER } from "./shared";
 import { initTrailHistory } from "../units/trails";
 
 let isLive = false;
@@ -43,7 +43,21 @@ export function initAISFeedController(params: {
   }
 
   if (!feedManager.getShipFeed("ais-live")) {
-    const relayUrl = import.meta.env.VITE_AIS_RELAY_URL || "wss://ais-relay-server-722040785601.us-central1.run.app/ais";
+    // Construct relay URL:
+    // 1. VITE_RELAY_SERVER (Base URL) -> append /ais
+    // 2. VITE_AIS_RELAY_URL (Full URL) -> use as is
+    // 3. DEFAULT_RELAY_SERVER -> append /ais
+    let relayUrl = "";
+    const baseRelay = import.meta.env.VITE_RELAY_SERVER;
+    const legacyUrl = import.meta.env.VITE_AIS_RELAY_URL;
+
+    if (baseRelay && typeof baseRelay === 'string') {
+      relayUrl = `${baseRelay.replace(/\/$/, '')}/ais`;
+    } else if (legacyUrl && typeof legacyUrl === 'string') {
+      relayUrl = legacyUrl;
+    } else {
+      relayUrl = `${DEFAULT_RELAY_SERVER}/ais`;
+    }
 
     liveFeed = new AISStreamFeed({
       relayUrl,
