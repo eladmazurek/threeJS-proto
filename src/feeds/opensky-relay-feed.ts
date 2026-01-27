@@ -101,10 +101,28 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
   private _fetchError: string | null = null;
   private _consecutiveErrors: number = 0;
   private _isDirty: boolean = false;
+  private _manuallyClosed: boolean = false;
 
   constructor(config: Partial<OpenSkyRelayConfig> = {}) {
     super();
     this._config = { ...DEFAULT_CONFIG, ...config };
+
+    // Use environment variable if available and config didn't override it
+    if (!config.relayUrl) {
+      const envUrl = import.meta.env.VITE_AIS_RELAY_URL;
+      if (envUrl && typeof envUrl === 'string') {
+        // Replace /ais suffix with /opensky, or append if missing
+        if (envUrl.endsWith('/ais')) {
+          this._config.relayUrl = envUrl.replace(/\/ais$/, '/opensky');
+        } else {
+           // Fallback logic: if it doesn't end in /ais, maybe it's the base URL?
+           // Or maybe it's just a different full URL. 
+           // If it doesn't match the pattern, we leave the default or what was passed.
+           // But let's assume if it contains 'ais' we swap it.
+           // Actually, safest is just the replacement above.
+        }
+      }
+    }
   }
 
   get config(): OpenSkyRelayConfig {
@@ -118,6 +136,7 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
   start(): void {
     if (this._running) return;
     super.start();
+    this._manuallyClosed = false;
     this.connect();
 
     if (this._config.interpolatePositions) {
@@ -129,6 +148,7 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
   }
 
   stop(): void {
+    this._manuallyClosed = true;
     if (this._interpolationInterval) {
       clearInterval(this._interpolationInterval);
       this._interpolationInterval = null;
@@ -138,6 +158,12 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
       this._reconnectTimeout = null;
     }
     if (this._socket) {
+      // Remove listeners to prevent "closed before established" errors from triggering callbacks
+      this._socket.onopen = null;
+      this._socket.onmessage = null;
+      this._socket.onerror = null;
+      this._socket.onclose = null;
+      
       this._socket.close();
       this._socket = null;
     }
@@ -167,6 +193,7 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
 
   private connect(): void {
     if (this._socket) return;
+    if (this._manuallyClosed) return;
 
     console.log(`[${this.id}] Connecting to ${this._config.relayUrl}...`);
 
@@ -190,6 +217,8 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
     };
 
     this._socket.onclose = (event) => {
+      if (this._manuallyClosed) return;
+
       console.log(`[${this.id}] Disconnected:`, event.code, event.reason);
       this._socket = null;
       this._fetchError = "Disconnected";
@@ -206,6 +235,7 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
     };
 
     this._socket.onerror = (error) => {
+      if (this._manuallyClosed) return;
       console.error(`[${this.id}] WebSocket error:`, error);
       this._fetchError = "Connection error";
     };
