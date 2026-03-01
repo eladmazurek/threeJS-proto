@@ -14,7 +14,6 @@ import { update as updateTrails, trailParams, createShipTrailMesh, createAircraf
 import { initSelectionHandling, updateSelectedUnitInfo, deselectUnit } from "./selection/index";
 import { createEarth, createAtmosphere, DEFAULT_EARTH_PARAMS, switchTexturePreset as switchEarthTexturePreset, TEXTURE_PRESETS } from "./scene/earth";
 import { createCloudLayer } from "./scene/clouds";
-import { createWeather, weatherParams, setWeatherLayer } from "./scene/weather";
 import { initGrid, buildGrid, gridParams, updateGridOpacity, updateGridVisibility } from "./scene/grid";
 import { initAirports, setAirportRotation, updateAirportScales, updateAirportLabels, airportParams, airportGroup } from "./scene/airports";
 import { state } from "./state";
@@ -39,7 +38,7 @@ import {
   tilesParams,
   setTilesDependencies,
 } from "./scene/tiles";
-import { updateTelemetry, updateWeatherLegend } from "./ui/telemetry";
+import { updateTelemetry } from "./ui/telemetry";
 import {
   h3Params,
   setH3Dependencies,
@@ -64,7 +63,6 @@ import {
   setGibsOpacity,
   setParticlesEnabled,
   setFlowType,
-  getWeatherSystemStatus,
 } from "./weather";
 import { 
   initAircraftFeedController, 
@@ -102,10 +100,9 @@ function main() {
   const earthRefs = createEarth();
   const atmosphereRefs = createAtmosphere();
   const cloudRefs = createCloudLayer(earthRefs.specularCloudsTexture, new THREE.Vector3().fromArray(Object.values(DEFAULT_EARTH_PARAMS).slice(4, 7)));
-  const weatherRefs = createWeather();
 
   scene.add(earthRefs.mesh, atmosphereRefs.mesh);
-  earthRefs.mesh.add(cloudRefs.mesh, weatherRefs.mesh);
+  earthRefs.mesh.add(cloudRefs.mesh);
 
   // Sun position (realistic by default, based on current date/time)
   const sunParams: SunParams = { ...DEFAULT_SUN_PARAMS };
@@ -304,11 +301,6 @@ function main() {
     refreshH3PopupIfVisible: () => {},
     h3Material,
     h3LineMaterial,
-    weatherParams,
-    weatherMesh: weatherRefs.mesh,
-    updateWeatherLegend,
-    setWeatherLayer,
-    weatherMaterial: weatherRefs.material,
     // Real Weather System (GIBS + Particles)
     gibsParams,
     particleParams,
@@ -317,9 +309,6 @@ function main() {
     setGibsOpacity,
     setParticlesEnabled,
     setFlowType,
-    getWeatherSystemStatus,
-    gibsOverlay: realWeatherRefs.gibsOverlay,
-    particleMesh: realWeatherRefs.particleMesh,
     airportParams,
     airportGroup,
     updateAirportLabels,
@@ -394,8 +383,6 @@ function main() {
     shipTrailRefs.mesh.rotation.y = earthRotY;
     aircraftTrailRefs.mesh.rotation.y = earthRotY;
     setOrbitLineRotation(earthRotY);
-
-    if (weatherParams.enabled && weatherParams.animate) weatherRefs.material.uniforms.uTime.value = elapsedTime;
 
     // Update real weather system (GIBS + particle flow)
     updateWeatherSystem(frameDeltaTime, elapsedTime);

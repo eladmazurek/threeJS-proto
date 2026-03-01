@@ -120,14 +120,6 @@ export interface EarthParameters {
   oceanSpecular: number;
 }
 
-/** Weather overlay parameters */
-export interface WeatherParams {
-  enabled: boolean;
-  layer: string; // Changed from number to string to match usage
-  opacity: number;
-  animate: boolean;
-}
-
 /** H3 grid parameters */
 export interface H3Params {
   enabled: boolean;

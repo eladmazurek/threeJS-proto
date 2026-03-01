@@ -12,7 +12,6 @@ import type {
   DroneState,
   SelectedUnit,
   EarthParameters,
-  WeatherParams,
   H3Params,
   LabelParams,
   UnitCountParams,
@@ -254,17 +253,6 @@ export const config = {
     cloudSpeed: 0.02,
     oceanSpecular: 0.5,
   } as EarthParameters,
-
-  // -------------------------------------------------------------------------
-  // Weather Overlay
-  // -------------------------------------------------------------------------
-
-  weather: {
-    enabled: false,
-    layer: "precipitation",
-    opacity: 0.6,
-    animate: true,
-  } as WeatherParams,
 
   // -------------------------------------------------------------------------
   // H3 Grid

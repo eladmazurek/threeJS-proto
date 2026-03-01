@@ -53,11 +53,6 @@ export function createGui(params) {
     refreshH3PopupIfVisible,
     h3Material,
     h3LineMaterial,
-    weatherParams,
-    weatherMesh,
-    updateWeatherLegend,
-    setWeatherLayer,
-    weatherMaterial,
     // Real Weather System (GIBS + Particles)
     gibsParams,
     particleParams,
@@ -66,9 +61,6 @@ export function createGui(params) {
     setGibsOpacity,
     setParticlesEnabled,
     setFlowType,
-    getWeatherSystemStatus,
-    gibsOverlay,
-    particleMesh,
     airportParams,
     airportGroup,
     updateAirportLabels,
@@ -398,24 +390,8 @@ export function createGui(params) {
   // ===========================================================================
   const overlaysFolder = gui.addFolder("Overlays & Grids");
 
-  // Weather
-  const weatherFolder = overlaysFolder.addFolder("Weather");
-  weatherFolder.close();
-  weatherFolder.add(weatherParams, "enabled").name("Show Weather").onChange(() => {
-    weatherMesh.visible = weatherParams.enabled;
-    updateWeatherLegend(weatherParams.layer, weatherParams.enabled);
-  });
-  weatherFolder.add(weatherParams, "layer", ["precipitation", "temperature", "wind", "pressure"]).name("Type").onChange((value) => {
-    setWeatherLayer(value);
-    updateWeatherLegend(value, weatherParams.enabled);
-  });
-  weatherFolder.add(weatherParams, "opacity", 0.1, 1.0, 0.05).name("Opacity").onChange(() => {
-    weatherMaterial.uniforms.uOpacity.value = weatherParams.opacity;
-  });
-  weatherFolder.add(weatherParams, "animate").name("Animate");
-
   // Real Weather Data (NASA GIBS + Particle Flow)
-  const realWeatherFolder = overlaysFolder.addFolder("Real Weather Data");
+  const realWeatherFolder = overlaysFolder.addFolder("Real Weather");
   realWeatherFolder.close();
 
   // GIBS Imagery
