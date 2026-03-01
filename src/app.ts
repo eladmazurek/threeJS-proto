@@ -3,7 +3,14 @@
  */
 import * as THREE from "three";
 import { scene, camera, renderer, controls, clock, canvas } from "./core/scene.js";
-import { initCameraModule, updateCameraControlSpeeds, cameraParams, tiltPresets, setCameraTilt } from "./camera/controls";
+import {
+  initCameraModule,
+  updateCameraControlSpeeds,
+  cameraParams,
+  tiltPresets,
+  setCameraPanReferenceDistance,
+  setCameraTilt,
+} from "./camera/controls";
 import { createMainOverlay } from "./ui/main-overlay";
 import { createGui } from "./ui/gui";
 import { updateMotionSimulation, motionParams } from "./simulation/motion";
@@ -34,6 +41,8 @@ import {
   updateTilesAttribution,
   getTilesPreloadAltitude,
   getMinCameraAltitude,
+  getCameraSurfaceClearance,
+  getMinCameraDistanceToLoadedTiles,
   updateTilesRenderer,
   setTransitionAltitude,
   tilesRenderer,
@@ -87,6 +96,10 @@ import {
   DEFAULT_SUN_PARAMS,
   type SunParams,
 } from "./utils/solar";
+
+const KM_TO_SCENE_UNITS = EARTH_RADIUS / 6371;
+const EARTH_ROTATION_AUTO_PAUSE_ALTITUDE_KM = 1000;
+const LOW_ALTITUDE_SURFACE_PAN_ALTITUDE_KM = 500;
 
 function main() {
   createMainOverlay();
@@ -340,6 +353,8 @@ function main() {
   let frameCount = 0;
   const frameTimes: number[] = [];
   let lastFrameTimestamp = performance.now(); // For accurate deltaTime calculation
+  let earthRotationOffsetY = 0;
+  let earthRotationPaused = false;
 
   // Debug timing (temporary)
   let debugTiming = { motion: 0, trails: 0, labels: 0, h3: 0, other: 0, gpu: 0, count: 0 };
@@ -351,6 +366,7 @@ function main() {
 
     const elapsedTime = clock.getElapsedTime();
     const cameraDistance = camera.position.length();
+    const cameraAltitudeKm = (cameraDistance - EARTH_RADIUS) / KM_TO_SCENE_UNITS;
 
     // Calculate simulated time (for both sun position and earth rotation)
     const currentTime = performance.now();
@@ -361,18 +377,32 @@ function main() {
     const clampedDeltaMs = Math.min(frameDeltaTime * 1000, 100);
     const simDate = getSimulatedDate(sunParams, sunParams.realistic ? clampedDeltaMs : 0);
 
-    // Earth rotation based on simulated time (realistic rotation at all altitudes)
+    // Earth rotation based on simulated time, but auto-pause when close to the surface.
     let earthRotY: number;
     if (sunParams.realistic) {
-      // Realistic: Earth rotation derived from simulated time
-      earthRotY = getEarthRotation(simDate);
-      earthRefs.mesh.rotation.y = earthRotY;
+      const baseEarthRotationY = getEarthRotation(simDate);
+      const shouldAnimateEarthRotation =
+        earthRotationParams.enabled && cameraAltitudeKm >= EARTH_ROTATION_AUTO_PAUSE_ALTITUDE_KM;
+
+      if (shouldAnimateEarthRotation) {
+        if (earthRotationPaused) {
+          earthRotationOffsetY = earthRefs.mesh.rotation.y - baseEarthRotationY;
+          earthRotationPaused = false;
+        }
+
+        earthRotY = baseEarthRotationY + earthRotationOffsetY;
+        earthRefs.mesh.rotation.y = earthRotY;
+      } else {
+        earthRotationPaused = true;
+        earthRotY = earthRefs.mesh.rotation.y;
+      }
 
       // Sun direction based on season only (Earth rotation handles daily cycle)
       getSeasonalSunDirection(simDate, sunDirection);
       updateAllSunDirection(sunDirection);
     } else {
       // Manual mode: no automatic rotation, user controls sun direction
+      earthRotationPaused = true;
       earthRotY = earthRefs.mesh.rotation.y;
     }
     state.earthRotation.y = earthRotY;
@@ -403,6 +433,16 @@ function main() {
     t1 = performance.now();
     debugTiming.trails += t1 - t0;
     t0 = t1;
+
+    // Keep the floor inside OrbitControls so zooming eases into the limit instead of snapping.
+    const baseMinDistanceFromCenter = EARTH_RADIUS + getMinCameraAltitude();
+    controls.minDistance = baseMinDistanceFromCenter;
+
+    if (tilesParams.enabled && cameraAltitudeKm < LOW_ALTITUDE_SURFACE_PAN_ALTITUDE_KM) {
+      setCameraPanReferenceDistance(getCameraSurfaceClearance(camera));
+    } else {
+      setCameraPanReferenceDistance(null);
+    }
 
     // Adjust rotation/zoom speeds based on altitude (see camera/controls.ts for details)
     updateCameraControlSpeeds();
@@ -467,12 +507,18 @@ function main() {
       }
     }
 
-    // Enforce minimum distance from Earth center based on tiles state
-    // When tiles are disabled, restrict to 1000km altitude
-    const minDistanceFromCenter = EARTH_RADIUS + getMinCameraAltitude();
-    const distanceFromCenter = camera.position.length();
+    // Safety clamp in case external code moves the camera inside the floor.
+    let minDistanceFromCenter = baseMinDistanceFromCenter;
+    const tileSurfaceDistance = getMinCameraDistanceToLoadedTiles(camera, controls.target);
+    if (tileSurfaceDistance !== null) {
+      minDistanceFromCenter = Math.max(minDistanceFromCenter, tileSurfaceDistance);
+    }
+
+    let distanceFromCenter = camera.position.length();
     if (distanceFromCenter < minDistanceFromCenter) {
       camera.position.normalize().multiplyScalar(minDistanceFromCenter);
+      controls.minDistance = minDistanceFromCenter;
+      distanceFromCenter = minDistanceFromCenter;
     }
 
     // Dynamic near plane based on altitude

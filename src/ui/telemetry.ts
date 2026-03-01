@@ -14,6 +14,7 @@ import { missionStartTime } from "./overlays";
 
 // Cached DOM element references
 let telAltitude: HTMLElement | null = null;
+let telAltitudeUnit: HTMLElement | null = null;
 let telLat: HTMLElement | null = null;
 let telLon: HTMLElement | null = null;
 let telUnits: HTMLElement | null = null;
@@ -28,6 +29,7 @@ let legendLabels: HTMLElement | null = null;
 function getTelemetryElements() {
   if (!telAltitude) {
     telAltitude = document.getElementById("tel-altitude");
+    telAltitudeUnit = document.getElementById("tel-altitude-unit");
     telLat = document.getElementById("tel-lat");
     telLon = document.getElementById("tel-lon");
     telUnits = document.getElementById("tel-units");
@@ -136,14 +138,26 @@ export function updateTelemetry(deps: TelemetryDeps): void {
   _lastTelemetryUpdate = now;
 
   getTelemetryElements();
-  if (!telAltitude || !telLat || !telLon || !telUnits || !telUtc || !metValue) return;
+  if (!telAltitude || !telAltitudeUnit || !telLat || !telLon || !telUnits || !telUtc || !metValue) return;
 
   const { cameraDistance, cameraPosition, earth, unitCounts } = deps;
 
   // Altitude (scaled - assuming Earth radius = 6371km, our radius = 2)
   const scaleFactor = 6371 / EARTH_RADIUS;
-  const altitudeKm = ((cameraDistance - EARTH_RADIUS) * scaleFactor).toFixed(0);
-  telAltitude.textContent = Number(altitudeKm).toLocaleString();
+  const altitudeKm = Math.max(0, (cameraDistance - EARTH_RADIUS) * scaleFactor);
+  if (altitudeKm >= 100) {
+    telAltitude.textContent = Math.round(altitudeKm).toLocaleString();
+    telAltitudeUnit.textContent = "km";
+  } else if (altitudeKm >= 10) {
+    telAltitude.textContent = altitudeKm.toFixed(1);
+    telAltitudeUnit.textContent = "km";
+  } else if (altitudeKm >= 1) {
+    telAltitude.textContent = altitudeKm.toFixed(2);
+    telAltitudeUnit.textContent = "km";
+  } else {
+    telAltitude.textContent = Math.round(altitudeKm * 1000).toLocaleString();
+    telAltitudeUnit.textContent = "m";
+  }
 
   // Calculate view center lat/lon (accounts for Earth rotation)
   // Raycast from camera to Earth center to find what we're looking at

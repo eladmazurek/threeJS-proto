@@ -26,8 +26,10 @@ export function createMainOverlay() {
     <div id="telemetry">
       <div class="telemetry-row">
         <span class="telemetry-label">ALT</span>
-        <span class="telemetry-value" id="tel-altitude">0.00</span>
-        <span class="telemetry-unit">km</span>
+        <span class="telemetry-reading">
+          <span class="telemetry-value" id="tel-altitude">0.00</span>
+          <span class="telemetry-unit" id="tel-altitude-unit">km</span>
+        </span>
       </div>
       <div class="telemetry-row">
         <span class="telemetry-label">LAT</span>

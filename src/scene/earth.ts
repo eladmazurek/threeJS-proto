@@ -173,7 +173,7 @@ export function createEarth(params: EarthParams = DEFAULT_EARTH_PARAMS): EarthMe
       uNightBlend: { value: 1.0 },
       uOpacity: { value: 1.0 },
     },
-    transparent: true,
+    transparent: false,
   });
 
   const mesh = new THREE.Mesh(geometry, material);

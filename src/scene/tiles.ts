@@ -33,13 +33,96 @@ export let tilesRenderer: TilesRenderer | null = null;
 /** Parent group for Y rotation (syncs with Earth's rotation) */
 export let tilesGroup: THREE.Group | null = null;
 
+/** Minimum altitude above the ellipsoid when tiles are enabled. */
+const MIN_ALTITUDE_WITH_TILES = 0.1 * (EARTH_RADIUS / 6371); // ~100m
+const TILE_COLLISION_BUFFER = 10 * (EARTH_RADIUS / 6371000); // ~10m
+const TILE_COLLISION_CHECK_ALTITUDE_KM = 25;
+const SCENE_UNITS_TO_KM = 6371 / EARTH_RADIUS;
+const collisionRaycaster = new THREE.Raycaster();
+const collisionHits: THREE.Intersection[] = [];
+const collisionDirection = new THREE.Vector3();
+
 function hasVisibleTileContent(): boolean {
   if (!tilesRenderer) return false;
   return tilesRenderer.visibleTiles.size > 0 || tilesRenderer.stats.visible > 0;
 }
 
+function setEarthMaterialTransparent(transparent: boolean): void {
+  if (!earthMaterial || earthMaterial.transparent === transparent) return;
+
+  earthMaterial.transparent = transparent;
+  earthMaterial.depthWrite = !transparent;
+  earthMaterial.needsUpdate = true;
+}
+
 export function updateTilesRenderer(): void {
   tilesRenderer?.update();
+}
+
+export function getMinCameraDistanceToLoadedTiles(
+  camera: THREE.PerspectiveCamera,
+  target: THREE.Vector3
+): number | null {
+  if (!tilesParams.enabled || !tilesRenderer || !tilesGroup || !hasVisibleTileContent()) {
+    return null;
+  }
+
+  const altitudeKm = (camera.position.length() - EARTH_RADIUS) * SCENE_UNITS_TO_KM;
+  if (altitudeKm > TILE_COLLISION_CHECK_ALTITUDE_KM) {
+    return null;
+  }
+
+  collisionDirection.copy(target).sub(camera.position);
+  if (collisionDirection.lengthSq() < 1e-10) {
+    collisionDirection.copy(camera.position).normalize().negate();
+  } else {
+    collisionDirection.normalize();
+  }
+  collisionRaycaster.set(camera.position, collisionDirection);
+  collisionRaycaster.near = 0;
+  collisionRaycaster.far = Math.max(
+    camera.position.distanceTo(target) + EARTH_RADIUS,
+    camera.position.length()
+  );
+  (collisionRaycaster as any).firstHitOnly = true;
+
+  tilesGroup.updateMatrixWorld(true);
+  collisionHits.length = 0;
+  collisionRaycaster.intersectObject(tilesGroup, true, collisionHits);
+
+  const hit = collisionHits[0];
+  if (!hit) {
+    return null;
+  }
+
+  return hit.point.length() + TILE_COLLISION_BUFFER;
+}
+
+/**
+ * Estimate local camera clearance above the loaded tile surface directly below.
+ * This keeps low-altitude pan speed tied to nearby terrain, not to a distant
+ * horizon intersection when the camera is tilted.
+ */
+export function getCameraSurfaceClearance(camera: THREE.PerspectiveCamera): number {
+  collisionDirection.copy(camera.position).normalize().negate();
+
+  if (tilesParams.enabled && tilesRenderer && tilesGroup && hasVisibleTileContent()) {
+    collisionRaycaster.set(camera.position, collisionDirection);
+    collisionRaycaster.near = 0;
+    collisionRaycaster.far = camera.position.length() + EARTH_RADIUS;
+    (collisionRaycaster as any).firstHitOnly = true;
+
+    tilesGroup.updateMatrixWorld(true);
+    collisionHits.length = 0;
+    collisionRaycaster.intersectObject(tilesGroup, true, collisionHits);
+
+    const tileHit = collisionHits[0];
+    if (tileHit) {
+      return Math.max(tileHit.distance, MIN_ALTITUDE_WITH_TILES);
+    }
+  }
+
+  return Math.max(camera.position.length() - EARTH_RADIUS, MIN_ALTITUDE_WITH_TILES);
 }
 
 function createDracoLoader(): DRACOLoader {
@@ -167,7 +250,10 @@ export function initGoogleTiles(
   // =========================================================================
 
   // Error target in pixels - lower = sharper/higher detail tiles (default is 6)
-  tilesRenderer.errorTarget = 10;
+  tilesRenderer.errorTarget = 12;
+
+  // Keep parent LODs visible while higher-detail children refine to avoid holes.
+  tilesRenderer.displayActiveTiles = true;
 
   // Don't use errorMultiplier with scale - it's already factored into screen-space error
   // The renderer calculates screen-space error which accounts for camera distance
@@ -180,8 +266,8 @@ export function initGoogleTiles(
   tilesRenderer.parseQueue.maxJobs = 4;
 
   // Increase cache size for smoother navigation
-  tilesRenderer.lruCache.maxSize = 800;
-  tilesRenderer.lruCache.minSize = 400;
+  tilesRenderer.lruCache.maxSize = 1600;
+  tilesRenderer.lruCache.minSize = 800;
 
   // Initially hidden until transition threshold
   tilesGroup.visible = false;
@@ -241,6 +327,7 @@ export function getTilesTransitionFactor(): number {
 export function updateTilesCrossfade(): void {
   if (!tilesParams.enabled || !tilesRenderer) {
     // Tiles disabled - show full globe
+    setEarthMaterialTransparent(false);
     if (earthMaterial) earthMaterial.uniforms.uOpacity.value = 1.0;
     if (tilesGroup) tilesGroup.visible = false;
     if (earthMesh) earthMesh.visible = true;
@@ -257,7 +344,9 @@ export function updateTilesCrossfade(): void {
 
   // Globe texture opacity (inverse of transition)
   if (earthMaterial) {
-    earthMaterial.uniforms.uOpacity.value = 1.0 - factor;
+    const useTransparentTransition = factor > 0 && factor < 1.0;
+    setEarthMaterialTransparent(useTransparentTransition);
+    earthMaterial.uniforms.uOpacity.value = useTransparentTransition ? 1.0 - factor : 1.0;
   }
 
   // Tiles visibility
@@ -276,7 +365,7 @@ export function updateTilesCrossfade(): void {
     if (tilesGroup) tilesGroup.visible = false;
   }
 
-  // Keep the globe visible until actual tile content is on screen.
+  // Hide the globe completely once tiles are fully active.
   if (earthMesh) {
     earthMesh.visible = factor < 1.0;
   }
@@ -344,8 +433,8 @@ const MIN_ALTITUDE_WITHOUT_TILES = 1000 * (EARTH_RADIUS / 6371); // ~0.314 scene
  */
 export function getMinCameraAltitude(): number {
   if (tilesParams.enabled) {
-    // Tiles enabled - allow close approach (tiles handle close-up rendering)
-    return 0.00015; // ~1km, existing minimum
+    // Allow street-scale zoom while still keeping a small safety margin above the ellipsoid.
+    return MIN_ALTITUDE_WITH_TILES;
   }
   // Tiles disabled - restrict to 1000km
   return MIN_ALTITUDE_WITHOUT_TILES;
