@@ -40,6 +40,25 @@ interface ErrorResponse {
 type WorkerRequest = WindDataRequest | OceanDataRequest;
 type WorkerResponse = WindDataResponse | OceanDataResponse | ErrorResponse;
 
+interface OpenMeteoCurrent {
+  wind_speed_10m?: number | null;
+  wind_direction_10m?: number | null;
+  ocean_current_velocity?: number | null;
+  ocean_current_direction?: number | null;
+}
+
+interface OpenMeteoPointResponse {
+  latitude?: number;
+  longitude?: number;
+  current?: OpenMeteoCurrent;
+}
+
+interface VectorSample {
+  u: number;
+  v: number;
+  valid: number;
+}
+
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -47,8 +66,22 @@ type WorkerResponse = WindDataResponse | OceanDataResponse | ErrorResponse;
 /** Grid resolution for vector field (1 degree) */
 const GRID_WIDTH = 360;
 const GRID_HEIGHT = 180;
+const REAL_DATA_SAMPLE_STEP = 15;
+const REAL_DATA_BATCH_SIZE = 24;
+const MAX_ABS_SAMPLE_LAT = 75;
+const WEATHER_API_URL = "https://api.open-meteo.com/v1/gfs";
+const MARINE_API_URL = "https://marine-api.open-meteo.com/v1/marine";
 
 const PI = Math.PI;
+const SAMPLE_LONS = Array.from(
+  { length: Math.round(360 / REAL_DATA_SAMPLE_STEP) },
+  (_, index) => -180 + index * REAL_DATA_SAMPLE_STEP
+);
+const SAMPLE_LATS = Array.from(
+  { length: Math.round((MAX_ABS_SAMPLE_LAT * 2) / REAL_DATA_SAMPLE_STEP) + 1 },
+  (_, index) => -MAX_ABS_SAMPLE_LAT + index * REAL_DATA_SAMPLE_STEP
+);
+const SAMPLE_POINT_COUNT = SAMPLE_LONS.length * SAMPLE_LATS.length;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -79,6 +112,239 @@ function encodeVectorComponent(value: number, range: number): number {
 
 function encodeMagnitude(value: number, range: number): number {
   return clamp01(value / range);
+}
+
+function buildSampleIndex(lonIndex: number, latIndex: number): number {
+  return latIndex * SAMPLE_LONS.length + lonIndex;
+}
+
+function normalizePointResponses(payload: unknown): OpenMeteoPointResponse[] {
+  if (Array.isArray(payload)) {
+    return payload as OpenMeteoPointResponse[];
+  }
+
+  if (payload && typeof payload === "object") {
+    return [payload as OpenMeteoPointResponse];
+  }
+
+  throw new Error("Unexpected Open-Meteo response shape");
+}
+
+function chunkIndices(total: number, chunkSize: number): Array<[number, number]> {
+  const chunks: Array<[number, number]> = [];
+
+  for (let start = 0; start < total; start += chunkSize) {
+    chunks.push([start, Math.min(start + chunkSize, total)]);
+  }
+
+  return chunks;
+}
+
+async function fetchBatch(url: string): Promise<OpenMeteoPointResponse[]> {
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+
+  return normalizePointResponses(await response.json());
+}
+
+function parseWindSample(point: OpenMeteoPointResponse): VectorSample {
+  const speed = point.current?.wind_speed_10m;
+  const direction = point.current?.wind_direction_10m;
+
+  if (!Number.isFinite(speed) || !Number.isFinite(direction)) {
+    return { u: 0, v: 0, valid: 0 };
+  }
+
+  // Open-Meteo wind direction follows the meteorological convention:
+  // direction indicates where the wind comes from.
+  const directionRad = (direction as number) * PI / 180;
+  return {
+    u: -(speed as number) * Math.sin(directionRad),
+    v: -(speed as number) * Math.cos(directionRad),
+    valid: 1,
+  };
+}
+
+function parseOceanSample(point: OpenMeteoPointResponse): VectorSample {
+  const speed = point.current?.ocean_current_velocity;
+  const direction = point.current?.ocean_current_direction;
+
+  if (!Number.isFinite(speed) || !Number.isFinite(direction)) {
+    return { u: 0, v: 0, valid: 0 };
+  }
+
+  // Ocean-current direction is treated as the direction the current flows toward.
+  const directionRad = (direction as number) * PI / 180;
+  return {
+    u: (speed as number) * Math.sin(directionRad),
+    v: (speed as number) * Math.cos(directionRad),
+    valid: 1,
+  };
+}
+
+function sampleGridPoint(index: number): { lat: number; lon: number } {
+  const lonCount = SAMPLE_LONS.length;
+  const latIndex = Math.floor(index / lonCount);
+  const lonIndex = index % lonCount;
+
+  return {
+    lat: SAMPLE_LATS[latIndex],
+    lon: SAMPLE_LONS[lonIndex],
+  };
+}
+
+async function fetchVectorSamples(
+  endpoint: string,
+  params: Record<string, string>,
+  parser: (point: OpenMeteoPointResponse) => VectorSample
+): Promise<VectorSample[]> {
+  const samples = new Array<VectorSample>(SAMPLE_POINT_COUNT);
+  const batches = chunkIndices(SAMPLE_POINT_COUNT, REAL_DATA_BATCH_SIZE);
+
+  await Promise.all(
+    batches.map(async ([start, end]) => {
+      const points = [];
+      for (let index = start; index < end; index++) {
+        points.push(sampleGridPoint(index));
+      }
+
+      const searchParams = new URLSearchParams(params);
+      searchParams.set(
+        "latitude",
+        points.map((point) => point.lat.toFixed(2)).join(",")
+      );
+      searchParams.set(
+        "longitude",
+        points.map((point) => point.lon.toFixed(2)).join(",")
+      );
+
+      const responses = await fetchBatch(`${endpoint}?${searchParams.toString()}`);
+
+      for (let offset = 0; offset < points.length; offset++) {
+        samples[start + offset] = parser(responses[offset] || {});
+      }
+    })
+  );
+
+  return samples;
+}
+
+function bilinearSample(samples: VectorSample[], lon: number, lat: number): VectorSample {
+  const lonCount = SAMPLE_LONS.length;
+  const latCount = SAMPLE_LATS.length;
+
+  const wrappedLonPos = (((lon + 180) / REAL_DATA_SAMPLE_STEP) % lonCount + lonCount) % lonCount;
+  const lon0 = Math.floor(wrappedLonPos) % lonCount;
+  const lon1 = (lon0 + 1) % lonCount;
+  const lonT = wrappedLonPos - Math.floor(wrappedLonPos);
+
+  const clampedLat = Math.max(SAMPLE_LATS[0], Math.min(SAMPLE_LATS[latCount - 1], lat));
+  const latPos = (clampedLat - SAMPLE_LATS[0]) / REAL_DATA_SAMPLE_STEP;
+  const lat0 = Math.min(latCount - 1, Math.floor(latPos));
+  const lat1 = Math.min(latCount - 1, lat0 + 1);
+  const latT = latPos - lat0;
+
+  const corners: Array<[number, number]> = [
+    [buildSampleIndex(lon0, lat0), (1 - lonT) * (1 - latT)],
+    [buildSampleIndex(lon1, lat0), lonT * (1 - latT)],
+    [buildSampleIndex(lon0, lat1), (1 - lonT) * latT],
+    [buildSampleIndex(lon1, lat1), lonT * latT],
+  ];
+
+  let totalWeight = 0;
+  let u = 0;
+  let v = 0;
+
+  for (const [index, weight] of corners) {
+    const sample = samples[index];
+    if (!sample || sample.valid < 0.5 || weight <= 0) continue;
+
+    totalWeight += weight;
+    u += sample.u * weight;
+    v += sample.v * weight;
+  }
+
+  if (totalWeight <= 1e-6) {
+    return { u: 0, v: 0, valid: 0 };
+  }
+
+  return {
+    u: u / totalWeight,
+    v: v / totalWeight,
+    valid: 1,
+  };
+}
+
+function encodeInterpolatedField(
+  samples: VectorSample[],
+  vectorRange: number,
+  validMask: (lon: number, lat: number) => boolean
+): Float32Array {
+  const buffer = new Float32Array(GRID_WIDTH * GRID_HEIGHT * 4);
+
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    const lat = -90 + y;
+
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      const lon = x - 180;
+      const idx = (y * GRID_WIDTH + x) * 4;
+
+      if (!validMask(lon, lat)) {
+        buffer[idx] = 0.5;
+        buffer[idx + 1] = 0.5;
+        buffer[idx + 2] = 0;
+        buffer[idx + 3] = 0;
+        continue;
+      }
+
+      const vector = bilinearSample(samples, lon, lat);
+      const magnitude = Math.sqrt(vector.u * vector.u + vector.v * vector.v);
+
+      buffer[idx] = encodeVectorComponent(vector.u, vectorRange);
+      buffer[idx + 1] = encodeVectorComponent(vector.v, vectorRange);
+      buffer[idx + 2] = encodeMagnitude(magnitude, vectorRange);
+      buffer[idx + 3] = vector.valid;
+    }
+  }
+
+  return buffer;
+}
+
+async function fetchRealWindData(): Promise<Float32Array> {
+  const samples = await fetchVectorSamples(
+    WEATHER_API_URL,
+    {
+      current: "wind_speed_10m,wind_direction_10m",
+      wind_speed_unit: "ms",
+      timezone: "GMT",
+      timeformat: "unixtime",
+      cell_selection: "nearest",
+    },
+    parseWindSample
+  );
+
+  return encodeInterpolatedField(samples, WIND_VECTOR_RANGE, () => true);
+}
+
+async function fetchRealOceanData(): Promise<Float32Array> {
+  const samples = await fetchVectorSamples(
+    MARINE_API_URL,
+    {
+      current: "ocean_current_velocity,ocean_current_direction",
+      length_unit: "metric",
+      timezone: "GMT",
+      timeformat: "unixtime",
+      cell_selection: "sea",
+    },
+    parseOceanSample
+  );
+
+  return encodeInterpolatedField(samples, OCEAN_VECTOR_RANGE, (lon, lat) => !isApproxLand(lon, lat) && lat <= 84);
 }
 
 function smoothNoise(lon: number, lat: number, time: number, seed: number): number {
@@ -277,9 +543,9 @@ function getOceanVector(
 // =============================================================================
 
 /**
- * Generate a smooth synthetic global wind field.
+ * Synthetic fallback used when the real wind-data request fails.
  */
-async function fetchWindData(): Promise<Float32Array> {
+function generateSyntheticWindData(): Float32Array {
   const buffer = new Float32Array(GRID_WIDTH * GRID_HEIGHT * 4);
 
   const time = Date.now() / 1000;
@@ -309,9 +575,9 @@ async function fetchWindData(): Promise<Float32Array> {
 // =============================================================================
 
 /**
- * Generate a smooth synthetic global ocean-current field.
+ * Synthetic fallback used when the real ocean-current request fails.
  */
-async function fetchOceanData(): Promise<Float32Array> {
+function generateSyntheticOceanData(): Float32Array {
   const buffer = new Float32Array(GRID_WIDTH * GRID_HEIGHT * 4);
 
   const time = Date.now() / 1000;
@@ -334,6 +600,24 @@ async function fetchOceanData(): Promise<Float32Array> {
   }
 
   return buffer;
+}
+
+async function fetchWindData(): Promise<Float32Array> {
+  try {
+    return await fetchRealWindData();
+  } catch (error) {
+    console.warn("[WeatherWorker] Real wind fetch failed, falling back to synthetic field", error);
+    return generateSyntheticWindData();
+  }
+}
+
+async function fetchOceanData(): Promise<Float32Array> {
+  try {
+    return await fetchRealOceanData();
+  } catch (error) {
+    console.warn("[WeatherWorker] Real ocean fetch failed, falling back to synthetic field", error);
+    return generateSyntheticOceanData();
+  }
 }
 
 // =============================================================================

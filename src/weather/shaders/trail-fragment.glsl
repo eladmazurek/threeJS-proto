@@ -28,10 +28,11 @@ void main() {
   float ageFade = 1.0 - smoothstep(0.8, 1.0, vAge);
   float youngFade = smoothstep(0.0, 0.08, vAge);
   float speedFade = mix(0.55, 1.0, speedNorm);
-  float alpha = trailAlpha * ageFade * youngFade * speedFade * uOpacity;
-  color *= mix(1.0, 1.16, speedNorm);
+  float visibilityBoost = isOcean ? mix(1.0, 1.12, speedNorm) : mix(1.45, 1.8, speedNorm);
+  float alpha = trailAlpha * ageFade * youngFade * speedFade * uOpacity * visibilityBoost;
+  color *= isOcean ? mix(1.0, 1.16, speedNorm) : mix(1.18, 1.38, speedNorm);
 
   if (alpha < 0.003) discard;
 
-  gl_FragColor = vec4(color, alpha);
+  gl_FragColor = vec4(color, min(alpha, 1.0));
 }
