@@ -13,6 +13,7 @@ import { state } from '../state';
 import { AIRPORTS } from "../data/airports";
 import { getCountryFlag } from "../utils/country-flags";
 import { MID_TO_COUNTRY } from "../data/mmsi-mid";
+import { aircraftFeedParams, satelliteFeedParams, aisFeedParams } from "../feeds/shared";
 import { unitCountParams } from "../simulation/demo-data";
 import { isSatelliteVisibleByFilters } from "../utils/satellite-visibility";
 
@@ -60,6 +61,11 @@ const formattedTypeCache = new Map<string, string>();
 let lastDisplayedPositionKey = "";
 let lastPositionChangeTime = Date.now();
 
+type ExternalUnitLink = {
+  title: string;
+  url: string;
+};
+
 function getCachedAircraftType(icaoTypeCode: string | undefined, fallback: string | undefined): string | undefined {
   if (!icaoTypeCode) return fallback;
 
@@ -82,6 +88,111 @@ function getCachedAircraftType(icaoTypeCode: string | undefined, fallback: strin
   return cached;
 }
 
+function setUnitHeaderLink(link: ExternalUnitLink | null): void {
+  if (!unitIdEl) return;
+
+  if (link) {
+    unitIdEl.dataset.linkUrl = link.url;
+    unitIdEl.style.cursor = "pointer";
+    unitIdEl.style.textDecoration = "underline";
+    unitIdEl.title = link.title;
+    if (unitLinkEl) {
+      unitLinkEl.dataset.linkUrl = link.url;
+      unitLinkEl.title = link.title;
+      unitLinkEl.classList.remove("hidden");
+    }
+    return;
+  }
+
+  delete unitIdEl.dataset.linkUrl;
+  unitIdEl.style.cursor = "default";
+  unitIdEl.style.textDecoration = "none";
+  unitIdEl.title = "";
+  if (unitLinkEl) {
+    delete unitLinkEl.dataset.linkUrl;
+    unitLinkEl.title = "";
+    unitLinkEl.classList.add("hidden");
+  }
+}
+
+function getShipExternalLink(unit: ShipState | undefined): ExternalUnitLink | null {
+  if (!unit || aisFeedParams.indicatorStatus === "simulated" || !unit.name || unit.name === "Unknown") {
+    return null;
+  }
+
+  const query = `Ship ${unit.name} MMSI ${unit.mmsi}`;
+  return {
+    title: "Click to search live ship info",
+    url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
+  };
+}
+
+function getAircraftExternalLink(unit: AircraftState | undefined): ExternalUnitLink | null {
+  if (!unit || aircraftFeedParams.indicatorStatus === "simulated" || !unit.callsign) {
+    return null;
+  }
+
+  const query = `${unit.callsign.trim()} flight`;
+  return {
+    title: "Click to search live flight info",
+    url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
+  };
+}
+
+function getSatelliteExternalLink(unit: SatelliteState | undefined): ExternalUnitLink | null {
+  if (!unit || satelliteFeedParams.indicatorStatus === "simulated" || !unit.name) {
+    return null;
+  }
+
+  const query = `satellite ${unit.name.trim()}`;
+  return {
+    title: "Click to search live satellite info",
+    url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
+  };
+}
+
+function getSelectedUnitExternalLink(): ExternalUnitLink | null {
+  if (!state.selectedUnit) return null;
+
+  if (state.selectedUnit.type === "ship") {
+    return getShipExternalLink(state.ships[state.selectedUnit.index]);
+  }
+  if (state.selectedUnit.type === "aircraft") {
+    return getAircraftExternalLink(state.aircraft[state.selectedUnit.index]);
+  }
+  if (state.selectedUnit.type === "satellite") {
+    return getSatelliteExternalLink(state.satellites[state.selectedUnit.index]);
+  }
+
+  return null;
+}
+
+function openExternalLink(link: ExternalUnitLink, event: MouseEvent): void {
+  const popup = window.open(link.url, "_blank", "noopener,noreferrer");
+  if (popup) return;
+
+  // Fallback for browsers that ignore window.open return values but still allow
+  // user-gesture initiated anchor navigation in a new tab.
+  const anchor = document.createElement("a");
+  anchor.href = link.url;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function selectElementText(element: HTMLElement): void {
+  const selection = window.getSelection();
+  if (!selection) return;
+
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 // =============================================================================
 // DOM MANAGEMENT
 // =============================================================================
@@ -90,6 +201,7 @@ function getCachedAircraftType(icaoTypeCode: string | undefined, fallback: strin
 let unitInfoPanel: HTMLElement | null = null;
 let unitTypeEl: HTMLElement | null = null;
 let unitIdEl: HTMLElement | null = null;
+let unitLinkEl: HTMLButtonElement | null = null;
 let unitStalenessEl: HTMLElement | null = null;
 let unitLatEl: HTMLElement | null = null;
 let unitLonEl: HTMLElement | null = null;
@@ -118,7 +230,22 @@ let droneVideo: HTMLVideoElement | null = null;
 function getDomElements() {
     unitInfoPanel = document.getElementById("unit-info");
     unitTypeEl = document.getElementById("unit-type");
-    unitIdEl = document.getElementById("unit-id");
+    const unitIdNode = document.getElementById("unit-id");
+    if (unitIdNode instanceof HTMLSpanElement) {
+      unitIdEl = unitIdNode;
+    } else if (unitIdNode) {
+      // HMR can leave the temporary anchor-based header in place; restore plain text.
+      const label = document.createElement("span");
+      label.id = "unit-id";
+      label.className = unitIdNode.className || "unit-info-id";
+      label.textContent = unitIdNode.textContent ?? "";
+      unitIdNode.replaceWith(label);
+      unitIdEl = label;
+    } else {
+      unitIdEl = null;
+    }
+    const unitLinkNode = document.getElementById("unit-link");
+    unitLinkEl = unitLinkNode instanceof HTMLButtonElement ? unitLinkNode : null;
     unitStalenessEl = document.getElementById("unit-staleness");
     
     // Self-healing: Create staleness element if missing (fixes HMR/hot-reload issues)
@@ -316,16 +443,7 @@ export function updateSelectedUnitInfo() {
           unitTypeEl.textContent = "SHIP";
           unitTypeEl.className = `unit-info-type ${typeClass}`;
           unitIdEl.textContent = unitData.name || `#${unitData.mmsi}`;
-          
-          if (unitData.name && unitData.name !== "Unknown") {
-              unitIdEl.style.cursor = "pointer";
-              unitIdEl.style.textDecoration = "underline";
-              unitIdEl.title = "Click to search ship info";
-          } else {
-              unitIdEl.style.cursor = "default";
-              unitIdEl.style.textDecoration = "none";
-              unitIdEl.title = "";
-          }
+          setUnitHeaderLink(getShipExternalLink(unitData));
       }
 
       // Country row
@@ -397,6 +515,12 @@ export function updateSelectedUnitInfo() {
       }
 
       const typeDisplay = getCachedAircraftType(unitData.icaoTypeCode, unitData.aircraftType);
+      if (unitTypeEl && unitIdEl) {
+          unitTypeEl.textContent = "";
+          unitTypeEl.className = `unit-info-type ${typeClass}`;
+          unitIdEl.textContent = unitData.callsign;
+          setUnitHeaderLink(getAircraftExternalLink(unitData));
+      }
       if (typeDisplay) {
         if (unitRow6) unitRow6.style.display = "";
         safeSetText(unitLabel6, "TYPE");
@@ -428,6 +552,12 @@ export function updateSelectedUnitInfo() {
         safeSetText(unitHdgEl, `${unitData.heading.toFixed(0)}°`);
         safeSetText(unitSpdEl, speed);
         safeSetText(unitAltEl, altitude);
+        if (unitTypeEl && unitIdEl) {
+            unitTypeEl.textContent = "SATELLITE";
+            unitTypeEl.className = `unit-info-type ${typeClass}`;
+            unitIdEl.textContent = unitData.name;
+            setUnitHeaderLink(getSatelliteExternalLink(unitData));
+        }
         
         if (unitRow6) unitRow6.style.display = "none";
         if (unitStalenessEl) unitStalenessEl.textContent = "";
@@ -453,6 +583,7 @@ export function updateSelectedUnitInfo() {
         safeSetText(unitHdgEl, `${unitData.heading.toFixed(0)}°`);
         safeSetText(unitSpdEl, speed);
         safeSetText(unitAltEl, altitude);
+        setUnitHeaderLink(null);
         
         if (droneFeedCoords) droneFeedCoords.textContent = `TGT: ${unitData.targetLat.toFixed(4)}° ${unitData.targetLon.toFixed(4)}°`;
         if (unitRow6) unitRow6.style.display = "none";
@@ -475,6 +606,7 @@ export function updateSelectedUnitInfo() {
         safeSetText(unitHdgEl, `${airport.lon.toFixed(4)}°`);
         safeSetText(unitSpdEl, "—");
         safeSetText(unitAltEl, "INTL");
+        setUnitHeaderLink(null);
         
         if (unitRow6) unitRow6.style.display = "none";
         if (unitStalenessEl) unitStalenessEl.textContent = "";
@@ -575,16 +707,30 @@ export function initSelectionHandling(camera: THREE.Camera, canvas: HTMLCanvasEl
     unitCloseBtn?.addEventListener("click", () => {
         deselectUnit();
     });
+    unitIdEl?.addEventListener("contextmenu", () => {
+        if (!unitIdEl || !unitIdEl.textContent?.trim()) return;
+        selectElementText(unitIdEl);
+    });
+    unitIdEl?.addEventListener("click", (event) => {
+        const link = getSelectedUnitExternalLink();
+        if (!link) return;
 
-    // Search handler for Ship Name (OSINT link) attached to the Header ID
-    unitIdEl?.addEventListener("click", () => {
-        if (state.selectedUnit && state.selectedUnit.type === "ship") {
-            const unit = state.ships[state.selectedUnit.index];
-            if (unit && unit.name && unit.name !== "Unknown") {
-                const query = `Ship ${unit.name} MMSI ${unit.mmsi}`;
-                const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-                window.open(url, "_blank");
-            }
+        const mouseEvent = event as MouseEvent;
+        if (mouseEvent.button !== 0 || mouseEvent.metaKey || mouseEvent.ctrlKey || mouseEvent.shiftKey || mouseEvent.altKey) {
+            return;
         }
+
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
+            return;
+        }
+
+        openExternalLink(link, mouseEvent);
+    });
+    unitLinkEl?.addEventListener("click", (event) => {
+        const link = getSelectedUnitExternalLink();
+        if (!link) return;
+
+        openExternalLink(link, event as MouseEvent);
     });
 }
