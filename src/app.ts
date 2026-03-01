@@ -34,6 +34,8 @@ import {
   updateTilesAttribution,
   getTilesPreloadAltitude,
   getMinCameraAltitude,
+  updateTilesRenderer,
+  setTransitionAltitude,
   tilesRenderer,
   tilesParams,
   setTilesDependencies,
@@ -318,7 +320,7 @@ function main() {
     tiltPresets,
     earthRotationParams,
     tilesParams,
-    setTransitionAltitude: () => {},
+    setTransitionAltitude,
     tilesRenderer: null,
     trailParams,
     updateTrailAttributes: () => {},
@@ -461,7 +463,7 @@ function main() {
       // Always update tiles when forceShow is true, otherwise only below preload altitude
       if (tilesParams.forceShow || altitude < getTilesPreloadAltitude()) {
         camera.updateMatrixWorld();
-        tilesRenderer.update();
+        updateTilesRenderer();
       }
     }
 

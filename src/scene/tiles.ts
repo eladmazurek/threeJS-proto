@@ -7,7 +7,8 @@
 
 import * as THREE from "three";
 import { TilesRenderer } from '3d-tiles-renderer';
-import { GoogleCloudAuthPlugin } from '3d-tiles-renderer/plugins';
+import { GLTFExtensionsPlugin, GoogleCloudAuthPlugin } from '3d-tiles-renderer/plugins';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { EARTH_RADIUS, TILES_SCALE_FACTOR, TILES_TRANSITION_RANGE } from "../constants";
 import { state } from "../state";
 import type { TilesParams } from "../types";
@@ -31,6 +32,22 @@ export let tilesRenderer: TilesRenderer | null = null;
 
 /** Parent group for Y rotation (syncs with Earth's rotation) */
 export let tilesGroup: THREE.Group | null = null;
+
+function hasVisibleTileContent(): boolean {
+  if (!tilesRenderer) return false;
+  return tilesRenderer.visibleTiles.size > 0 || tilesRenderer.stats.visible > 0;
+}
+
+export function updateTilesRenderer(): void {
+  tilesRenderer?.update();
+}
+
+function createDracoLoader(): DRACOLoader {
+  const dracoLoader = new DRACOLoader();
+  dracoLoader.setDecoderPath(`${import.meta.env.BASE_URL}draco/`);
+  dracoLoader.preload();
+  return dracoLoader;
+}
 
 // Dependencies that must be set via setTilesDependencies
 let earthMesh: THREE.Mesh | null = null;
@@ -97,9 +114,15 @@ export function initGoogleTiles(
   }
 
   cameraRef = camera;
+  state.tilesLoaded = false;
 
   // Create tiles renderer
   tilesRenderer = new TilesRenderer();
+
+  // Google tiles are served as Draco-compressed glTF payloads.
+  tilesRenderer.registerPlugin(new GLTFExtensionsPlugin({
+    dracoLoader: createDracoLoader(),
+  }));
 
   // Register Google authentication plugin for session management
   tilesRenderer.registerPlugin(new GoogleCloudAuthPlugin({
@@ -163,18 +186,19 @@ export function initGoogleTiles(
   // Initially hidden until transition threshold
   tilesGroup.visible = false;
 
-  // Listen for root tileset load
-  tilesRenderer.addEventListener('load-tileset', () => {
+  const handleTilesetLoaded = () => {
     state.tilesLoaded = true;
-    console.log('Google 3D Tiles root tileset loaded');
-  });
+  };
+
+  // Listen for root tileset load
+  tilesRenderer.addEventListener('load-tileset', handleTilesetLoaded);
+  tilesRenderer.addEventListener('load-root-tileset', handleTilesetLoaded);
 
   // Error handling
-  tilesRenderer.addEventListener('load-error', (error) => {
-    console.error('Google 3D Tiles load error:', error);
+  tilesRenderer.addEventListener('load-error', (event: any) => {
+    const err = event.error ?? event;
+    console.error('Google 3D Tiles load error:', err, event.url ?? '(unknown)');
   });
-
-  console.log('Google 3D Tiles initialized with ECEF->Y-up transformation');
 }
 
 // =============================================================================
@@ -227,7 +251,9 @@ export function updateTilesCrossfade(): void {
 
   // When forceShow is true, instantly show tiles (factor = 1)
   // Otherwise use altitude-based transition
-  const factor = tilesParams.forceShow ? 1.0 : getTilesTransitionFactor();
+  const requestedFactor = tilesParams.forceShow ? 1.0 : getTilesTransitionFactor();
+  const hasVisibleContent = hasVisibleTileContent();
+  const factor = requestedFactor > 0 && hasVisibleContent ? requestedFactor : 0.0;
 
   // Globe texture opacity (inverse of transition)
   if (earthMaterial) {
@@ -235,7 +261,7 @@ export function updateTilesCrossfade(): void {
   }
 
   // Tiles visibility
-  if (factor > 0 && state.tilesLoaded) {
+  if (factor > 0) {
     if (tilesGroup) {
       tilesGroup.visible = true;
 
@@ -250,7 +276,7 @@ export function updateTilesCrossfade(): void {
     if (tilesGroup) tilesGroup.visible = false;
   }
 
-  // Hide globe mesh completely when tiles are fully visible (optimization)
+  // Keep the globe visible until actual tile content is on screen.
   if (earthMesh) {
     earthMesh.visible = factor < 1.0;
   }
