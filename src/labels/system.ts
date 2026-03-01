@@ -21,7 +21,6 @@ import { MAX_CANDIDATES, EARTH_RADIUS, SHIP_ALTITUDE, AIRCRAFT_ALTITUDE } from '
 import { getCameraLatLon } from '../utils/coordinates';
 import { getH3Worker } from '../scene/h3-grid';
 import { unitCountParams } from '../simulation/demo-data';
-import { satelliteFeedParams, aisFeedParams } from '../feeds/shared'; // Added
 import { isSatelliteVisibleByFilters } from '../utils/satellite-visibility';
 
 // Pre-allocate buffers for this many labels (runtime maxLabels is capped to this)
@@ -195,10 +194,10 @@ function requestVisibleUnits(camera, earthRotation) {
         centerLat: lat,
         centerLon: lon,
         ringSize,
-        includeShips: labelParams.showShipLabels && unitCountParams.showShips,
-        includeAircraft: labelParams.showAircraftLabels && unitCountParams.showAircraft,
-        includeDrones: labelParams.showDroneLabels && unitCountParams.showDrones,
-        includeSatellites: labelParams.showSatelliteLabels && unitCountParams.showSatellites,
+        includeShips: labelParams.showShipLabels && state.unitCounts.showShips,
+        includeAircraft: labelParams.showAircraftLabels && state.unitCounts.showAircraft,
+        includeDrones: labelParams.showDroneLabels && state.unitCounts.showDrones,
+        includeSatellites: labelParams.showSatelliteLabels && state.unitCounts.showSatellites,
       }
     });
     labelVisibility.pendingQuery = true;
@@ -545,7 +544,7 @@ export function updateLabelAssignments(camera) {
 
     const candidates = [];
 
-    if (labelParams.showShipLabels && unitCountParams.showShips) {
+    if (labelParams.showShipLabels && state.unitCounts.showShips) {
         const { showHighSpeedShips, showExtendedDataShips } = unitCountParams;
         appendVisibleLabelCandidates(
             candidates,
@@ -568,31 +567,28 @@ export function updateLabelAssignments(camera) {
         );
     }
 
-    if (labelParams.showAircraftLabels && unitCountParams.showAircraft) {
+    if (labelParams.showAircraftLabels && state.unitCounts.showAircraft) {
         appendVisibleLabelCandidates(candidates, aircraftIndices, 1, selectedTypeInt, selectedIndex, null, camera, state.earthRotation.y);
     }
 
-    if (labelParams.showDroneLabels && unitCountParams.showDrones) {
+    if (labelParams.showDroneLabels && state.unitCounts.showDrones) {
         appendVisibleLabelCandidates(candidates, droneIndices, 2, selectedTypeInt, selectedIndex, null, camera, state.earthRotation.y);
     }
 
-    if (labelParams.showSatelliteLabels && unitCountParams.showSatellites) {
-        const hideSimSats = (aisFeedParams.mode === "live" && satelliteFeedParams.mode === "simulated");
-        if (!hideSimSats) {
-            appendVisibleLabelCandidates(
-                candidates,
-                satelliteIndices,
-                3,
-                selectedTypeInt,
-                selectedIndex,
-                (unitIndex) => {
-                    const unit = state.satellites[unitIndex];
-                    return !!unit && isSatelliteVisibleByFilters(unit, unitCountParams);
-                },
-                camera,
-                state.earthRotation.y
-            );
-        }
+    if (labelParams.showSatelliteLabels && state.unitCounts.showSatellites) {
+        appendVisibleLabelCandidates(
+            candidates,
+            satelliteIndices,
+            3,
+            selectedTypeInt,
+            selectedIndex,
+            (unitIndex) => {
+                const unit = state.satellites[unitIndex];
+                return !!unit && isSatelliteVisibleByFilters(unit, unitCountParams);
+            },
+            camera,
+            state.earthRotation.y
+        );
     }
 
     const selectedCandidates = selectDistributedCandidates(candidates, generalLabelLimit);

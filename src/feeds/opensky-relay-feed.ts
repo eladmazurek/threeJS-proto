@@ -66,6 +66,11 @@ const CATEGORY_MAP: Record<number, string> = {
   17: "Service Vehicle", 18: "Obstacle", 19: "Cluster Obstacle", 20: "Line Obstacle",
 };
 
+const MAX_SOURCE_POSITION_LAG_SECONDS = 15;
+const MAX_LOCAL_EXTRAPOLATION_SECONDS = 8;
+const POSITION_CORRECTION_RATE = 8;
+const ALTITUDE_CORRECTION_RATE = 6;
+
 // =============================================================================
 // INTERPOLATION STATE
 // =============================================================================
@@ -263,7 +268,7 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
       const timePosition = (state[OS.TIME_POSITION] as number) || nowUnix;
 
       // Project position forward to current time
-      const lagSeconds = Math.max(0, nowUnix - timePosition);
+      const lagSeconds = Math.min(Math.max(0, nowUnix - timePosition), MAX_SOURCE_POSITION_LAG_SECONDS);
       const speedKmh = groundSpeedKnots * KNOTS_TO_KMH;
       const distDeg = (speedKmh * lagSeconds / 3600) * DEG_PER_KM;
 
@@ -397,49 +402,56 @@ export class OpenSkyRelayFeed extends BaseFeed<AircraftUpdate, AircraftState> {
     const now = performance.now();
     const deltaTime = (now - this._lastInterpolationTime) / 1000;
     this._lastInterpolationTime = now;
+    const nowUnix = Date.now() / 1000;
 
     const KNOTS_TO_KMH = 1.852;
     const DEG_PER_KM = 1 / 111.12;
-    const CORRECTION_FACTOR = 0.05;
 
     let anyUpdated = false;
 
     for (const aircraft of this._units.values()) {
-      const speedKmh = aircraft.groundSpeed * KNOTS_TO_KMH * this._config.interpolationSpeed;
-      const distDeg = (speedKmh * deltaTime / 3600) * DEG_PER_KM;
+      const secondsSinceLastUpdate = Math.min(
+        Math.max(0, nowUnix - (aircraft.lastUpdate ?? nowUnix)),
+        MAX_LOCAL_EXTRAPOLATION_SECONDS,
+      );
+
+      let targetLat = aircraft.apiLat;
+      let targetLon = aircraft.apiLon;
+      const speedKmh = aircraft.apiGroundSpeed * KNOTS_TO_KMH * this._config.interpolationSpeed;
+      const distDeg = (speedKmh * secondsSinceLastUpdate / 3600) * DEG_PER_KM;
 
       if (distDeg > 0) {
-        const dLat = aircraft.cosHeading * distDeg;
-        const dLon = (aircraft.sinHeading * distDeg) / Math.max(0.01, Math.abs(aircraft.cosLat));
+        targetLat += aircraft.cosHeading * distDeg;
+        targetLat = Math.max(-85, Math.min(85, targetLat));
+        targetLon += (aircraft.sinHeading * distDeg) / Math.max(0.01, Math.abs(aircraft.cosLat));
 
-        aircraft.lat += dLat;
-        aircraft.lon += dLon;
-        aircraft.apiLat += dLat;
-        aircraft.apiLon += dLon;
-
-        if (aircraft.lon > 180) aircraft.lon -= 360;
-        else if (aircraft.lon < -180) aircraft.lon += 360;
-        if (aircraft.apiLon > 180) aircraft.apiLon -= 360;
-        else if (aircraft.apiLon < -180) aircraft.apiLon += 360;
-
-        anyUpdated = true;
+        if (targetLon > 180) targetLon -= 360;
+        else if (targetLon < -180) targetLon += 360;
       }
 
-      const latError = aircraft.apiLat - aircraft.lat;
-      let lonError = aircraft.apiLon - aircraft.lon;
+      const latError = targetLat - aircraft.lat;
+      let lonError = targetLon - aircraft.lon;
       if (lonError > 180) lonError -= 360;
       if (lonError < -180) lonError += 360;
       const altError = aircraft.apiAltitude - aircraft.altitude;
+      const positionCorrection = 1 - Math.exp(-POSITION_CORRECTION_RATE * deltaTime);
+      const altitudeCorrection = 1 - Math.exp(-ALTITUDE_CORRECTION_RATE * deltaTime);
 
       if (Math.abs(latError) > 1.0 || Math.abs(lonError) > 1.0) {
-        aircraft.lat = aircraft.apiLat;
-        aircraft.lon = aircraft.apiLon;
+        aircraft.lat = targetLat;
+        aircraft.lon = targetLon;
+        aircraft.altitude = aircraft.apiAltitude;
+        anyUpdated = true;
       } else {
-        aircraft.lat += latError * CORRECTION_FACTOR;
-        aircraft.lon += lonError * CORRECTION_FACTOR;
-        aircraft.altitude += altError * CORRECTION_FACTOR;
+        aircraft.lat += latError * positionCorrection;
+        aircraft.lon += lonError * positionCorrection;
+        aircraft.altitude += altError * altitudeCorrection;
 
-        if (Math.abs(latError) > 0.000001 || Math.abs(lonError) > 0.000001) {
+        if (
+          Math.abs(latError) > 0.000001 ||
+          Math.abs(lonError) > 0.000001 ||
+          Math.abs(altError) > 1.0
+        ) {
           anyUpdated = true;
         }
       }

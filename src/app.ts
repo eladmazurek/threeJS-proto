@@ -79,6 +79,7 @@ import {
   initAircraftFeedController, 
   startAircraftFeed, 
   syncLiveFeedState, 
+  aircraftFeedParams,
   initSatelliteFeedController, 
   startSatelliteFeed, 
   syncSatelliteFeedState,
@@ -184,7 +185,13 @@ function main() {
     getShipSimState: () => state.ships,
     getAircraftSimState: () => state.aircraft,
     getSatelliteSimState: () => state.satellites,
-    getUnitCountParams: () => unitCountParams,
+    getUnitCountParams: () => ({
+      ...unitCountParams,
+      showShips: state.unitCounts.showShips,
+      showAircraft: state.unitCounts.showAircraft,
+      showSatellites: state.unitCounts.showSatellites,
+      showDrones: state.unitCounts.showDrones,
+    }),
   });
   initH3ClickHandler();
 
@@ -195,21 +202,59 @@ function main() {
   generateDemoData();
   generateDroneData();
 
+  const isAnyLiveFeedActive = () =>
+    aircraftFeedParams.mode === "live" ||
+    satelliteFeedParams.mode === "live" ||
+    aisFeedParams.mode === "live";
+
+  const applyEffectiveUnitVisibility = () => {
+    const hideSimulatedUnits = isAnyLiveFeedActive();
+    const showShips = unitCountParams.showShips && (!hideSimulatedUnits || aisFeedParams.mode === "live");
+    const showAircraft = unitCountParams.showAircraft && (!hideSimulatedUnits || aircraftFeedParams.mode === "live");
+    const showSatellites = unitCountParams.showSatellites && (!hideSimulatedUnits || satelliteFeedParams.mode === "live");
+    const showDrones = unitCountParams.showDrones && !hideSimulatedUnits;
+    const visibilityChanged =
+      state.unitCounts.showShips !== showShips ||
+      state.unitCounts.showAircraft !== showAircraft ||
+      state.unitCounts.showSatellites !== showSatellites ||
+      state.unitCounts.showDrones !== showDrones;
+
+    state.unitCounts.showShips = showShips;
+    state.unitCounts.showAircraft = showAircraft;
+    state.unitCounts.showSatellites = showSatellites;
+    state.unitCounts.showDrones = showDrones;
+
+    if (visibilityChanged) {
+      state.h3.lastResolution = -1;
+    }
+
+    const trafficVisible = !h3Params.enabled;
+    shipMesh.visible = trafficVisible && showShips;
+    aircraftMesh.visible = trafficVisible && showAircraft;
+    satelliteMesh.visible = trafficVisible && showSatellites;
+    droneMesh.visible = trafficVisible && showDrones;
+    shipTrailRefs.mesh.visible = trafficVisible && showShips && trailParams.enabled && trailParams.shipTrails;
+    aircraftTrailRefs.mesh.visible = trafficVisible && showAircraft && trailParams.enabled && trailParams.aircraftTrails;
+
+    const selectedType = state.selectedUnit?.type;
+    const selectedHidden =
+      (selectedType === "ship" && !showShips) ||
+      (selectedType === "aircraft" && !showAircraft) ||
+      (selectedType === "satellite" && !showSatellites) ||
+      (selectedType === "drone" && !showDrones);
+
+    if (selectedHidden) {
+      deselectUnit();
+    }
+  };
+
   // Initialize aircraft feed controller (for switching between simulated and live data)
   initAircraftFeedController({
     camera,
     getEarthRotation: () => earthRefs.mesh.rotation.y,
     updateAircraftAttributes,
-    // Show/hide simulated-only units when switching feed modes
-    onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
-      // Drones are simulated-only
-      droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
-      
-      // Also hide labels for simulated-only units
-      labelParams.showDroneLabels = showSimulatedUnits;
-      
-      // Update state.unitCounts so click detection respects visibility
-      state.unitCounts.showDrones = showSimulatedUnits && unitCountParams.showDrones;
+    onUnitVisibilityChange: () => {
+      applyEffectiveUnitVisibility();
     },
   });
   // Start with simulated feed (default)
@@ -218,18 +263,8 @@ function main() {
   // Initialize satellite feed controller
   initSatelliteFeedController({
     updateSatelliteAttributes,
-    onUnitVisibilityChange: (showSimulatedUnits: boolean) => {
-      // Satellites switching modes - restore visibility based on user toggle
-      // (May have been hidden by AIS controller when sats were simulated)
-      satelliteMesh.visible = unitCountParams.showSatellites;
-
-      // Drones are simulated-only
-      droneMesh.visible = showSimulatedUnits && unitCountParams.showDrones;
-
-      // Labels for drones
-      labelParams.showDroneLabels = showSimulatedUnits;
-      // Unit counts for click detection
-      state.unitCounts.showDrones = showSimulatedUnits && unitCountParams.showDrones;
+    onUnitVisibilityChange: () => {
+      applyEffectiveUnitVisibility();
     },
   });
   startSatelliteFeed();
@@ -237,35 +272,12 @@ function main() {
   // Initialize AIS feed controller
   initAISFeedController({
     updateShipAttributes,
-    onUnitVisibilityChange: (showSimulated: boolean) => {
-      // Drones are simulated-only
-      droneMesh.visible = showSimulated && unitCountParams.showDrones;
-      // Labels for drones
-      labelParams.showDroneLabels = showSimulated;
-      // Unit counts
-      state.unitCounts.showDrones = showSimulated && unitCountParams.showDrones;
-      
-      // HIDE SIMULATED SATELLITES when Live AIS is on (per user request)
-      // If we are in "Live AIS" mode (showSimulated = false), and Satellites are "Simulated", hide them.
-      if (!showSimulated && satelliteFeedParams.mode === "simulated") {
-          satelliteMesh.visible = false;
-          // Note: We don't change state.unitCounts.showSatellites because that would break the GUI toggle state.
-          // We just hide the mesh temporarily.
-          // Ideally, we should also hide labels?
-          // labelParams.showSatelliteLabels = false; // Maybe too aggressive?
-      } else {
-          // Restore visibility based on params
-          satelliteMesh.visible = unitCountParams.showSatellites;
-      }
+    onUnitVisibilityChange: () => {
+      applyEffectiveUnitVisibility();
     },
   });
   startAISFeed();
-
-  // Force check visibility state after initialization
-  // If AIS is live on startup, ensure simulated satellites are hidden
-  if (aisFeedParams.mode === "live" && satelliteFeedParams.mode === "simulated") {
-      satelliteMesh.visible = false;
-  }
+  applyEffectiveUnitVisibility();
 
   const trailHistory = initTrailHistory(state.ships.length, state.aircraft.length);
   state.trails = trailHistory;
@@ -426,6 +438,7 @@ function main() {
     syncLiveFeedState();
     syncSatelliteFeedState();
     syncAISFeedState(); // Added
+    applyEffectiveUnitVisibility();
     t1 = performance.now();
     debugTiming.motion += t1 - t0;
     t0 = t1;
@@ -449,22 +462,15 @@ function main() {
 
     controls.update();
 
-    // Determine effective counts based on visibility rules (Hide Sim if AIS Live)
-    const aisIsLive = aisFeedParams.mode === "live";
-    const satIsSim = satelliteFeedParams.mode === "simulated";
-    const visibleSatCount = (aisIsLive && satIsSim) ? 0 : state.satellites.length;
-    // Drones are always simulated, so hide if AIS is live
-    const visibleDroneCount = aisIsLive ? 0 : state.drones.length;
-
     updateTelemetry({
       cameraDistance,
       cameraPosition: camera.position,
       earth: earthRefs.mesh,
       unitCounts: {
-        ships: getVisibleShipCount(),
-        aircraft: state.aircraft.length,
-        satellites: visibleSatCount,
-        drones: visibleDroneCount,
+        ships: state.unitCounts.showShips ? getVisibleShipCount() : 0,
+        aircraft: state.unitCounts.showAircraft ? state.aircraft.length : 0,
+        satellites: state.unitCounts.showSatellites ? state.satellites.length : 0,
+        drones: state.unitCounts.showDrones ? state.drones.length : 0,
         showShips: state.unitCounts.showShips,
         showAircraft: state.unitCounts.showAircraft,
         showSatellites: state.unitCounts.showSatellites,
