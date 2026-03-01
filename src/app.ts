@@ -382,6 +382,7 @@ function main() {
     droneMesh.rotation.y = earthRotY;
     shipTrailRefs.mesh.rotation.y = earthRotY;
     aircraftTrailRefs.mesh.rotation.y = earthRotY;
+    realWeatherRefs.particleMesh.rotation.y = earthRotY;
     setOrbitLineRotation(earthRotY);
 
     // Update real weather system (GIBS + particle flow)

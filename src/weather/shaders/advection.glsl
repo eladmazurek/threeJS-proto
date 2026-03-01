@@ -13,15 +13,20 @@
  */
 
 uniform sampler2D uParticleState;
-uniform sampler2D uVectorField;
+uniform sampler2D uWindVectorField;
+uniform sampler2D uOceanVectorField;
 uniform float uDeltaTime;
 uniform float uSpeedScale;
 uniform float uMaxAge;
 uniform float uRespawnRate;
 uniform float uTime;
-uniform vec2 uFieldScale;
+uniform vec2 uWindFieldScale;
+uniform vec2 uOceanFieldScale;
+uniform float uWindMotionScale;
+uniform float uOceanMotionScale;
 uniform float uTrailPositions;
 uniform float uTextureWidth;
+uniform int uFlowMode;
 
 varying vec2 vUv;
 
@@ -32,6 +37,18 @@ float rand(vec2 co) {
 
 float rand2(vec2 co, float seed) {
   return fract(sin(dot(co + seed, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+vec4 decodeWindField(vec2 uv) {
+  vec4 encoded = texture2D(uWindVectorField, uv);
+  vec2 velocity = (encoded.rg - 0.5) * 2.0 * uWindFieldScale;
+  return vec4(velocity, encoded.b, encoded.a);
+}
+
+vec4 decodeOceanField(vec2 uv) {
+  vec4 encoded = texture2D(uOceanVectorField, uv);
+  vec2 velocity = (encoded.rg - 0.5) * 2.0 * uOceanFieldScale;
+  return vec4(velocity, encoded.b, encoded.a);
 }
 
 void main() {
@@ -53,29 +70,39 @@ void main() {
     float age = state.b;
     float speed = state.a;
 
-    // Sample vector field at particle position
     vec2 fieldUV = vec2(lon, lat);
-    vec4 velocity = texture2D(uVectorField, fieldUV);
+    vec4 windField = decodeWindField(fieldUV);
+    vec4 oceanField = decodeOceanField(fieldUV);
 
-    // Decode velocity (stored as 0-1, centered at 0.5)
-    float u = (velocity.r - 0.5) * 2.0 * uFieldScale.x;
-    float v = (velocity.g - 0.5) * 2.0 * uFieldScale.y;
+    vec2 velocity = windField.xy;
+    float currentSpeed = windField.z;
+    float validData = windField.w;
+    float fieldKind = 1.0;
+    float motionScale = uWindMotionScale;
 
-    // Current speed magnitude (for coloring)
-    float currentSpeed = velocity.b;
-
-    // Check if this is valid data
-    float validData = velocity.a;
+    if (uFlowMode == 1) {
+      velocity = oceanField.xy;
+      currentSpeed = oceanField.z;
+      validData = oceanField.w;
+      fieldKind = -1.0;
+      motionScale = uOceanMotionScale;
+    } else if (uFlowMode == 2 && oceanField.w > 0.5) {
+      velocity = oceanField.xy;
+      currentSpeed = oceanField.z;
+      validData = 1.0;
+      fieldKind = -1.0;
+      motionScale = uOceanMotionScale;
+    }
 
     // Only advect if we have valid data
     if (validData > 0.5) {
       // Adjust for latitude (longitude degrees shrink toward poles)
       float latRad = (lat - 0.5) * 3.14159;
-      float lonScale = cos(latRad);
+      float lonScale = max(cos(latRad), 0.2);
 
       // Degrees per second
-      float degPerSecU = u * uSpeedScale * 0.01 / max(lonScale, 0.1);
-      float degPerSecV = v * uSpeedScale * 0.01;
+      float degPerSecU = velocity.x * uSpeedScale * motionScale / lonScale;
+      float degPerSecV = velocity.y * uSpeedScale * motionScale;
 
       // Update position
       lon += degPerSecU * uDeltaTime / 360.0;
@@ -104,20 +131,46 @@ void main() {
       shouldRespawn = true;
     }
 
-    // Respawn if in invalid area
-    if (validData < 0.5 && rand(vUv + vec2(uTime)) < 0.1) {
+    // Ocean-only mode must stay inside valid water cells.
+    if (uFlowMode == 1 && validData < 0.5) {
       shouldRespawn = true;
     }
 
     // Respawn particle
     if (shouldRespawn) {
-      lon = rand2(vUv, uTime);
-      lat = rand2(vUv, uTime + 1.0) * 0.9 + 0.05; // Avoid poles
+      bool foundValidSpawn = false;
+
+      for (int attempt = 0; attempt < 6; attempt++) {
+        float seed = uTime * 0.37 + float(attempt) * 11.13;
+        float candidateLon = rand2(vUv + vec2(float(attempt), 0.0), seed);
+        float candidateLat = rand2(vUv + vec2(0.0, float(attempt)), seed + 19.0) * 0.86 + 0.07;
+
+        if (uFlowMode != 1) {
+          lon = candidateLon;
+          lat = candidateLat;
+          foundValidSpawn = true;
+          break;
+        }
+
+        vec4 oceanCandidate = texture2D(uOceanVectorField, vec2(candidateLon, candidateLat));
+        if (oceanCandidate.a > 0.5) {
+          lon = candidateLon;
+          lat = candidateLat;
+          foundValidSpawn = true;
+          break;
+        }
+      }
+
+      if (!foundValidSpawn) {
+        lon = rand2(vUv, uTime);
+        lat = rand2(vUv, uTime + 1.0) * 0.86 + 0.07;
+      }
+
       age = rand2(vUv, uTime + 2.0) * 0.1;
       currentSpeed = 0.0;
     }
 
-    gl_FragColor = vec4(lon, lat, age, currentSpeed);
+    gl_FragColor = vec4(lon, lat, age, currentSpeed * fieldKind);
 
   } else {
     // =========================================================================

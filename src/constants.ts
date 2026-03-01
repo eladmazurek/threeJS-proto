@@ -186,6 +186,12 @@ export const PARTICLE_ALTITUDE = 0.004;
 export const VECTOR_FIELD_WIDTH = 360;
 export const VECTOR_FIELD_HEIGHT = 180;
 
+/** Encoded velocity range for wind vectors (degrees/second proxy) */
+export const WIND_VECTOR_RANGE = 32;
+
+/** Encoded velocity range for ocean current vectors */
+export const OCEAN_VECTOR_RANGE = 2.5;
+
 /** GIBS overlay altitude (same as weather) */
 export const GIBS_ALTITUDE = 0.006;
 

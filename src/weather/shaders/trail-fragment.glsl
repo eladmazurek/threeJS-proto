@@ -4,9 +4,10 @@
  * Colors trails based on speed and fades along trail length.
  */
 
-uniform vec3 uColorSlow;
-uniform vec3 uColorFast;
-uniform float uMaxSpeed;
+uniform vec3 uWindColorSlow;
+uniform vec3 uWindColorFast;
+uniform vec3 uOceanColorSlow;
+uniform vec3 uOceanColorFast;
 uniform float uOpacity;
 uniform float uMaxAge;
 
@@ -15,28 +16,22 @@ varying float vSpeed;
 varying float vTrailFade;
 
 void main() {
-  // Color based on speed
-  float speedNorm = clamp(vSpeed / uMaxSpeed, 0.0, 1.0);
-  vec3 color = mix(uColorSlow, uColorFast, speedNorm);
+  float encodedSpeed = abs(vSpeed);
+  float speedNorm = clamp(encodedSpeed, 0.0, 1.0);
+  bool isOcean = vSpeed < 0.0;
 
-  // Fade based on trail position (head = bright, tail = faded)
-  // Use sqrt for less aggressive fade
-  float trailAlpha = sqrt(vTrailFade);
+  vec3 colorSlow = isOcean ? uOceanColorSlow : uWindColorSlow;
+  vec3 colorFast = isOcean ? uOceanColorFast : uWindColorFast;
+  vec3 color = mix(colorSlow, colorFast, pow(speedNorm, 0.85));
 
-  // Fade based on particle age - less aggressive
+  float trailAlpha = pow(vTrailFade, 0.55);
   float ageFade = 1.0 - smoothstep(0.8, 1.0, vAge);
+  float youngFade = smoothstep(0.0, 0.08, vAge);
+  float speedFade = mix(0.55, 1.0, speedNorm);
+  float alpha = trailAlpha * ageFade * youngFade * speedFade * uOpacity;
+  color *= mix(1.0, 1.16, speedNorm);
 
-  // Don't show very young particles - fade in as trail builds
-  float youngFade = smoothstep(0.0, 0.15, vAge);
+  if (alpha < 0.003) discard;
 
-  // Combine all fades - boost overall brightness
-  float alpha = trailAlpha * ageFade * youngFade * uOpacity * 1.5;
-
-  // Boost brightness for all particles
-  color = color * 1.2 + vec3(0.1);
-
-  // Discard nearly transparent fragments
-  if (alpha < 0.005) discard;
-
-  gl_FragColor = vec4(color, min(alpha, 1.0));
+  gl_FragColor = vec4(color, alpha);
 }

@@ -8,6 +8,8 @@
 import * as THREE from "three";
 import {
   EARTH_RADIUS,
+  WIND_VECTOR_RANGE,
+  OCEAN_VECTOR_RANGE,
   PARTICLE_ALTITUDE,
   MAX_PARTICLES,
   PARTICLE_TEXTURE_WIDTH,
@@ -72,16 +74,28 @@ interface ParticleSystemState {
 export const particleParams: ParticleParams = {
   enabled: false,
   flowType: "wind",
-  particleCount: MAX_PARTICLES,
-  speedScale: 1.0,
+  particleCount: 12000,
+  speedScale: 1.8,
   opacity: 0.8,
-  maxAge: 6.0, // seconds
+  maxAge: 6.0,
   lineWidth: 2.0,
 };
 
 let systemState: ParticleSystemState | null = null;
 let renderer: THREE.WebGLRenderer | null = null;
 let isInitialized = false;
+
+function getFlowModeIndex(flowType: FlowType): number {
+  if (flowType === "ocean") return 1;
+  if (flowType === "both") return 2;
+  return 0;
+}
+
+function getActiveVertexCount(): number {
+  const particleCount = Math.max(1, Math.min(MAX_PARTICLES, Math.floor(particleParams.particleCount)));
+  const segmentsPerParticle = TRAIL_POSITIONS - 1;
+  return particleCount * segmentsPerParticle * 2;
+}
 
 // =============================================================================
 // INITIALIZATION
@@ -102,7 +116,7 @@ function createInitialParticleState(): Float32Array {
     for (let p = 0; p < particlesPerRow; p++) {
       // Random starting position for this particle
       const lon = Math.random();
-      const lat = Math.random();
+      const lat = Math.random() * 0.86 + 0.07;
       const age = Math.random(); // Stagger ages
 
       // Fill all trail positions with same initial position
@@ -217,15 +231,20 @@ function createAdvectionPass(placeholder: THREE.DataTexture): {
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uParticleState: { value: null },
-      uVectorField: { value: placeholder },
+      uWindVectorField: { value: placeholder },
+      uOceanVectorField: { value: placeholder },
       uDeltaTime: { value: 0.016 },
       uSpeedScale: { value: particleParams.speedScale },
       uMaxAge: { value: particleParams.maxAge },
-      uRespawnRate: { value: 0.01 },
+      uRespawnRate: { value: 0.003 },
       uTime: { value: 0 },
-      uFieldScale: { value: new THREE.Vector2(50, 50) },
+      uWindFieldScale: { value: new THREE.Vector2(WIND_VECTOR_RANGE, WIND_VECTOR_RANGE) },
+      uOceanFieldScale: { value: new THREE.Vector2(OCEAN_VECTOR_RANGE, OCEAN_VECTOR_RANGE) },
+      uWindMotionScale: { value: 0.12 },
+      uOceanMotionScale: { value: 3.0 },
       uTrailPositions: { value: TRAIL_POSITIONS },
       uTextureWidth: { value: PARTICLE_TEXTURE_WIDTH },
+      uFlowMode: { value: getFlowModeIndex(particleParams.flowType) },
     },
     vertexShader: `
       varying vec2 vUv;
@@ -301,9 +320,10 @@ function createTrailRenderer(placeholder: THREE.DataTexture): {
       uTextureWidth: { value: PARTICLE_TEXTURE_WIDTH },
       uTextureHeight: { value: PARTICLE_TEXTURE_HEIGHT },
       uTrailPositions: { value: TRAIL_POSITIONS },
-      uColorSlow: { value: new THREE.Color(0x66bbff) },  // Bright cyan-blue
-      uColorFast: { value: new THREE.Color(0xffffff) },  // White
-      uMaxSpeed: { value: 0.3 },
+      uWindColorSlow: { value: new THREE.Color(0x5ba8ff) },
+      uWindColorFast: { value: new THREE.Color(0xf4fbff) },
+      uOceanColorSlow: { value: new THREE.Color(0x4ee6d3) },
+      uOceanColorFast: { value: new THREE.Color(0xf2fffd) },
       uOpacity: { value: particleParams.opacity },
       uMaxAge: { value: particleParams.maxAge },
     },
@@ -312,7 +332,7 @@ function createTrailRenderer(placeholder: THREE.DataTexture): {
     transparent: true,
     depthTest: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
   });
 
   const mesh = new THREE.LineSegments(geometry, material);
@@ -321,7 +341,29 @@ function createTrailRenderer(placeholder: THREE.DataTexture): {
   mesh.visible = false;
   mesh.renderOrder = 1.15;
 
+  geometry.setDrawRange(0, getActiveVertexCount());
+
   return { geometry, material, mesh };
+}
+
+function resetParticleState(): void {
+  if (!systemState) return;
+
+  initializeStateTexture(systemState.stateTextures[0]);
+  initializeStateTexture(systemState.stateTextures[1]);
+  systemState.currentIndex = 0;
+  systemState.trailMaterial.uniforms.uParticleState.value = systemState.stateTextures[0].texture;
+  lastTime = 0;
+}
+
+function updateFlowModeUniforms(): void {
+  if (!systemState) return;
+  systemState.advectionMaterial.uniforms.uFlowMode.value = getFlowModeIndex(particleParams.flowType);
+}
+
+function updateDrawRange(): void {
+  if (!systemState) return;
+  systemState.trailGeometry.setDrawRange(0, getActiveVertexCount());
 }
 
 /**
@@ -359,19 +401,15 @@ export function initParticleSystem(webglRenderer: THREE.WebGLRenderer): THREE.Li
   };
 
   onWindData((texture) => {
-    if (particleParams.flowType === "wind" || particleParams.flowType === "both") {
-      systemState!.advectionMaterial.uniforms.uVectorField.value = texture;
-      systemState!.advectionMaterial.uniforms.uFieldScale.value.set(50, 50);
-    }
+    systemState!.advectionMaterial.uniforms.uWindVectorField.value = texture;
   });
 
   onOceanData((texture) => {
-    if (particleParams.flowType === "ocean") {
-      systemState!.advectionMaterial.uniforms.uVectorField.value = texture;
-      systemState!.advectionMaterial.uniforms.uFieldScale.value.set(5, 5);
-    }
+    systemState!.advectionMaterial.uniforms.uOceanVectorField.value = texture;
   });
 
+  updateFlowModeUniforms();
+  updateDrawRange();
   isInitialized = true;
   console.log("[ParticleSystem] Initialized with", MAX_PARTICLES, "particles,", TRAIL_POSITIONS, "trail positions each");
 
@@ -416,13 +454,8 @@ export function updateParticleSystem(elapsedTime: number): void {
     return;
   }
 
-  if (particleParams.flowType === "wind" && windTexture) {
-    systemState.advectionMaterial.uniforms.uVectorField.value = windTexture;
-    systemState.advectionMaterial.uniforms.uFieldScale.value.set(50, 50);
-  } else if (particleParams.flowType === "ocean" && oceanTexture) {
-    systemState.advectionMaterial.uniforms.uVectorField.value = oceanTexture;
-    systemState.advectionMaterial.uniforms.uFieldScale.value.set(5, 5);
-  }
+  updateFlowModeUniforms();
+  updateDrawRange();
 
   // Ping-pong advection
   const readIndex = systemState.currentIndex;
@@ -459,6 +492,10 @@ export function setParticlesEnabled(enabled: boolean): void {
   particleParams.enabled = enabled;
 
   if (enabled) {
+    updateFlowModeUniforms();
+    updateDrawRange();
+    resetParticleState();
+
     if (particleParams.flowType === "wind" || particleParams.flowType === "both") {
       if (!getWindTexture()) requestWindData();
     }
@@ -472,6 +509,8 @@ export function setParticlesEnabled(enabled: boolean): void {
 
 export function setFlowType(flowType: FlowType): void {
   particleParams.flowType = flowType;
+  updateFlowModeUniforms();
+  resetParticleState();
 
   if (particleParams.enabled) {
     if (flowType === "wind" || flowType === "both") {
@@ -485,8 +524,10 @@ export function setFlowType(flowType: FlowType): void {
 
 export function setParticleColors(slow: THREE.Color, fast: THREE.Color): void {
   if (systemState) {
-    systemState.trailMaterial.uniforms.uColorSlow.value = slow;
-    systemState.trailMaterial.uniforms.uColorFast.value = fast;
+    systemState.trailMaterial.uniforms.uWindColorSlow.value = slow;
+    systemState.trailMaterial.uniforms.uWindColorFast.value = fast;
+    systemState.trailMaterial.uniforms.uOceanColorSlow.value = slow;
+    systemState.trailMaterial.uniforms.uOceanColorFast.value = fast;
   }
 }
 
