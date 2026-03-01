@@ -355,9 +355,22 @@ export function createGui(params) {
       state.h3.lastResolution = -1;
       refreshH3PopupIfVisible();
   });
-  filtersFolder.add(unitCountParams, "showLEO").name("   ↳ LEO").onChange(refreshH3PopupIfVisible);
-  filtersFolder.add(unitCountParams, "showMEO").name("   ↳ MEO").onChange(refreshH3PopupIfVisible);
-  filtersFolder.add(unitCountParams, "showGEO").name("   ↳ GEO").onChange(refreshH3PopupIfVisible);
+  filtersFolder.add(unitCountParams, "showLEO").name("   ↳ LEO").onChange(() => {
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showMEO").name("   ↳ MEO").onChange(() => {
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showGEO").name("   ↳ GEO").onChange(() => {
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
+  filtersFolder.add(unitCountParams, "showMilitarySatellites").name("   ↳ Military").onChange(() => {
+      state.h3.lastResolution = -1;
+      refreshH3PopupIfVisible();
+  });
 
   // ===========================================================================
   // 5. ANNOTATIONS

@@ -20,7 +20,8 @@ import {
   POPUP_UPDATE_INTERVAL,
 } from "../constants";
 import { state } from "../state";
-import type { ShipState, AircraftState, SatelliteState } from "../types";
+import type { ShipState, AircraftState, SatelliteState, UnitCountParams } from "../types";
+import { isSatelliteVisibleByFilters } from "../utils/satellite-visibility";
 
 // =============================================================================
 // PARAMETERS
@@ -45,11 +46,7 @@ interface H3Dependencies {
   getShipSimState: () => ShipState[];
   getAircraftSimState: () => AircraftState[];
   getSatelliteSimState: () => SatelliteState[];
-  getUnitCountParams: () => {
-    showShips: boolean;
-    showAircraft: boolean;
-    showSatellites: boolean;
-  };
+  getUnitCountParams: () => UnitCountParams;
 }
 
 let deps: H3Dependencies | null = null;
@@ -500,10 +497,16 @@ function requestH3Update(): void {
   }
 
   const satellites = new Float32Array(satelliteSimState.length * 2);
+  let visibleSatelliteCount = 0;
   for (let i = 0; i < satelliteSimState.length; i++) {
-    satellites[i * 2] = satelliteSimState[i].lat;
-    satellites[i * 2 + 1] = satelliteSimState[i].lon;
+    const satellite = satelliteSimState[i];
+    if (!isSatelliteVisibleByFilters(satellite, unitCountParams)) continue;
+
+    satellites[visibleSatelliteCount * 2] = satellite.lat;
+    satellites[visibleSatelliteCount * 2 + 1] = satellite.lon;
+    visibleSatelliteCount++;
   }
+  const visibleSatellites = satellites.subarray(0, visibleSatelliteCount * 2);
 
   state.h3.workerBusy = true;
   h3Worker.postMessage(
@@ -513,7 +516,7 @@ function requestH3Update(): void {
         resolution,
         ships,
         aircraft,
-        satellites,
+        satellites: visibleSatellites,
         showShips: unitCountParams.showShips,
         showAircraft: unitCountParams.showAircraft,
         showSatellites: unitCountParams.showSatellites,
@@ -521,7 +524,7 @@ function requestH3Update(): void {
         visibleRadius,
       },
     },
-    [ships.buffer, aircraft.buffer, satellites.buffer]
+    [ships.buffer, aircraft.buffer, visibleSatellites.buffer]
   );
 }
 

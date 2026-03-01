@@ -14,6 +14,7 @@ import { AIRPORTS } from "../data/airports";
 import { getCountryFlag } from "../utils/country-flags";
 import { MID_TO_COUNTRY } from "../data/mmsi-mid";
 import { unitCountParams } from "../simulation/demo-data";
+import { isSatelliteVisibleByFilters } from "../utils/satellite-visibility";
 
 // Selection colors for each unit type (matches unit icon colors)
 export const SELECTION_COLORS = {
@@ -555,10 +556,7 @@ function onCanvasClick(event: MouseEvent, camera: THREE.Camera, canvas: HTMLCanv
     if (state.unitCounts.showAircraft) checkUnits(state.aircraft, "aircraft", AIRCRAFT_ALTITUDE);
     if (state.unitCounts.showSatellites) {
         checkUnits(state.satellites, "satellite", (unit: any) => {
-            const { showLEO, showMEO, showGEO } = unitCountParams;
-            if (unit.orbitTypeLabel === 'LEO' && !showLEO) return null;
-            if (unit.orbitTypeLabel === 'MEO' && !showMEO) return null;
-            if (unit.orbitTypeLabel === 'GEO' && !showGEO) return null;
+            if (!isSatelliteVisibleByFilters(unit, unitCountParams)) return null;
             return unit.altitude;
         });
     }

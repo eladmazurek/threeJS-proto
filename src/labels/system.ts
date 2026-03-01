@@ -22,6 +22,7 @@ import { getCameraLatLon } from '../utils/coordinates';
 import { getH3Worker } from '../scene/h3-grid';
 import { unitCountParams } from '../simulation/demo-data';
 import { satelliteFeedParams, aisFeedParams } from '../feeds/shared'; // Added
+import { isSatelliteVisibleByFilters } from '../utils/satellite-visibility';
 
 // Pre-allocate buffers for this many labels (runtime maxLabels is capped to this)
 const LABEL_BUFFER_CAPACITY = 500;
@@ -484,21 +485,13 @@ export function updateLabelAssignments(camera) {
         const hideSimSats = (aisFeedParams.mode === "live" && satelliteFeedParams.mode === "simulated");
         
         if (!hideSimSats) {
-            const { showLEO, showMEO, showGEO } = unitCountParams;
             for (let j = 0; j < satelliteIndices.length && labelIdx < generalLabelLimit; j++) {
                 const i = satelliteIndices[j];
                 if (selectedTypeInt === 3 && selectedIndex === i) continue; // Skip selected
 
                 const unit = state.satellites[i];
                 if (!unit) continue;
-
-                // Filter by orbit type
-                let visible = true;
-                if (unit.orbitTypeLabel === 'LEO' && !showLEO) visible = false;
-                else if (unit.orbitTypeLabel === 'MEO' && !showMEO) visible = false;
-                else if (unit.orbitTypeLabel === 'GEO' && !showGEO) visible = false;
-                
-                if (!visible) continue;
+                if (!isSatelliteVisibleByFilters(unit, unitCountParams)) continue;
 
                 labelAssignments.slots[labelIdx] = { type: 3, unitIndex: i };
                 fillLabelBuffers(labelIdx, 3, unit, i);

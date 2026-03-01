@@ -158,6 +158,7 @@ export interface UnitCountParams {
   showLEO: boolean;
   showMEO: boolean;
   showGEO: boolean;
+  showMilitarySatellites: boolean;
   showHighSpeedShips: boolean;
   showExtendedDataShips: boolean;
 }

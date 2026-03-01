@@ -302,6 +302,7 @@ export const config = {
     showLEO: true,
     showMEO: true,
     showGEO: true,
+    showMilitarySatellites: true,
     showHighSpeedShips: false,
     showExtendedDataShips: false,
   } as UnitCountParams,

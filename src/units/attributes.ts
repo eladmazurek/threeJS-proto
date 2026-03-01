@@ -10,6 +10,7 @@ import { MAX_SHIPS, MAX_AIRCRAFT, MAX_SATELLITES, MAX_DRONES } from "../constant
 import { state } from "../state";
 import { unitCountParams } from "../simulation/demo-data";
 import type { ShipState, AircraftState, SatelliteState, DroneState } from "../types";
+import { isSatelliteVisibleByFilters } from "../utils/satellite-visibility";
 
 // =============================================================================
 // PARAMETERS
@@ -175,16 +176,10 @@ export function updateSatelliteAttributes(): void {
   const { latArray, lonArray, headingArray, scaleArray, altitudeArray, latAttr, lonAttr, headingAttr, scaleAttr, altitudeAttr } = userData;
   const satelliteSimState = deps.getSatelliteSimState();
   const count = Math.min(satelliteSimState.length, MAX_SATELLITES);
-  const { showLEO, showMEO, showGEO } = unitCountParams;
 
   for (let i = 0; i < count; i++) {
     const sat = satelliteSimState[i];
-    
-    // Filter by orbit type
-    let visible = true;
-    if (sat.orbitTypeLabel === 'LEO' && !showLEO) visible = false;
-    else if (sat.orbitTypeLabel === 'MEO' && !showMEO) visible = false;
-    else if (sat.orbitTypeLabel === 'GEO' && !showGEO) visible = false;
+    const visible = isSatelliteVisibleByFilters(sat, unitCountParams);
 
     latArray[i] = sat.lat;
     lonArray[i] = sat.lon;

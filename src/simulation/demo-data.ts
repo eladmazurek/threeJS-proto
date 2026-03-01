@@ -41,6 +41,7 @@ export const unitCountParams = {
   showLEO: true,
   showMEO: true,
   showGEO: true,
+  showMilitarySatellites: true,
   showHighSpeedShips: false,
   showExtendedDataShips: false,
 };
